@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable jsx-a11y/label-has-associated-control, jsx-a11y/no-autofocus -- os controles estão aninhados e o foco abre a primeira etapa */
+
 import { useState } from "react";
 import { catadores } from "@/app/dados/demonstracao";
 

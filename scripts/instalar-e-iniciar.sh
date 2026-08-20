@@ -100,13 +100,8 @@ preparar_banco() {
 }
 
 iniciar_aplicacao() {
-  informar "Tudo pronto. Frontend e servidor serão iniciados agora."
-  npm --prefix servidor run desenvolver &
-  PID_SERVIDOR=$!
-  npm run dev &
-  PID_FRONTEND=$!
-  trap 'kill "$PID_SERVIDOR" "$PID_FRONTEND" 2>/dev/null || true' EXIT INT TERM
-  wait -n "$PID_SERVIDOR" "$PID_FRONTEND"
+  informar "Tudo pronto. Banco, backend e frontend serão iniciados em um único comando."
+  exec npm run dev
 }
 
 garantir_ferramentas

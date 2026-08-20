@@ -6,7 +6,9 @@
     "node": ">=24.0.0"
   },
   "scripts": {
-    "dev": "vinext dev",
+    "dev": "node scripts/desenvolver.mjs",
+    "dev:frontend": "vinext dev",
+    "dev:backend": "npm --prefix servidor run desenvolver",
     "build": "vinext build",
     "start": "vinext start",
     "test": "npm run build && node --test tests/recicla-belo.test.mjs",
@@ -14,7 +16,8 @@
     "servidor:dev": "npm --prefix servidor run desenvolver",
     "servidor:verificar": "npm --prefix servidor run verificar",
     "banco:migrar": "npm --prefix servidor run migrar",
-    "banco:seed": "npm --prefix servidor run seed"
+    "banco:seed": "npm --prefix servidor run seed",
+    "sql:gerar": "node scripts/gerar-sql-completo.mjs"
   },
   "dependencies": {
     "react": "19.2.6",

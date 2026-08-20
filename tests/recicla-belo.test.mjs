@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
-const raiz = new URL("../", import.meta.url);
-
 async function renderizar() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("teste", `${process.pid}-${Date.now()}`);
@@ -22,21 +20,32 @@ test("renderiza a experiência do Recicla Belô", async () => {
   assert.match(html, /Bem-vindo de volta/);
   assert.match(html, /Acesso exclusivo do administrador/);
   assert.match(html, /Gestão que transforma/);
+  assert.match(html, /Visualizar senha/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Starter Project/i);
 });
 
 test("mantém ambiente, banco e instalação documentados", async () => {
-  const [exemplo, migracao, instalador, leiaMe] = await Promise.all([
+  const [exemplo, migracao, sqlCompleto, instalador, supervisor, leiaMe, pacote] = await Promise.all([
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/001_estrutura_inicial.sql", import.meta.url), "utf8"),
+    readFile(new URL("../servidor/sql/recicla-belo-completo.sql", import.meta.url), "utf8"),
     readFile(new URL("../scripts/instalar-e-iniciar.sh", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/desenvolver.mjs", import.meta.url), "utf8"),
     readFile(new URL("../README.md", import.meta.url), "utf8"),
+    readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
   assert.match(exemplo, /NEXT_PUBLIC_COR_PRIMARIA/);
   assert.match(exemplo, /ADMIN_EMAIL/);
+  assert.match(exemplo, /PORTA_FRONTEND/);
   assert.match(migracao, /gen_random_uuid\(\)/);
   assert.match(migracao, /websearch_to_tsquery|to_tsvector/);
+  assert.match(sqlCompleto, /CREATE TABLE IF NOT EXISTS pesagens/);
+  assert.match(sqlCompleto, /REFERENCES catadores\(uuid\)/);
   assert.match(instalador, /docker compose up -d banco/);
+  assert.match(instalador, /exec npm run dev/);
+  assert.match(supervisor, /esperarBanco/);
+  assert.match(supervisor, /esperarFrontend/);
+  assert.equal(JSON.parse(pacote).scripts.dev, "node scripts/desenvolver.mjs");
   assert.match(leiaMe, /PostgreSQL 18\.6/);
   await access(new URL("../public/og.png", import.meta.url));
 });

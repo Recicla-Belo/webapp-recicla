@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable jsx-a11y/label-has-associated-control -- os controles estão aninhados nos rótulos compostos */
+
 import { useState } from "react";
 import { materiais as materiaisIniciais } from "@/app/dados/demonstracao";
 

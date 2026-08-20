@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable react-hooks/set-state-in-effect -- restaura preferências persistidas somente após a montagem no navegador */
+
 import { useEffect, useState } from "react";
 import type { Pagina } from "@/app/tipos/dominio";
 import { PainelPrincipal } from "./painel-principal";

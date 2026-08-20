@@ -91,14 +91,13 @@ npm --prefix servidor run migrar
 npm --prefix servidor run seed
 ```
 
-Em dois terminais:
+Inicie banco, backend e frontend no mesmo terminal:
 
 ```bash
 npm run dev
-npm --prefix servidor run desenvolver
 ```
 
-O frontend abre normalmente em `http://localhost:3000` e a API em `http://localhost:3333`. Se a porta 3000 estiver ocupada, o Vite escolherá a próxima disponível.
+O comando inicia o PostgreSQL, aguarda o banco ficar saudável, aplica migrações e seed, valida a API e só então inicia o frontend. Por padrão, o frontend abre em `http://localhost:3000` e a API em `http://localhost:3333`; a porta do frontend pode ser alterada por `PORTA_FRONTEND` no `.env`. Se a porta configurada estiver ocupada, o comando informa o conflito em vez de trocar silenciosamente. `Ctrl+C` encerra frontend, backend e banco.
 
 ## Acesso administrativo inicial
 
@@ -122,6 +121,8 @@ O `.env` real é ignorado pelo Git. Apenas o `.env.example`, sem segredos de pro
 ## Banco de dados
 
 As tabelas e colunas usam nomes claros em português do Brasil. A estrutura cobre usuários, cooperativas, catadores, contatos, endereços, contas financeiras, fotos, pontos de apoio, responsáveis, materiais, pesagens, itens de pesagem e auditoria.
+
+O SQL único e completo está em `servidor/sql/recicla-belo-completo.sql`. Ele contém extensões, tipos, tabelas, chaves estrangeiras, restrições, índices de busca textual e dados iniciais. Para regenerá-lo após novas migrações, execute `npm run sql:gerar`.
 
 Para aplicar migrações e dados iniciais manualmente:
 

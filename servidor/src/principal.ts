@@ -169,6 +169,9 @@ aplicacao.setErrorHandler((erro, requisicao, resposta) => {
   requisicao.log.error(erro);
   if (erro instanceof z.ZodError) return resposta.code(400).send({ mensagem: "Parâmetros inválidos.", detalhes: z.treeifyError(erro) });
   if ((erro as { code?: string }).code === "23505") return resposta.code(409).send({ mensagem: "Já existe um registro com esses dados." });
+  if (["ECONNREFUSED", "57P01", "57P03"].includes((erro as { code?: string }).code ?? "")) {
+    return resposta.code(503).send({ mensagem: "O banco de dados está indisponível. Inicie a aplicação com npm run dev." });
+  }
   return resposta.code(500).send({ mensagem: "Não foi possível concluir a operação." });
 });
 
@@ -179,4 +182,5 @@ async function encerrar() {
 process.on("SIGTERM", encerrar);
 process.on("SIGINT", encerrar);
 
+await banco.query("SELECT 1");
 await aplicacao.listen({ port: ambiente.PORTA_API, host: "0.0.0.0" });
