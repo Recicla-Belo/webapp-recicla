@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS catadores (
   criado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
   atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT catadores_codigo_unico UNIQUE (codigo),
-  CONSTRAINT catadores_cpf_unico UNIQUE NULLS NOT DISTINCT (cpf),
+  CONSTRAINT catadores_cpf_unico UNIQUE (cpf),
   CONSTRAINT catadores_cpf_formato CHECK (cpf IS NULL OR cpf ~ '^[0-9]{11}$')
 );
 
