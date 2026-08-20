@@ -27,8 +27,9 @@ test("renderiza a experiência do Recicla Belô", async () => {
 });
 
 test("mantém ambiente, banco e instalação documentados", async () => {
-  const [exemplo, migracao, sqlCompleto, instalador, supervisor, servidor, leiaMe, pacote] = await Promise.all([
+  const [exemplo, estilos, migracao, sqlCompleto, instalador, supervisor, servidor, leiaMe, pacote] = await Promise.all([
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/001_estrutura_inicial.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/sql/recicla-belo-completo.sql", import.meta.url), "utf8"),
     readFile(new URL("../scripts/instalar-e-iniciar.sh", import.meta.url), "utf8"),
@@ -40,6 +41,7 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(exemplo, /NEXT_PUBLIC_COR_PRIMARIA/);
   assert.match(exemplo, /ADMIN_EMAIL/);
   assert.match(exemplo, /PORTA_FRONTEND/);
+  assert.match(estilos, /\.pagina-login\{width:100%;grid-template-columns:minmax\(0,1fr\);justify-items:center;align-items:center\}/);
   assert.match(exemplo, /NEXT_PUBLIC_ICONE_APLICACAO="\/favicon\.svg"/);
   assert.match(migracao, /gen_random_uuid\(\)/);
   assert.match(migracao, /websearch_to_tsquery|to_tsvector/);

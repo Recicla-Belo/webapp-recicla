@@ -33,3 +33,6 @@
 @media(max-width:980px){.grade-identidade{grid-template-columns:1fr}.preview-identidade{position:relative;top:auto;min-height:300px}.grade-envios-identidade{grid-template-columns:1fr}}
 @media(max-width:620px){.cores-identidade{grid-template-columns:1fr}.acoes-identidade{flex-direction:column-reverse}.acoes-identidade button{width:100%}.envio-identidade{align-items:flex-start}}
 .carregando-sessao{text-align:center}.carregando-sessao p{color:#587268;font-size:15px;margin:0}.carregando-sessao:after{content:"";display:block;width:34px;height:34px;margin:20px auto 0;border:4px solid color-mix(in srgb,var(--verde) 18%,#fff);border-top-color:var(--verde);border-radius:50%;animation:girar-login .8s linear infinite}@keyframes girar-login{to{transform:rotate(360deg)}}
+
+/* Garante centralização absoluta do login, anulando a grade legada de duas colunas. */
+.pagina-login{width:100%;grid-template-columns:minmax(0,1fr);justify-items:center;align-items:center}.login-central{grid-column:1/-1;justify-self:center;margin-inline:auto}
