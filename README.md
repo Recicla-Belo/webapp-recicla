@@ -10,6 +10,7 @@ WebApp responsivo para gestão de cooperativas de reciclagem, catadores, produç
 - pesagem guiada com ponto de apoio, responsável, confirmação visual do catador, material, peso, observação e cálculo proporcional do valor;
 - materiais configuráveis por unidade, quantidade de referência, valor e situação ativa/inativa;
 - relatório detalhado e filtrável das reciclagens;
+- central de notificações persistida no PostgreSQL, com leitura individual, marcação coletiva e limpeza;
 - tema claro/escuro, identidade visual configurável e layout responsivo para Android, iOS e desktop;
 - API autenticada, PostgreSQL com UUID, auditoria, índices e pesquisa textual em português.
 
@@ -21,7 +22,7 @@ O repositório mantém frontend e backend juntos, mas desacoplados:
 app/                         frontend React + TypeScript
   componentes/               telas e componentes por domínio
   configuracao/              leitura centralizada do ambiente
-  dados/                     dados de demonstração da interface
+  dados/                     cliente tipado da API, sem dados simulados
   tipos/                     contratos TypeScript
 servidor/                    API REST Fastify + TypeScript
   migracoes/                 estrutura e dados iniciais PostgreSQL
@@ -97,7 +98,7 @@ Inicie banco, backend e frontend no mesmo terminal:
 npm run dev
 ```
 
-O comando inicia o PostgreSQL, aguarda o banco ficar saudável, aplica migrações e seed, valida a API e só então inicia o frontend. Por padrão, o frontend abre em `http://localhost:3000` e a API em `http://localhost:3333`; a porta do frontend pode ser alterada por `PORTA_FRONTEND` no `.env`. Se a porta configurada estiver ocupada, o comando informa o conflito em vez de trocar silenciosamente. `Ctrl+C` encerra frontend, backend e banco.
+O comando inicia o PostgreSQL, aguarda o banco ficar saudável, aplica migrações e seed, valida a API e só então inicia o frontend. Por padrão, o frontend abre em `http://localhost:3001` e a API em `http://localhost:3333`; a porta do frontend pode ser alterada por `PORTA_FRONTEND` no `.env`. Se a porta configurada estiver ocupada, o comando informa o conflito em vez de trocar silenciosamente. `Ctrl+C` encerra frontend, backend e banco.
 
 ## Acesso administrativo inicial
 
@@ -120,7 +121,7 @@ O `.env` real é ignorado pelo Git. Apenas o `.env.example`, sem segredos de pro
 
 ## Banco de dados
 
-As tabelas e colunas usam nomes claros em português do Brasil. A estrutura cobre usuários, cooperativas, catadores, contatos, endereços, contas financeiras, fotos, pontos de apoio, responsáveis, materiais, pesagens, itens de pesagem e auditoria.
+As tabelas e colunas usam nomes claros em português do Brasil. A estrutura cobre usuários, cooperativas, catadores, contatos, endereços, contas financeiras, fotos, pontos de apoio, responsáveis, materiais, pesagens, itens de pesagem, notificações e auditoria.
 
 O SQL único e completo está em `servidor/sql/recicla-belo-completo.sql`. Ele contém extensões, tipos, tabelas, chaves estrangeiras, restrições, índices de busca textual e dados iniciais. Para regenerá-lo após novas migrações, execute `npm run sql:gerar`.
 
@@ -157,6 +158,13 @@ Fotos e dados pessoais devem seguir a LGPD. Em produção, prefira armazenamento
 npm run build
 npm run lint
 npm --prefix servidor run verificar
+npm test
+```
+
+Com a aplicação iniciada por `npm run dev`, o teste integrado abaixo cria registros temporários, valida sessão, proteção, cadastros, pesagem, cálculos, painel, relatório e notificações, e remove os registros ao terminar:
+
+```bash
+npm run test:integracao
 ```
 
 Para conferir o banco:

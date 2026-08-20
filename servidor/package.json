@@ -7,7 +7,7 @@
     "node": ">=24.0.0"
   },
   "scripts": {
-    "desenvolver": "tsx watch src/principal.ts",
+    "desenvolver": "tsx src/principal.ts",
     "iniciar": "tsx src/principal.ts",
     "verificar": "tsc --noEmit",
     "migrar": "tsx src/banco/migrar.ts",

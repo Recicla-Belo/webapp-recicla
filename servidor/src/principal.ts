@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import { basename, resolve } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { basename, isAbsolute, relative, resolve } from "node:path";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
@@ -56,6 +56,9 @@ const opcoesCookieSessao = {
 };
 
 type AdministradorAtivo = { uuid: string; nome: string; email: string; administrador: boolean };
+type ExecutorSql = { query: (texto: string, valores?: unknown[]) => Promise<unknown> };
+type EnderecoCep = { cep: string; logradouro: string; complemento: string; bairro: string; cidade: string; estado: string };
+const cacheEnderecosCep = new Map<string, { endereco: EnderecoCep; expiraEm: number }>();
 
 async function buscarAdministradorAtivo(usuarioUuid: string) {
   const resultado = await banco.query<AdministradorAtivo>(
@@ -63,6 +66,14 @@ async function buscarAdministradorAtivo(usuarioUuid: string) {
     [usuarioUuid],
   );
   return resultado.rows[0];
+}
+
+async function criarNotificacao(executor: ExecutorSql, usuarioUuid: string, tipo: string, titulo: string, mensagem: string, entidade?: string, entidadeUuid?: string) {
+  await executor.query(
+    `INSERT INTO notificacoes (usuario_uuid, tipo, titulo, mensagem, entidade, entidade_uuid)
+     VALUES ($1,$2,$3,$4,$5,$6)`,
+    [usuarioUuid, tipo, titulo, mensagem, entidade ?? null, entidadeUuid ?? null],
+  );
 }
 
 async function exigirAutenticacao(requisicao: FastifyRequest, resposta: FastifyReply) {
@@ -133,14 +144,23 @@ aplicacao.post("/api/autenticacao/sair", async (_requisicao, resposta) => {
 });
 
 aplicacao.get("/api/painel", async () => {
-  const { rows } = await banco.query(`SELECT
+  const indicadores = await banco.query(`SELECT
     (SELECT count(*)::int FROM catadores WHERE status = 'ativo') AS catadores_ativos,
     coalesce(sum(p.peso_total), 0)::float8 AS total_coletado,
     coalesce(sum(p.valor_total), 0)::float8 AS valor_total_pagar,
     count(p.uuid)::int AS coletas_realizadas,
     coalesce(sum(p.peso_total) / nullif(count(DISTINCT p.catador_uuid), 0), 0)::float8 AS media_por_catador
     FROM pesagens p WHERE p.status = 'confirmada' AND date_trunc('month', p.criado_em) = date_trunc('month', now())`);
-  return rows[0];
+  const producao = await banco.query(`SELECT dia::date AS data, coalesce(sum(p.peso_total),0)::float8 AS peso
+    FROM generate_series(current_date - interval '6 days', current_date, interval '1 day') dia
+    LEFT JOIN pesagens p ON p.status='confirmada' AND p.criado_em >= dia AND p.criado_em < dia + interval '1 day'
+    GROUP BY dia ORDER BY dia`);
+  const atividades = await banco.query(`SELECT p.uuid,p.codigo,p.criado_em,p.peso_total::float8,p.valor_total::float8,
+      c.nome_completo AS catador,m.nome AS material
+    FROM pesagens p JOIN catadores c ON c.uuid=p.catador_uuid
+    JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN materiais m ON m.uuid=ip.material_uuid
+    WHERE p.status='confirmada' ORDER BY p.criado_em DESC LIMIT 5`);
+  return { indicadores: indicadores.rows[0], producaoSemanal: producao.rows, atividades: atividades.rows };
 });
 
 aplicacao.get("/api/catadores", async (requisicao) => {
@@ -152,12 +172,51 @@ aplicacao.get("/api/catadores", async (requisicao) => {
     filtro = `WHERE to_tsvector('portuguese', coalesce(c.nome_completo,'') || ' ' || coalesce(c.apelido,'') || ' ' || c.codigo)
       @@ websearch_to_tsquery('portuguese', $3)`;
   }
-  const { rows } = await banco.query(`SELECT c.uuid, c.codigo, c.nome_completo, c.apelido, c.status,
+  const { rows } = await banco.query(`SELECT c.uuid, c.codigo, c.nome_completo, c.apelido, c.genero, c.raca_cor, c.data_nascimento, c.cpf, c.status,
       co.nome AS cooperativa, coalesce(json_agg(json_build_object('tipo', ct.tipo, 'valor', ct.valor)) FILTER (WHERE ct.uuid IS NOT NULL), '[]') AS contatos
+      ,coalesce((SELECT sum(p.peso_total) FROM pesagens p WHERE p.catador_uuid=c.uuid AND p.status='confirmada'),0)::float8 AS total_quilos,
+      EXISTS(SELECT 1 FROM arquivos_catador ar WHERE ar.catador_uuid=c.uuid AND ar.tipo='foto_rosto') AS tem_foto
     FROM catadores c LEFT JOIN cooperativas co ON co.uuid = c.cooperativa_uuid
     LEFT JOIN contatos_catador ct ON ct.catador_uuid = c.uuid ${filtro}
     GROUP BY c.uuid, co.nome ORDER BY c.nome_completo LIMIT $1 OFFSET $2`, parametros);
   return { dados: rows, limite: consulta.limite, deslocamento: consulta.deslocamento };
+});
+
+const esquemaCooperativa = z.object({ nome: z.string().trim().min(2).max(160), nomeResponsavel: z.string().trim().min(2).max(160), telefone: z.string().trim().max(30).optional(), observacao: z.string().trim().max(1000).optional(), ativa: z.boolean().default(true) });
+
+aplicacao.get("/api/cooperativas", async () => {
+  const { rows } = await banco.query(`SELECT co.uuid,co.nome,co.nome_responsavel,co.telefone,co.observacao,co.status,
+      count(c.uuid) FILTER (WHERE c.status='ativo')::int AS catadores_ativos
+    FROM cooperativas co LEFT JOIN catadores c ON c.cooperativa_uuid=co.uuid
+    GROUP BY co.uuid ORDER BY co.nome`);
+  return { dados: rows };
+});
+
+aplicacao.post("/api/cooperativas", async (requisicao, resposta) => {
+  const entrada = esquemaCooperativa.safeParse(requisicao.body);
+  if (!entrada.success) return resposta.code(400).send({ mensagem: "Revise os dados da cooperativa.", detalhes: z.treeifyError(entrada.error) });
+  const { rows } = await banco.query<{ uuid: string }>(`INSERT INTO cooperativas (nome,nome_responsavel,telefone,observacao,status)
+    VALUES ($1,$2,$3,$4,$5) RETURNING uuid`, [entrada.data.nome, entrada.data.nomeResponsavel, entrada.data.telefone || null, entrada.data.observacao || null, entrada.data.ativa ? "ativo" : "inativo"]);
+  await criarNotificacao(banco, requisicao.user.usuarioUuid, "cooperativa", "Cooperativa cadastrada", `${entrada.data.nome} foi adicionada ao sistema.`, "cooperativas", rows[0]!.uuid);
+  return resposta.code(201).send({ uuid: rows[0]!.uuid });
+});
+
+aplicacao.put("/api/cooperativas/:uuid", async (requisicao, resposta) => {
+  const uuid = z.uuid().parse((requisicao.params as { uuid: string }).uuid);
+  const entrada = esquemaCooperativa.safeParse(requisicao.body);
+  if (!entrada.success) return resposta.code(400).send({ mensagem: "Revise os dados da cooperativa.", detalhes: z.treeifyError(entrada.error) });
+  const resultado = await banco.query(`UPDATE cooperativas SET nome=$1,nome_responsavel=$2,telefone=$3,observacao=$4,status=$5,atualizado_em=now() WHERE uuid=$6`, [entrada.data.nome, entrada.data.nomeResponsavel, entrada.data.telefone || null, entrada.data.observacao || null, entrada.data.ativa ? "ativo" : "inativo", uuid]);
+  if (!resultado.rowCount) return resposta.code(404).send({ mensagem: "Cooperativa não encontrada." });
+  await criarNotificacao(banco, requisicao.user.usuarioUuid, "cooperativa", "Cooperativa atualizada", `${entrada.data.nome} teve seus dados atualizados.`, "cooperativas", uuid);
+  return resposta.code(204).send();
+});
+
+aplicacao.delete("/api/cooperativas/:uuid", async (requisicao, resposta) => {
+  const uuid = z.uuid().parse((requisicao.params as { uuid: string }).uuid);
+  const excluida = await banco.query<{ nome: string }>("DELETE FROM cooperativas WHERE uuid=$1 RETURNING nome", [uuid]);
+  if (!excluida.rowCount) return resposta.code(404).send({ mensagem: "Cooperativa não encontrada." });
+  await criarNotificacao(banco, requisicao.user.usuarioUuid, "cooperativa", "Cooperativa removida", `${excluida.rows[0]!.nome} foi removida do sistema.`, "cooperativas", uuid);
+  return resposta.code(204).send();
 });
 
 const esquemaCatador = z.object({
@@ -170,6 +229,7 @@ const esquemaCatador = z.object({
   cpf: z.string().regex(/^\d{11}$/).optional(),
   contatos: z.array(z.object({ tipo: z.enum(["celular", "telefone", "whatsapp", "recado", "email"]), valor: z.string().min(3).max(254), principal: z.boolean().default(false) })).default([]),
   endereco: z.object({ cep: z.string().regex(/^\d{8}$/).optional(), logradouro: z.string().max(200).optional(), numero: z.string().max(30).optional(), complemento: z.string().max(120).optional(), bairro: z.string().max(120).optional(), cidade: z.string().max(120).default("Belo Horizonte"), estado: z.string().length(2).default("MG") }).optional(),
+  contaFinanceira: z.object({ tipo: z.enum(["pix", "conta_bancaria"]), tipoChavePix: z.string().max(30).optional(), chavePix: z.string().max(300).optional(), banco: z.string().max(120).optional(), agencia: z.string().max(20).optional(), numeroConta: z.string().max(30).optional(), tipoConta: z.string().max(40).optional(), deTerceiro: z.boolean().default(false), nomeTitular: z.string().max(200).optional(), cpfTitular: z.string().regex(/^\d{11}$/).optional(), relacaoTitular: z.string().max(120).optional() }).optional(),
 });
 
 aplicacao.post("/api/catadores", async (requisicao, resposta) => {
@@ -178,13 +238,17 @@ aplicacao.post("/api/catadores", async (requisicao, resposta) => {
   const cliente = await banco.connect();
   try {
     await cliente.query("BEGIN");
-    const proximo = await cliente.query<{ codigo: string }>("SELECT 'CAT-' || lpad((count(*) + 1)::text, 4, '0') AS codigo FROM catadores");
-    const { nomeCompleto, apelido, cooperativaUuid, genero, racaCor, dataNascimento, cpf, contatos, endereco } = entrada.data;
+    await cliente.query("SELECT pg_advisory_xact_lock(hashtext('catadores_codigo'))");
+    const proximo = await cliente.query<{ codigo: string }>("SELECT 'CAT-' || lpad((coalesce(max(substring(codigo from '[0-9]+')::int),0) + 1)::text, 4, '0') AS codigo FROM catadores");
+    const { nomeCompleto, apelido, cooperativaUuid, genero, racaCor, dataNascimento, cpf, contatos, endereco, contaFinanceira } = entrada.data;
     const criado = await cliente.query<{ uuid: string; codigo: string }>(`INSERT INTO catadores (codigo, cooperativa_uuid, nome_completo, apelido, genero, raca_cor, data_nascimento, cpf)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING uuid,codigo`, [proximo.rows[0]?.codigo, cooperativaUuid ?? null, nomeCompleto, apelido ?? null, genero ?? null, racaCor ?? null, dataNascimento ?? null, cpf ?? null]);
     const catador = criado.rows[0]!;
     for (const contato of contatos) await cliente.query("INSERT INTO contatos_catador (catador_uuid,tipo,valor,principal) VALUES ($1,$2,$3,$4)", [catador.uuid, contato.tipo, contato.valor, contato.principal]);
     if (endereco) await cliente.query(`INSERT INTO enderecos_catador (catador_uuid,cep,logradouro,numero,complemento,bairro,cidade,estado) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [catador.uuid, endereco.cep ?? null, endereco.logradouro ?? null, endereco.numero ?? null, endereco.complemento ?? null, endereco.bairro ?? null, endereco.cidade, endereco.estado]);
+    if (contaFinanceira) await cliente.query(`INSERT INTO contas_financeiras_catador (catador_uuid,tipo,tipo_chave_pix,chave_pix,banco,agencia,numero_conta,tipo_conta,de_terceiro,nome_titular,cpf_titular,relacao_titular)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, [catador.uuid, contaFinanceira.tipo, contaFinanceira.tipoChavePix ?? null, contaFinanceira.chavePix ?? null, contaFinanceira.banco ?? null, contaFinanceira.agencia ?? null, contaFinanceira.numeroConta ?? null, contaFinanceira.tipoConta ?? null, contaFinanceira.deTerceiro, contaFinanceira.nomeTitular ?? null, contaFinanceira.cpfTitular ?? null, contaFinanceira.relacaoTitular ?? null]);
+    await criarNotificacao(cliente, requisicao.user.usuarioUuid, "catador", "Catador cadastrado", `${nomeCompleto} foi cadastrado com o código ${catador.codigo}.`, "catadores", catador.uuid);
     await cliente.query("COMMIT");
     return resposta.code(201).send(catador);
   } catch (erro) {
@@ -209,9 +273,94 @@ aplicacao.post("/api/catadores/:uuid/foto", async (requisicao, resposta) => {
   return resposta.code(201).send({ chave });
 });
 
+aplicacao.delete("/api/catadores/:uuid", async (requisicao, resposta) => {
+  const uuid = z.uuid().parse((requisicao.params as { uuid: string }).uuid);
+  const excluido = await banco.query<{ nome_completo: string }>("DELETE FROM catadores WHERE uuid=$1 RETURNING nome_completo", [uuid]);
+  if (!excluido.rowCount) return resposta.code(404).send({ mensagem: "Catador não encontrado." });
+  await criarNotificacao(banco, requisicao.user.usuarioUuid, "catador", "Catador removido", `${excluido.rows[0]!.nome_completo} foi removido do sistema.`, "catadores", uuid);
+  return resposta.code(204).send();
+});
+
+aplicacao.get("/api/catadores/:uuid/foto", async (requisicao, resposta) => {
+  const catadorUuid = z.uuid().parse((requisicao.params as { uuid: string }).uuid);
+  const arquivo = await banco.query<{ chave_armazenamento: string; tipo_mime: string }>("SELECT chave_armazenamento,tipo_mime FROM arquivos_catador WHERE catador_uuid=$1 AND tipo='foto_rosto' ORDER BY criado_em DESC LIMIT 1", [catadorUuid]);
+  if (!arquivo.rows[0]) return resposta.code(404).send({ mensagem: "Foto não encontrada." });
+  const raiz = resolve(ambiente.PASTA_ARQUIVOS);
+  const caminho = resolve(raiz, arquivo.rows[0].chave_armazenamento);
+  const caminhoRelativo = relative(raiz, caminho);
+  if (caminhoRelativo.startsWith("..") || isAbsolute(caminhoRelativo)) return resposta.code(400).send({ mensagem: "Arquivo inválido." });
+  return resposta.type(arquivo.rows[0].tipo_mime).send(await readFile(caminho));
+});
+
 aplicacao.get("/api/materiais", async () => {
   const { rows } = await banco.query("SELECT * FROM materiais ORDER BY status DESC, nome");
   return { dados: rows };
+});
+
+const esquemaMaterial = z.object({ nome: z.string().trim().min(2).max(160), tipoMaterial: z.string().trim().min(2).max(100), unidade: z.string().trim().min(1).max(30), quantidadeReferencia: z.number().positive(), valorReferencia: z.number().nonnegative(), ativo: z.boolean().default(true) });
+
+aplicacao.post("/api/materiais", async (requisicao, resposta) => {
+  const entrada = esquemaMaterial.safeParse(requisicao.body);
+  if (!entrada.success) return resposta.code(400).send({ mensagem: "Revise os dados do material.", detalhes: z.treeifyError(entrada.error) });
+  const { rows } = await banco.query<{ uuid: string }>(`INSERT INTO materiais (nome,tipo_material,unidade,quantidade_referencia,valor_referencia,status)
+    VALUES ($1,$2,$3,$4,$5,$6) RETURNING uuid`, [entrada.data.nome, entrada.data.tipoMaterial, entrada.data.unidade, entrada.data.quantidadeReferencia, entrada.data.valorReferencia, entrada.data.ativo ? "ativo" : "inativo"]);
+  await criarNotificacao(banco, requisicao.user.usuarioUuid, "material", "Material cadastrado", `${entrada.data.nome} está disponível nas configurações.`, "materiais", rows[0]!.uuid);
+  return resposta.code(201).send({ uuid: rows[0]!.uuid });
+});
+
+aplicacao.put("/api/materiais/:uuid", async (requisicao, resposta) => {
+  const uuid = z.uuid().parse((requisicao.params as { uuid: string }).uuid);
+  const entrada = esquemaMaterial.safeParse(requisicao.body);
+  if (!entrada.success) return resposta.code(400).send({ mensagem: "Revise os dados do material.", detalhes: z.treeifyError(entrada.error) });
+  const resultado = await banco.query(`UPDATE materiais SET nome=$1,tipo_material=$2,unidade=$3,quantidade_referencia=$4,valor_referencia=$5,status=$6,atualizado_em=now() WHERE uuid=$7`, [entrada.data.nome, entrada.data.tipoMaterial, entrada.data.unidade, entrada.data.quantidadeReferencia, entrada.data.valorReferencia, entrada.data.ativo ? "ativo" : "inativo", uuid]);
+  if (!resultado.rowCount) return resposta.code(404).send({ mensagem: "Material não encontrado." });
+  await criarNotificacao(banco, requisicao.user.usuarioUuid, "material", "Material atualizado", `${entrada.data.nome} teve valor ou configuração atualizados.`, "materiais", uuid);
+  return resposta.code(204).send();
+});
+
+aplicacao.delete("/api/materiais/:uuid", async (requisicao, resposta) => {
+  const uuid = z.uuid().parse((requisicao.params as { uuid: string }).uuid);
+  const excluido = await banco.query<{ nome: string }>("DELETE FROM materiais WHERE uuid=$1 RETURNING nome", [uuid]);
+  if (!excluido.rowCount) return resposta.code(404).send({ mensagem: "Material não encontrado." });
+  await criarNotificacao(banco, requisicao.user.usuarioUuid, "material", "Material removido", `${excluido.rows[0]!.nome} foi removido das configurações.`, "materiais", uuid);
+  return resposta.code(204).send();
+});
+
+aplicacao.get("/api/pontos-apoio", async () => {
+  const { rows } = await banco.query("SELECT uuid,nome FROM pontos_apoio WHERE status='ativo' ORDER BY nome");
+  return { dados: rows };
+});
+
+aplicacao.get("/api/responsaveis-pesagem", async () => {
+  const { rows } = await banco.query("SELECT uuid,nome FROM responsaveis_pesagem WHERE status='ativo' ORDER BY nome");
+  return { dados: rows };
+});
+
+aplicacao.get("/api/enderecos/cep/:cep", async (requisicao, resposta) => {
+  const cep = z.string().regex(/^\d{8}$/).parse((requisicao.params as { cep: string }).cep);
+  const armazenado = cacheEnderecosCep.get(cep);
+  if (armazenado && armazenado.expiraEm > Date.now()) return armazenado.endereco;
+  try {
+    const retorno = await fetch(`https://viacep.com.br/ws/${cep}/json/`, {
+      headers: { accept: "application/json", "user-agent": "Recicla-Belo/1.0" },
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!retorno.ok) return resposta.code(502).send({ mensagem: "O serviço de CEP está indisponível no momento." });
+    const dados = await retorno.json() as { erro?: boolean; cep?: string; logradouro?: string; complemento?: string; bairro?: string; localidade?: string; uf?: string };
+    if (dados.erro) return resposta.code(404).send({ mensagem: "CEP não encontrado." });
+    const endereco: EnderecoCep = {
+      cep,
+      logradouro: dados.logradouro ?? "",
+      complemento: dados.complemento ?? "",
+      bairro: dados.bairro ?? "",
+      cidade: dados.localidade ?? "",
+      estado: dados.uf ?? "",
+    };
+    cacheEnderecosCep.set(cep, { endereco, expiraEm: Date.now() + 24 * 60 * 60 * 1_000 });
+    return endereco;
+  } catch {
+    return resposta.code(502).send({ mensagem: "Não foi possível consultar o CEP. Preencha o endereço manualmente." });
+  }
 });
 
 aplicacao.post("/api/pesagens", async (requisicao, resposta) => {
@@ -221,6 +370,14 @@ aplicacao.post("/api/pesagens", async (requisicao, resposta) => {
   const cliente = await banco.connect();
   try {
     await cliente.query("BEGIN");
+    const catador = await cliente.query<{ nome_completo: string }>("SELECT nome_completo FROM catadores WHERE uuid=$1 AND status='ativo' FOR SHARE", [entrada.data.catadorUuid]);
+    if (!catador.rows[0]) { await cliente.query("ROLLBACK"); return resposta.code(404).send({ mensagem: "Catador não encontrado ou inativo." }); }
+    const ponto = await cliente.query("SELECT 1 FROM pontos_apoio WHERE uuid=$1 AND status='ativo' FOR SHARE", [entrada.data.pontoApoioUuid]);
+    if (!ponto.rows[0]) { await cliente.query("ROLLBACK"); return resposta.code(404).send({ mensagem: "Ponto de apoio não encontrado ou inativo." }); }
+    if (entrada.data.responsavelPesagemUuid) {
+      const responsavel = await cliente.query("SELECT 1 FROM responsaveis_pesagem WHERE uuid=$1 AND status='ativo' FOR SHARE", [entrada.data.responsavelPesagemUuid]);
+      if (!responsavel.rows[0]) { await cliente.query("ROLLBACK"); return resposta.code(404).send({ mensagem: "Responsável pela pesagem não encontrado ou inativo." }); }
+    }
     const material = await cliente.query<{ unidade: string; quantidade_referencia: number; valor_referencia: number }>("SELECT unidade, quantidade_referencia::float8, valor_referencia::float8 FROM materiais WHERE uuid=$1 AND status='ativo' FOR SHARE", [entrada.data.materialUuid]);
     if (!material.rows[0]) {
       await cliente.query("ROLLBACK");
@@ -228,13 +385,55 @@ aplicacao.post("/api/pesagens", async (requisicao, resposta) => {
     }
     const ref = material.rows[0];
     const valorTotal = Math.round((entrada.data.peso / ref.quantidade_referencia) * ref.valor_referencia * 100) / 100;
-    const codigo = `PES-${Date.now().toString().slice(-8)}`;
+    await cliente.query("SELECT pg_advisory_xact_lock(hashtext('pesagens_codigo'))");
+    const proximo = await cliente.query<{ codigo: string }>("SELECT 'PES-' || lpad((coalesce(max(substring(codigo from '[0-9]+')::bigint),0) + 1)::text, 6, '0') AS codigo FROM pesagens");
+    const codigo = proximo.rows[0]!.codigo;
     const criada = await cliente.query<{ uuid: string }>(`INSERT INTO pesagens (codigo,catador_uuid,ponto_apoio_uuid,responsavel_pesagem_uuid,responsavel_outro,observacao,peso_total,valor_total,confirmada_em,criada_por_uuid)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now(),$9) RETURNING uuid`, [codigo, entrada.data.catadorUuid, entrada.data.pontoApoioUuid, entrada.data.responsavelPesagemUuid ?? null, entrada.data.responsavelOutro ?? null, entrada.data.observacao ?? null, entrada.data.peso, valorTotal, requisicao.user.usuarioUuid]);
     await cliente.query(`INSERT INTO itens_pesagem (pesagem_uuid,material_uuid,peso,unidade,quantidade_referencia,valor_referencia,observacao) VALUES ($1,$2,$3,$4,$5,$6,$7)`, [criada.rows[0]!.uuid, entrada.data.materialUuid, entrada.data.peso, ref.unidade, ref.quantidade_referencia, ref.valor_referencia, entrada.data.observacao ?? null]);
+    await criarNotificacao(cliente, requisicao.user.usuarioUuid, "pesagem", "Pesagem registrada", `${catador.rows[0].nome_completo}: ${entrada.data.peso.toLocaleString("pt-BR")} ${ref.unidade}, total de ${valorTotal.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}.`, "pesagens", criada.rows[0]!.uuid);
     await cliente.query("COMMIT");
     return resposta.code(201).send({ uuid: criada.rows[0]!.uuid, codigo, pesoTotal: entrada.data.peso, valorTotal });
   } catch (erro) { await cliente.query("ROLLBACK"); throw erro; } finally { cliente.release(); }
+});
+
+aplicacao.delete("/api/pesagens/:uuid", async (requisicao, resposta) => {
+  const uuid = z.uuid().parse((requisicao.params as { uuid: string }).uuid);
+  const excluida = await banco.query<{ codigo: string }>("DELETE FROM pesagens WHERE uuid=$1 RETURNING codigo", [uuid]);
+  if (!excluida.rowCount) return resposta.code(404).send({ mensagem: "Pesagem não encontrada." });
+  await criarNotificacao(banco, requisicao.user.usuarioUuid, "pesagem", "Pesagem removida", `${excluida.rows[0]!.codigo} foi removida do sistema.`, "pesagens", uuid);
+  return resposta.code(204).send();
+});
+
+aplicacao.get("/api/notificacoes", async (requisicao) => {
+  const { rows } = await banco.query(`SELECT uuid,tipo,titulo,mensagem,entidade,entidade_uuid,lida_em,criado_em
+    FROM notificacoes WHERE usuario_uuid=$1 ORDER BY criado_em DESC LIMIT 50`, [requisicao.user.usuarioUuid]);
+  const contagem = await banco.query<{ total: number }>("SELECT count(*)::int AS total FROM notificacoes WHERE usuario_uuid=$1 AND lida_em IS NULL", [requisicao.user.usuarioUuid]);
+  return { dados: rows, naoLidas: contagem.rows[0]?.total ?? 0 };
+});
+
+aplicacao.patch("/api/notificacoes/lidas", async (requisicao, resposta) => {
+  await banco.query("UPDATE notificacoes SET lida_em=coalesce(lida_em,now()) WHERE usuario_uuid=$1", [requisicao.user.usuarioUuid]);
+  return resposta.code(204).send();
+});
+
+aplicacao.patch("/api/notificacoes/:uuid/lida", async (requisicao, resposta) => {
+  const uuid = z.uuid().parse((requisicao.params as { uuid: string }).uuid);
+  const resultado = await banco.query("UPDATE notificacoes SET lida_em=coalesce(lida_em,now()) WHERE uuid=$1 AND usuario_uuid=$2", [uuid, requisicao.user.usuarioUuid]);
+  if (!resultado.rowCount) return resposta.code(404).send({ mensagem: "Notificação não encontrada." });
+  return resposta.code(204).send();
+});
+
+aplicacao.delete("/api/notificacoes/:uuid", async (requisicao, resposta) => {
+  const uuid = z.uuid().parse((requisicao.params as { uuid: string }).uuid);
+  const resultado = await banco.query("DELETE FROM notificacoes WHERE uuid=$1 AND usuario_uuid=$2", [uuid, requisicao.user.usuarioUuid]);
+  if (!resultado.rowCount) return resposta.code(404).send({ mensagem: "Notificação não encontrada." });
+  return resposta.code(204).send();
+});
+
+aplicacao.delete("/api/notificacoes", async (requisicao, resposta) => {
+  await banco.query("DELETE FROM notificacoes WHERE usuario_uuid=$1", [requisicao.user.usuarioUuid]);
+  return resposta.code(204).send();
 });
 
 aplicacao.get("/api/relatorios/pesagens", async (requisicao) => {
@@ -259,6 +458,7 @@ aplicacao.setErrorHandler((erro, requisicao, resposta) => {
   if (status === 415) return resposta.code(415).send({ mensagem: "Formato de conteúdo não aceito." });
   if (erro instanceof z.ZodError) return resposta.code(400).send({ mensagem: "Parâmetros inválidos.", detalhes: z.treeifyError(erro) });
   if ((erro as { code?: string }).code === "23505") return resposta.code(409).send({ mensagem: "Já existe um registro com esses dados." });
+  if ((erro as { code?: string }).code === "23503") return resposta.code(409).send({ mensagem: "O registro está em uso e não pode ser excluído." });
   if (["ECONNREFUSED", "57P01", "57P03"].includes((erro as { code?: string }).code ?? "")) {
     return resposta.code(503).send({ mensagem: "O banco de dados está indisponível. Inicie a aplicação com npm run dev." });
   }

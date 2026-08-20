@@ -17,25 +17,24 @@ test("renderiza a experiência do Recicla Belô", async () => {
   assert.match(resposta.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await resposta.text();
   assert.match(html, /Recicla Belô/);
-  assert.match(html, /Bem-vindo de volta/);
-  assert.match(html, /Acesso exclusivo do administrador/);
   assert.match(html, /Gestão que transforma/);
-  assert.match(html, /Visualizar senha/);
-  assert.match(html, /Ambiente administrativo seguro/);
+  assert.match(html, /Carregando seu painel/);
   assert.doesNotMatch(html, /Cada pesagem conta|Cada pessoa importa/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Starter Project/i);
 });
 
 test("mantém ambiente, banco e instalação documentados", async () => {
-  const [exemplo, estilos, migracao, sqlCompleto, instalador, supervisor, servidor, estrutura, leiaMe, pacote] = await Promise.all([
+  const [exemplo, estilos, migracao, migracaoNotificacoes, sqlCompleto, instalador, supervisor, servidor, estrutura, painel, leiaMe, pacote] = await Promise.all([
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/001_estrutura_inicial.sql", import.meta.url), "utf8"),
+    readFile(new URL("../servidor/migracoes/004_notificacoes.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/sql/recicla-belo-completo.sql", import.meta.url), "utf8"),
     readFile(new URL("../scripts/instalar-e-iniciar.sh", import.meta.url), "utf8"),
     readFile(new URL("../scripts/desenvolver.mjs", import.meta.url), "utf8"),
     readFile(new URL("../servidor/src/principal.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/componentes/estrutura-aplicacao.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/componentes/painel-principal.tsx", import.meta.url), "utf8"),
     readFile(new URL("../README.md", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
@@ -48,6 +47,8 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(migracao, /websearch_to_tsquery|to_tsvector/);
   assert.match(sqlCompleto, /CREATE TABLE IF NOT EXISTS pesagens/);
   assert.match(sqlCompleto, /REFERENCES catadores\(uuid\)/);
+  assert.match(migracaoNotificacoes, /CREATE TABLE IF NOT EXISTS notificacoes/);
+  assert.match(sqlCompleto, /CREATE TABLE IF NOT EXISTS notificacoes/);
   assert.match(instalador, /docker compose up -d banco/);
   assert.match(instalador, /exec npm run dev/);
   assert.match(supervisor, /esperarBanco/);
@@ -59,9 +60,14 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(servidor, /rotasPublicas = new Set\(\["\/api\/autenticacao\/entrar", rotaConsultarSessao\]\)/);
   assert.match(servidor, /if \(!requisicao\.cookies\.reciclabelo_sessao\) return \{ autenticado: false \}/);
   assert.match(servidor, /ativo = TRUE AND administrador = TRUE/);
+  assert.match(estrutura, /useState<boolean \| null>\(null\)/);
   assert.match(estrutura, /setAutenticado\(dados\.autenticado === true\)/);
   assert.match(estrutura, /aria-controls="painel-notificacoes"/);
-  assert.match(estrutura, /setNotificacoesNaoLidas\(0\)/);
+  assert.match(estrutura, /\/api\/notificacoes\/lidas/);
+  assert.match(estrutura, /Carregando seu painel/);
+  assert.doesNotMatch(estrutura, /JosÃ© concluiu|Maria atingiu|Coopesol Leste registrou/);
+  assert.doesNotMatch(painel, /RESUMO DO DIA|3,2 t|O trabalho de hoje gera/);
+  assert.match(painel, /\/api\/painel/);
   assert.match(estilos, /\.usuario\{[^}]*cursor:pointer/);
   assert.match(estilos, /\.campo input,\.campo select,\.campo textarea\{height:58px/);
   assert.match(estilos, /\.conteudo:before\{/);
@@ -69,4 +75,5 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.equal(JSON.parse(pacote).scripts.dev, "node scripts/desenvolver.mjs");
   assert.match(leiaMe, /PostgreSQL 18\.6/);
   await access(new URL("../public/og.png", import.meta.url));
+  await assert.rejects(access(new URL("../app/dados/demonstracao.ts", import.meta.url)));
 });

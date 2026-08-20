@@ -17,6 +17,7 @@ import {
   Scale,
   Settings,
   Sun,
+  Trash2,
   UsersRound,
   X,
   type LucideIcon,
@@ -30,6 +31,7 @@ import { TelaRelatorios } from "./tela-relatorios";
 import { TelaConfiguracoes } from "./tela-configuracoes";
 import { TelaLogin } from "./tela-login";
 import { MarcaPlataforma } from "./marca-plataforma";
+import { requisitarApi, type NotificacaoApi } from "@/app/dados/api";
 
 const itens: Array<{ pagina: Pagina; rotulo: string; icone: LucideIcon }> = [
   { pagina: "painel", rotulo: "Visão geral", icone: LayoutDashboard },
@@ -41,7 +43,7 @@ const itens: Array<{ pagina: Pagina; rotulo: string; icone: LucideIcon }> = [
 ];
 
 const titulos: Record<Pagina, { sobrelinha: string; titulo: string }> = {
-  painel: { sobrelinha: "QUINTA-FEIRA, 20 DE AGOSTO", titulo: "Olá, Administrador!" },
+  painel: { sobrelinha: "VISÃO GERAL", titulo: "Olá, Administrador!" },
   catadores: { sobrelinha: "CADASTROS", titulo: "Catadores" },
   cooperativas: { sobrelinha: "CADASTROS", titulo: "Cooperativas e associações" },
   pesagem: { sobrelinha: "PRODUÇÃO", titulo: "Nova pesagem" },
@@ -52,27 +54,33 @@ const titulos: Record<Pagina, { sobrelinha: string; titulo: string }> = {
 export function EstruturaAplicacao() {
   const [pagina, setPagina] = useState<Pagina>("painel");
   const [escuro, setEscuro] = useState(false);
-  const [autenticado, setAutenticado] = useState(false);
+  const [autenticado, setAutenticado] = useState<boolean | null>(null);
   const [notificacoesAbertas, setNotificacoesAbertas] = useState(false);
-  const [notificacoesNaoLidas, setNotificacoesNaoLidas] = useState(3);
+  const [notificacoes, setNotificacoes] = useState<NotificacaoApi[]>([]);
+  const notificacoesNaoLidas = notificacoes.filter((item) => !item.lida_em).length;
 
   useEffect(() => {
     const temaSalvo = window.localStorage.getItem("reciclabelo-tema");
     setEscuro(temaSalvo === "escuro");
-    const base = process.env.NEXT_PUBLIC_URL_API ?? "http://localhost:3333";
-    void fetch(`${base}/api/autenticacao/sessao`, { credentials: "include" })
-      .then(async (resposta) => {
-        if (!resposta.ok) return setAutenticado(false);
-        const dados = await resposta.json() as { autenticado?: boolean };
-        setAutenticado(dados.autenticado === true);
-      })
+    void requisitarApi<{ autenticado: boolean }>("/api/autenticacao/sessao")
+      .then((dados) => setAutenticado(dados.autenticado === true))
       .catch(() => setAutenticado(false));
+    const expirar = () => setAutenticado(false);
+    window.addEventListener("reciclabelo:sessao-expirada", expirar);
+    return () => window.removeEventListener("reciclabelo:sessao-expirada", expirar);
   }, []);
 
   useEffect(() => {
     document.documentElement.dataset.tema = escuro ? "escuro" : "claro";
     window.localStorage.setItem("reciclabelo-tema", escuro ? "escuro" : "claro");
   }, [escuro]);
+
+  useEffect(() => {
+    if (!autenticado) return;
+    void requisitarApi<{ dados: NotificacaoApi[] }>("/api/notificacoes")
+      .then((dados) => setNotificacoes(dados.dados))
+      .catch(() => setNotificacoes([]));
+  }, [autenticado]);
 
   function navegar(destino: Pagina) {
     setPagina(destino);
@@ -84,12 +92,44 @@ export function EstruturaAplicacao() {
     setAutenticado(true);
   }
 
+  async function carregarNotificacoes() {
+    const dados = await requisitarApi<{ dados: NotificacaoApi[] }>("/api/notificacoes");
+    setNotificacoes(dados.dados);
+  }
+
+  async function alternarNotificacoes() {
+    const abrir = !notificacoesAbertas;
+    setNotificacoesAbertas(abrir);
+    if (abrir) await carregarNotificacoes().catch(() => setNotificacoes([]));
+  }
+
+  async function marcarTodasComoLidas() {
+    await requisitarApi<void>("/api/notificacoes/lidas", { method: "PATCH" });
+    const agora = new Date().toISOString();
+    setNotificacoes((lista) => lista.map((item) => ({ ...item, lida_em: item.lida_em ?? agora })));
+  }
+
+  async function marcarComoLida(uuid: string) {
+    await requisitarApi<void>(`/api/notificacoes/${uuid}/lida`, { method: "PATCH" });
+    setNotificacoes((lista) => lista.map((item) => item.uuid === uuid ? { ...item, lida_em: item.lida_em ?? new Date().toISOString() } : item));
+  }
+
+  async function excluirNotificacao(uuid: string) {
+    await requisitarApi<void>(`/api/notificacoes/${uuid}`, { method: "DELETE" });
+    setNotificacoes((lista) => lista.filter((item) => item.uuid !== uuid));
+  }
+
+  async function limparNotificacoes() {
+    await requisitarApi<void>("/api/notificacoes", { method: "DELETE" });
+    setNotificacoes([]);
+  }
+
   async function sair() {
-    const base = process.env.NEXT_PUBLIC_URL_API ?? "http://localhost:3333";
-    await fetch(`${base}/api/autenticacao/sair`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}", credentials: "include" }).catch(() => undefined);
+    await requisitarApi<void>("/api/autenticacao/sair", { method: "POST", body: "{}" }).catch(() => undefined);
     setAutenticado(false);
   }
 
+  if (autenticado === null) return <main className="pagina-login"><div className="cenario-login" aria-hidden="true"><span className="orbe-login orbe-um" /><span className="orbe-login orbe-dois" /><span className="malha-login" /></div><section className="login-central carregando-sessao" aria-live="polite"><MarcaPlataforma /><p>Carregando seu painel...</p></section></main>;
   if (!autenticado) return <TelaLogin onAutenticado={autenticar} />;
 
   return (
@@ -115,15 +155,11 @@ export function EstruturaAplicacao() {
           <div className="acoes-cabecalho">
             <button className="botao-icone" onClick={() => setEscuro((valor) => !valor)} aria-label={escuro ? "Ativar tema claro" : "Ativar tema escuro"} title={escuro ? "Ativar tema claro" : "Ativar tema escuro"}>{escuro ? <Sun /> : <Moon />}</button>
             <div className="area-notificacoes">
-              <button className="botao-icone botao-notificacoes" type="button" onClick={() => setNotificacoesAbertas((abertas) => !abertas)} aria-label={`Notificações: ${notificacoesNaoLidas} não lidas`} aria-expanded={notificacoesAbertas} aria-controls="painel-notificacoes"><Bell />{notificacoesNaoLidas > 0 && <span className="contador-notificacoes">{notificacoesNaoLidas}</span>}</button>
+              <button className="botao-icone botao-notificacoes" type="button" onClick={() => void alternarNotificacoes()} aria-label={`Notificações: ${notificacoesNaoLidas} não lidas`} aria-expanded={notificacoesAbertas} aria-controls="painel-notificacoes"><Bell />{notificacoesNaoLidas > 0 && <span className="contador-notificacoes">{notificacoesNaoLidas}</span>}</button>
               {notificacoesAbertas && <section className="painel-notificacoes" id="painel-notificacoes" aria-label="Central de notificações">
                 <header><div><span>ATUALIZAÇÕES</span><h2>Notificações</h2></div><button type="button" onClick={() => setNotificacoesAbertas(false)} aria-label="Fechar notificações"><X /></button></header>
-                <div className="lista-notificacoes">
-                  <article className={notificacoesNaoLidas > 0 ? "nao-lida" : ""}><span><Scale /></span><div><strong>Nova pesagem registrada</strong><p>José Santos entregou 42,8 kg de latinhas.</p><small>Há 8 minutos</small></div></article>
-                  <article className={notificacoesNaoLidas > 0 ? "nao-lida" : ""}><span><UsersRound /></span><div><strong>Cadastro atualizado</strong><p>Os dados de Maria Conceição foram revisados.</p><small>Há 35 minutos</small></div></article>
-                  <article className={notificacoesNaoLidas > 0 ? "nao-lida" : ""}><span><Building2 /></span><div><strong>Resumo da cooperativa</strong><p>A Coopesol Leste atingiu a meta semanal.</p><small>Hoje, 09:10</small></div></article>
-                </div>
-                <button className="marcar-notificacoes" type="button" onClick={() => setNotificacoesNaoLidas(0)} disabled={notificacoesNaoLidas === 0}><CheckCheck />{notificacoesNaoLidas === 0 ? "Tudo lido" : "Marcar todas como lidas"}</button>
+                <div className="lista-notificacoes">{notificacoes.length === 0 ? <p className="notificacoes-vazias">Nenhuma notificação registrada.</p> : notificacoes.map((item) => <article className={item.lida_em ? "" : "nao-lida"} key={item.uuid}><span>{item.tipo === "pesagem" ? <Scale /> : item.tipo === "catador" ? <UsersRound /> : <Building2 />}</span><button className="conteudo-notificacao" type="button" onClick={() => void marcarComoLida(item.uuid)}><strong>{item.titulo}</strong><p>{item.mensagem}</p><small>{new Date(item.criado_em).toLocaleString("pt-BR")}</small></button><button className="excluir-notificacao" type="button" onClick={() => void excluirNotificacao(item.uuid)} aria-label={`Excluir notificação: ${item.titulo}`}><Trash2 /></button></article>)}</div>
+                <footer className="acoes-notificacoes"><button className="marcar-notificacoes" type="button" onClick={() => void marcarTodasComoLidas()} disabled={notificacoesNaoLidas === 0}><CheckCheck />{notificacoesNaoLidas === 0 ? "Tudo lido" : "Marcar como lidas"}</button><button className="limpar-notificacoes" type="button" onClick={() => void limparNotificacoes()} disabled={notificacoes.length === 0}><Trash2 />Limpar</button></footer>
               </section>}
             </div>
             <button className="botao-icone botao-sair-mobile" type="button" onClick={sair} aria-label="Sair do sistema" title="Sair do sistema"><LogOut /></button>
