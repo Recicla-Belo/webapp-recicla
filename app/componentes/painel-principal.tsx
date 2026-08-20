@@ -1,20 +1,22 @@
+import { ArrowUpRight, CalendarDays, ChevronDown, Gauge, Recycle, Scale, Sparkles, UsersRound, WalletCards, type LucideIcon } from "lucide-react";
+
 const indicadores = [
-  { rotulo: "Catadores ativos", valor: "48", variacao: "+4 este mês", icone: "CA" },
-  { rotulo: "Total coletado", valor: "12.480 kg", variacao: "+8,2% no período", icone: "KG" },
-  { rotulo: "Valor a pagar", valor: "R$ 18.940", variacao: "32 pagamentos", icone: "R$" },
-  { rotulo: "Média por catador", valor: "260 kg", variacao: "+12 kg na média", icone: "ME" },
-  { rotulo: "Coletas realizadas", valor: "186", variacao: "+21 esta semana", icone: "CO" },
-];
+  { rotulo: "Catadores ativos", valor: "48", variacao: "+4 este mês", icone: UsersRound },
+  { rotulo: "Total coletado", valor: "12.480 kg", variacao: "+8,2% no período", icone: Scale },
+  { rotulo: "Valor a pagar", valor: "R$ 18.940", variacao: "32 pagamentos", icone: WalletCards },
+  { rotulo: "Média por catador", valor: "260 kg", variacao: "+12 kg na média", icone: Gauge },
+  { rotulo: "Coletas realizadas", valor: "186", variacao: "+21 esta semana", icone: Recycle },
+] satisfies Array<{ rotulo: string; valor: string; variacao: string; icone: LucideIcon }>;
 
 export function PainelPrincipal({ onNovaPesagem }: { onNovaPesagem: () => void }) {
   return <>
     <div className="chamada">
-      <div><span className="etiqueta">RESUMO DO DIA</span><h2>O trabalho de hoje gera<br/><em>impacto para sempre.</em></h2><p>Acompanhe os resultados da operação e valorize quem faz Belo Horizonte mais sustentável.</p></div>
-      <div className="impacto"><strong>3,2t</strong><span>de resíduos desviados<br/>de aterros esta semana</span></div>
+      <div className="conteudo-chamada"><span className="etiqueta"><Sparkles /> RESUMO DO DIA</span><h2>O trabalho de hoje gera<br/><em>impacto para sempre.</em></h2><p>Acompanhe os resultados da operação e valorize quem faz Belo Horizonte mais sustentável.</p></div>
+      <div className="impacto"><span className="icone-impacto"><Recycle /></span><div><strong>3,2 t</strong><span>de resíduos desviados de aterros esta semana</span></div></div>
     </div>
     <section className="secao-indicadores">
-      <div className="titulo-secao"><div><h2>Indicadores principais</h2><p>Visão consolidada da operação neste mês</p></div><button type="button" className="filtro">Agosto de 2026⌄</button></div>
-      <div className="grade-indicadores">{indicadores.map((item, indice) => <article className="cartao-indicador" key={item.rotulo}><div className={`icone-indicador cor-${indice}`}>{item.icone}</div><p>{item.rotulo}</p><strong>{item.valor}</strong><small>↗ {item.variacao}</small></article>)}</div>
+      <div className="titulo-secao"><div><h2>Indicadores principais</h2><p>Visão consolidada da operação neste mês</p></div><button type="button" className="filtro"><CalendarDays /> Agosto de 2026 <ChevronDown /></button></div>
+      <div className="grade-indicadores">{indicadores.map((item, indice) => <article className="cartao-indicador" key={item.rotulo}><div className={`icone-indicador cor-${indice}`}><item.icone /></div><p>{item.rotulo}</p><strong>{item.valor}</strong><small><ArrowUpRight /> {item.variacao}</small></article>)}</div>
     </section>
     <div className="grade-inferior">
       <section className="painel"><div className="titulo-secao"><div><h2>Produção da semana</h2><p>Volume coletado por dia</p></div><strong className="total-periodo">3.248 kg <small>+12,4%</small></strong></div><div className="grafico" aria-label="Gráfico de produção semanal">{[62,78,55,92,72,96,44].map((altura, i)=><div className="barra-grupo" key={i}><div className="barra" style={{height:`${altura}%`}}/><span>{["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"][i]}</span></div>)}</div></section>

@@ -60,6 +60,12 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(servidor, /if \(!requisicao\.cookies\.reciclabelo_sessao\) return \{ autenticado: false \}/);
   assert.match(servidor, /ativo = TRUE AND administrador = TRUE/);
   assert.match(estrutura, /setAutenticado\(dados\.autenticado === true\)/);
+  assert.match(estrutura, /aria-controls="painel-notificacoes"/);
+  assert.match(estrutura, /setNotificacoesNaoLidas\(0\)/);
+  assert.match(estilos, /\.usuario\{[^}]*cursor:pointer/);
+  assert.match(estilos, /\.campo input,\.campo select,\.campo textarea\{height:58px/);
+  assert.match(estilos, /\.conteudo:before\{/);
+  assert.equal(JSON.parse(pacote).dependencies["lucide-react"], "^1.33.0");
   assert.equal(JSON.parse(pacote).scripts.dev, "node scripts/desenvolver.mjs");
   assert.match(leiaMe, /PostgreSQL 18\.6/);
   await access(new URL("../public/og.png", import.meta.url));
