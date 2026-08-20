@@ -41,7 +41,11 @@ export function EstruturaAplicacao() {
     setEscuro(temaSalvo === "escuro");
     const base = process.env.NEXT_PUBLIC_URL_API ?? "http://localhost:3333";
     void fetch(`${base}/api/autenticacao/sessao`, { credentials: "include" })
-      .then((resposta) => setAutenticado(resposta.ok))
+      .then(async (resposta) => {
+        if (!resposta.ok) return setAutenticado(false);
+        const dados = await resposta.json() as { autenticado?: boolean };
+        setAutenticado(dados.autenticado === true);
+      })
       .catch(() => setAutenticado(false));
   }, []);
 

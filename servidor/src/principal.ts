@@ -45,8 +45,25 @@ await aplicacao.register(jwt, {
 });
 await aplicacao.register(multipart, { limits: { fileSize: ambiente.LIMITE_ARQUIVO_MB * 1024 * 1024, files: 1 } });
 
-const rotasPublicas = new Set(["/api/autenticacao/entrar"]);
+const rotaConsultarSessao = "/api/autenticacao/sessao";
+const rotasPublicas = new Set(["/api/autenticacao/entrar", rotaConsultarSessao]);
 const senhaFicticiaHash = await bcrypt.hash(`acesso-inexistente-${randomUUID()}`, 12);
+const opcoesCookieSessao = {
+  httpOnly: true,
+  sameSite: "strict" as const,
+  secure: ambiente.AMBIENTE === "producao",
+  path: "/",
+};
+
+type AdministradorAtivo = { uuid: string; nome: string; email: string; administrador: boolean };
+
+async function buscarAdministradorAtivo(usuarioUuid: string) {
+  const resultado = await banco.query<AdministradorAtivo>(
+    "SELECT uuid, nome, email, administrador FROM usuarios WHERE uuid = $1 AND ativo = TRUE AND administrador = TRUE LIMIT 1",
+    [usuarioUuid],
+  );
+  return resultado.rows[0];
+}
 
 async function exigirAutenticacao(requisicao: FastifyRequest, resposta: FastifyReply) {
   try {
@@ -54,9 +71,9 @@ async function exigirAutenticacao(requisicao: FastifyRequest, resposta: FastifyR
   } catch {
     return resposta.code(401).send({ mensagem: "Sessão inválida ou expirada." });
   }
-  const usuario = await banco.query("SELECT 1 FROM usuarios WHERE uuid = $1 AND ativo = TRUE AND administrador = TRUE LIMIT 1", [requisicao.user.usuarioUuid]);
-  if (!usuario.rowCount) {
-    resposta.clearCookie("reciclabelo_sessao", { path: "/" });
+  const usuario = await buscarAdministradorAtivo(requisicao.user.usuarioUuid);
+  if (!usuario) {
+    resposta.clearCookie("reciclabelo_sessao", opcoesCookieSessao);
     return resposta.code(401).send({ mensagem: "Sessão inválida ou expirada." });
   }
 }
@@ -80,7 +97,7 @@ aplicacao.post("/api/autenticacao/entrar", { config: { rateLimit: { max: 5, time
   const entrada = z.object({ email: z.string().trim().max(254).regex(/^[^\s@]+@[^\s@]+$/), senha: z.string().min(1).max(128) }).safeParse(requisicao.body);
   if (!entrada.success) return resposta.code(400).send({ mensagem: "E-mail ou senha inválidos." });
   const resultado = await banco.query<{ uuid: string; email: string; nome: string; senha_hash: string; administrador: boolean }>(
-    "SELECT uuid, email, nome, senha_hash, administrador FROM usuarios WHERE email = $1 AND ativo = TRUE LIMIT 1",
+    "SELECT uuid, email, nome, senha_hash, administrador FROM usuarios WHERE email = $1 AND ativo = TRUE AND administrador = TRUE LIMIT 1",
     [entrada.data.email.toLowerCase()],
   );
   const usuario = resultado.rows[0];
@@ -90,19 +107,28 @@ aplicacao.post("/api/autenticacao/entrar", { config: { rateLimit: { max: 5, time
   }
   await banco.query("UPDATE usuarios SET ultimo_acesso_em = now() WHERE uuid = $1", [usuario.uuid]);
   const token = await resposta.jwtSign({ usuarioUuid: usuario.uuid, email: usuario.email, administrador: usuario.administrador });
-  resposta.setCookie("reciclabelo_sessao", token, {
-    httpOnly: true,
-    sameSite: "strict",
-    secure: ambiente.AMBIENTE === "producao",
-    path: "/",
-  });
+  resposta.setCookie("reciclabelo_sessao", token, opcoesCookieSessao);
   return { autenticado: true, usuario: { uuid: usuario.uuid, nome: usuario.nome, email: usuario.email, administrador: usuario.administrador } };
 });
 
-aplicacao.get("/api/autenticacao/sessao", async (requisicao) => ({ autenticado: true, usuario: { email: requisicao.user.email, administrador: true } }));
+aplicacao.get(rotaConsultarSessao, { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (requisicao, resposta) => {
+  if (!requisicao.cookies.reciclabelo_sessao) return { autenticado: false };
+  try {
+    await requisicao.jwtVerify();
+  } catch {
+    resposta.clearCookie("reciclabelo_sessao", opcoesCookieSessao);
+    return { autenticado: false };
+  }
+  const usuario = await buscarAdministradorAtivo(requisicao.user.usuarioUuid);
+  if (!usuario) {
+    resposta.clearCookie("reciclabelo_sessao", opcoesCookieSessao);
+    return { autenticado: false };
+  }
+  return { autenticado: true, usuario };
+});
 
 aplicacao.post("/api/autenticacao/sair", async (_requisicao, resposta) => {
-  resposta.clearCookie("reciclabelo_sessao", { path: "/" });
+  resposta.clearCookie("reciclabelo_sessao", opcoesCookieSessao);
   return resposta.code(204).send();
 });
 

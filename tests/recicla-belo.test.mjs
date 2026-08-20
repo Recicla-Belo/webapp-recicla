@@ -27,7 +27,7 @@ test("renderiza a experiência do Recicla Belô", async () => {
 });
 
 test("mantém ambiente, banco e instalação documentados", async () => {
-  const [exemplo, estilos, migracao, sqlCompleto, instalador, supervisor, servidor, leiaMe, pacote] = await Promise.all([
+  const [exemplo, estilos, migracao, sqlCompleto, instalador, supervisor, servidor, estrutura, leiaMe, pacote] = await Promise.all([
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/001_estrutura_inicial.sql", import.meta.url), "utf8"),
@@ -35,6 +35,7 @@ test("mantém ambiente, banco e instalação documentados", async () => {
     readFile(new URL("../scripts/instalar-e-iniciar.sh", import.meta.url), "utf8"),
     readFile(new URL("../scripts/desenvolver.mjs", import.meta.url), "utf8"),
     readFile(new URL("../servidor/src/principal.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/componentes/estrutura-aplicacao.tsx", import.meta.url), "utf8"),
     readFile(new URL("../README.md", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
@@ -55,6 +56,10 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(servidor, /sameSite: "strict"/);
   assert.match(servidor, /addHook\("onRequest"/);
   assert.match(servidor, /rateLimit/);
+  assert.match(servidor, /rotasPublicas = new Set\(\["\/api\/autenticacao\/entrar", rotaConsultarSessao\]\)/);
+  assert.match(servidor, /if \(!requisicao\.cookies\.reciclabelo_sessao\) return \{ autenticado: false \}/);
+  assert.match(servidor, /ativo = TRUE AND administrador = TRUE/);
+  assert.match(estrutura, /setAutenticado\(dados\.autenticado === true\)/);
   assert.equal(JSON.parse(pacote).scripts.dev, "node scripts/desenvolver.mjs");
   assert.match(leiaMe, /PostgreSQL 18\.6/);
   await access(new URL("../public/og.png", import.meta.url));
