@@ -1,0 +1,16 @@
+"use client";
+
+import { useState } from "react";
+import { materiais as materiaisIniciais } from "@/app/dados/demonstracao";
+
+export function TelaConfiguracoes() {
+  const [materiais,setMateriais]=useState(materiaisIniciais);
+  const [modal,setModal]=useState(false);
+  return <section className="pagina-interna configuracoes">
+    <div className="abas-configuracao"><button className="ativo">Materiais</button><button>Pontos de apoio</button><button>Responsáveis</button><button>Preferências</button></div>
+    <div className="resumo-pagina"><div><h2>Materiais e valores</h2><p>Defina unidades, referências de quantidade e valores pagos.</p></div><button className="botao-primario" onClick={()=>setModal(true)}>＋ Novo material</button></div>
+    <div className="lista-materiais">{materiais.map(material=><article key={material.uuid}><span className="amostra-material" style={{background:material.cor}}>{material.tipo.slice(0,2).toUpperCase()}</span><div className="nome-material"><strong>{material.nome}</strong><small>{material.tipo} · {material.unidade.toUpperCase()}</small></div><div><small>Referência de pagamento</small><strong>R$ {material.valorReferencia.toFixed(2).replace(".",",")} a cada {material.quantidadeReferencia} {material.unidade}</strong></div><span className={material.ativo?"status ativo":"status"}>● {material.ativo?"Ativo":"Inativo"}</span><button className="botao-secundario">Editar</button><button className="menu-acoes" onClick={()=>setMateriais(lista=>lista.filter(m=>m.uuid!==material.uuid))} aria-label={`Excluir ${material.nome}`}>×</button></article>)}</div>
+    <div className="nota-configuracao"><span>i</span><p><strong>Como o valor é calculado?</strong><br/>A referência permite pagar, por exemplo, R$ 10,00 a cada 20 kg. O sistema calcula proporcionalmente e mostra o total antes da confirmação.</p></div>
+    {modal&&<div className="sobreposicao" role="dialog" aria-modal="true"><div className="modal pequeno"><header className="cabecalho-modal"><div><span>CONFIGURAÇÃO</span><h2>Novo material</h2><p>Configure como o material será pesado e pago.</p></div><button onClick={()=>setModal(false)}>×</button></header><form className="formulario"><div className="grade-formulario"><label className="campo campo-largo">Nome do material<input placeholder="Ex.: Garrafa PET"/></label><label className="campo">Tipo<select><option>Plástico</option><option>Metal</option><option>Papel</option><option>Vidro</option><option>Misto</option><option>Outro</option></select></label><label className="campo">Unidade<select><option>kg</option><option>unidade</option><option>fardo</option><option>litro</option></select></label><label className="campo">Quantidade de referência<input type="number" min="0.01" step="0.01" defaultValue="1"/></label><label className="campo">Valor pago na referência<input inputMode="decimal" placeholder="R$ 0,00"/></label></div><label className="interruptor compacto"><input type="checkbox" defaultChecked/><span/><div><strong>Material ativo para novas pesagens</strong></div></label></form><footer className="rodape-modal"><button className="botao-secundario" onClick={()=>setModal(false)}>Cancelar</button><button className="botao-primario" onClick={()=>setModal(false)}>Salvar material</button></footer></div></div>}
+  </section>;
+}

@@ -1,0 +1,202 @@
+BEGIN;
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+CREATE TYPE status_cadastro AS ENUM ('ativo', 'inativo');
+CREATE TYPE tipo_contato AS ENUM ('celular', 'telefone', 'whatsapp', 'recado', 'email');
+CREATE TYPE tipo_conta_financeira AS ENUM ('pix', 'conta_bancaria');
+CREATE TYPE status_pesagem AS ENUM ('rascunho', 'confirmada', 'cancelada');
+
+CREATE TABLE IF NOT EXISTS usuarios (
+  uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  nome VARCHAR(160) NOT NULL,
+  email VARCHAR(254) NOT NULL,
+  senha_hash TEXT NOT NULL,
+  administrador BOOLEAN NOT NULL DEFAULT FALSE,
+  ativo BOOLEAN NOT NULL DEFAULT TRUE,
+  ultimo_acesso_em TIMESTAMPTZ,
+  criado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+  atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT usuarios_email_unico UNIQUE (email),
+  CONSTRAINT usuarios_email_minusculo CHECK (email = lower(email))
+);
+
+CREATE TABLE IF NOT EXISTS cooperativas (
+  uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  nome VARCHAR(160) NOT NULL,
+  nome_responsavel VARCHAR(160) NOT NULL,
+  telefone VARCHAR(30),
+  observacao TEXT,
+  status status_cadastro NOT NULL DEFAULT 'ativo',
+  criado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+  atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT cooperativas_nome_unico UNIQUE (nome)
+);
+
+CREATE TABLE IF NOT EXISTS catadores (
+  uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  codigo VARCHAR(24) NOT NULL,
+  cooperativa_uuid UUID REFERENCES cooperativas(uuid) ON DELETE SET NULL,
+  nome_completo VARCHAR(200) NOT NULL,
+  apelido VARCHAR(100),
+  genero VARCHAR(60),
+  raca_cor VARCHAR(60),
+  data_nascimento DATE,
+  cpf CHAR(11),
+  status status_cadastro NOT NULL DEFAULT 'ativo',
+  criado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+  atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT catadores_codigo_unico UNIQUE (codigo),
+  CONSTRAINT catadores_cpf_unico UNIQUE NULLS NOT DISTINCT (cpf),
+  CONSTRAINT catadores_cpf_formato CHECK (cpf IS NULL OR cpf ~ '^[0-9]{11}$')
+);
+
+CREATE TABLE IF NOT EXISTS contatos_catador (
+  uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  catador_uuid UUID NOT NULL REFERENCES catadores(uuid) ON DELETE CASCADE,
+  tipo tipo_contato NOT NULL,
+  valor VARCHAR(254) NOT NULL,
+  principal BOOLEAN NOT NULL DEFAULT FALSE,
+  observacao VARCHAR(200),
+  criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS enderecos_catador (
+  uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  catador_uuid UUID NOT NULL REFERENCES catadores(uuid) ON DELETE CASCADE,
+  cep CHAR(8),
+  logradouro VARCHAR(200),
+  numero VARCHAR(30),
+  complemento VARCHAR(120),
+  bairro VARCHAR(120),
+  cidade VARCHAR(120) DEFAULT 'Belo Horizonte',
+  estado CHAR(2) DEFAULT 'MG',
+  referencia TEXT,
+  criado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+  atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT enderecos_catador_unico UNIQUE (catador_uuid),
+  CONSTRAINT enderecos_cep_formato CHECK (cep IS NULL OR cep ~ '^[0-9]{8}$')
+);
+
+CREATE TABLE IF NOT EXISTS contas_financeiras_catador (
+  uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  catador_uuid UUID NOT NULL REFERENCES catadores(uuid) ON DELETE CASCADE,
+  tipo tipo_conta_financeira NOT NULL,
+  tipo_chave_pix VARCHAR(30),
+  chave_pix TEXT,
+  banco VARCHAR(120),
+  agencia VARCHAR(20),
+  numero_conta VARCHAR(30),
+  tipo_conta VARCHAR(40),
+  de_terceiro BOOLEAN NOT NULL DEFAULT FALSE,
+  nome_titular VARCHAR(200),
+  cpf_titular CHAR(11),
+  relacao_titular VARCHAR(120),
+  ativo BOOLEAN NOT NULL DEFAULT TRUE,
+  criado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+  atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT contas_cpf_titular_formato CHECK (cpf_titular IS NULL OR cpf_titular ~ '^[0-9]{11}$')
+);
+
+CREATE TABLE IF NOT EXISTS arquivos_catador (
+  uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  catador_uuid UUID NOT NULL REFERENCES catadores(uuid) ON DELETE CASCADE,
+  tipo VARCHAR(40) NOT NULL DEFAULT 'foto_rosto',
+  nome_arquivo TEXT NOT NULL,
+  chave_armazenamento TEXT NOT NULL,
+  tipo_mime VARCHAR(100) NOT NULL,
+  tamanho_bytes BIGINT NOT NULL,
+  hash_sha256 CHAR(64),
+  criado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT arquivos_tamanho_positivo CHECK (tamanho_bytes > 0),
+  CONSTRAINT arquivos_chave_unica UNIQUE (chave_armazenamento)
+);
+
+CREATE TABLE IF NOT EXISTS pontos_apoio (
+  uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  nome VARCHAR(160) NOT NULL UNIQUE,
+  status status_cadastro NOT NULL DEFAULT 'ativo',
+  criado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+  atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS responsaveis_pesagem (
+  uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  nome VARCHAR(160) NOT NULL,
+  status status_cadastro NOT NULL DEFAULT 'ativo',
+  criado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+  atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT responsaveis_nome_unico UNIQUE (nome)
+);
+
+CREATE TABLE IF NOT EXISTS materiais (
+  uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  nome VARCHAR(160) NOT NULL,
+  tipo_material VARCHAR(100) NOT NULL,
+  unidade VARCHAR(30) NOT NULL DEFAULT 'kg',
+  quantidade_referencia NUMERIC(14,3) NOT NULL DEFAULT 1,
+  valor_referencia NUMERIC(14,2) NOT NULL,
+  status status_cadastro NOT NULL DEFAULT 'ativo',
+  criado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+  atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT materiais_nome_unico UNIQUE (nome),
+  CONSTRAINT materiais_quantidade_positiva CHECK (quantidade_referencia > 0),
+  CONSTRAINT materiais_valor_nao_negativo CHECK (valor_referencia >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS pesagens (
+  uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  codigo VARCHAR(24) NOT NULL UNIQUE,
+  catador_uuid UUID NOT NULL REFERENCES catadores(uuid) ON DELETE RESTRICT,
+  ponto_apoio_uuid UUID NOT NULL REFERENCES pontos_apoio(uuid) ON DELETE RESTRICT,
+  responsavel_pesagem_uuid UUID REFERENCES responsaveis_pesagem(uuid) ON DELETE RESTRICT,
+  responsavel_outro VARCHAR(160),
+  status status_pesagem NOT NULL DEFAULT 'confirmada',
+  observacao TEXT,
+  peso_total NUMERIC(14,3) NOT NULL DEFAULT 0,
+  valor_total NUMERIC(14,2) NOT NULL DEFAULT 0,
+  confirmada_em TIMESTAMPTZ,
+  criada_por_uuid UUID NOT NULL REFERENCES usuarios(uuid) ON DELETE RESTRICT,
+  criado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+  atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT pesagens_responsavel_preenchido CHECK (responsavel_pesagem_uuid IS NOT NULL OR responsavel_outro IS NOT NULL),
+  CONSTRAINT pesagens_peso_nao_negativo CHECK (peso_total >= 0),
+  CONSTRAINT pesagens_valor_nao_negativo CHECK (valor_total >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS itens_pesagem (
+  uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  pesagem_uuid UUID NOT NULL REFERENCES pesagens(uuid) ON DELETE CASCADE,
+  material_uuid UUID NOT NULL REFERENCES materiais(uuid) ON DELETE RESTRICT,
+  peso NUMERIC(14,3) NOT NULL,
+  unidade VARCHAR(30) NOT NULL,
+  quantidade_referencia NUMERIC(14,3) NOT NULL,
+  valor_referencia NUMERIC(14,2) NOT NULL,
+  valor_total NUMERIC(14,2) GENERATED ALWAYS AS (round((peso / quantidade_referencia) * valor_referencia, 2)) STORED,
+  observacao TEXT,
+  criado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT itens_peso_positivo CHECK (peso > 0),
+  CONSTRAINT itens_quantidade_referencia_positiva CHECK (quantidade_referencia > 0)
+);
+
+CREATE TABLE IF NOT EXISTS auditoria (
+  uuid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  usuario_uuid UUID REFERENCES usuarios(uuid) ON DELETE SET NULL,
+  acao VARCHAR(80) NOT NULL,
+  entidade VARCHAR(80) NOT NULL,
+  entidade_uuid UUID,
+  dados JSONB NOT NULL DEFAULT '{}'::jsonb,
+  endereco_ip INET,
+  criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX catadores_cooperativa_idx ON catadores(cooperativa_uuid);
+CREATE INDEX catadores_busca_textual_idx ON catadores USING GIN (to_tsvector('portuguese', coalesce(nome_completo,'') || ' ' || coalesce(apelido,'') || ' ' || codigo));
+CREATE INDEX cooperativas_busca_textual_idx ON cooperativas USING GIN (to_tsvector('portuguese', nome || ' ' || nome_responsavel));
+CREATE INDEX contatos_catador_catador_idx ON contatos_catador(catador_uuid);
+CREATE INDEX pesagens_catador_data_idx ON pesagens(catador_uuid, criado_em DESC);
+CREATE INDEX pesagens_ponto_data_idx ON pesagens(ponto_apoio_uuid, criado_em DESC);
+CREATE INDEX itens_pesagem_material_idx ON itens_pesagem(material_uuid);
+CREATE INDEX auditoria_entidade_idx ON auditoria(entidade, entidade_uuid, criado_em DESC);
+
+COMMIT;

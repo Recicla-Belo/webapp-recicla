@@ -1,0 +1,31 @@
+{
+  "name": "@recicla-belo/servidor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24.0.0" },
+  "scripts": {
+    "desenvolver": "tsx watch src/principal.ts",
+    "iniciar": "tsx src/principal.ts",
+    "verificar": "tsc --noEmit",
+    "migrar": "tsx src/banco/migrar.ts",
+    "seed": "tsx src/banco/seed.ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "11.3.0",
+    "@fastify/jwt": "10.2.2",
+    "@fastify/multipart": "10.1.1",
+    "bcrypt": "6.0.0",
+    "dotenv": "17.4.2",
+    "fastify": "5.12.1",
+    "pg": "8.23.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "6.0.0",
+    "@types/node": "26.2.0",
+    "@types/pg": "8.23.1",
+    "tsx": "4.23.12",
+    "typescript": "7.0.2"
+  }
+}
