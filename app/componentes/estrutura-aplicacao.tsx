@@ -11,6 +11,7 @@ import { TelaPesagem } from "./tela-pesagem";
 import { TelaRelatorios } from "./tela-relatorios";
 import { TelaConfiguracoes } from "./tela-configuracoes";
 import { TelaLogin } from "./tela-login";
+import { MarcaPlataforma } from "./marca-plataforma";
 
 const itens: Array<{ pagina: Pagina; rotulo: string; icone: string }> = [
   { pagina: "painel", rotulo: "Visão geral", icone: "▦" },
@@ -33,12 +34,15 @@ const titulos: Record<Pagina, { sobrelinha: string; titulo: string }> = {
 export function EstruturaAplicacao() {
   const [pagina, setPagina] = useState<Pagina>("painel");
   const [escuro, setEscuro] = useState(false);
-  const [token, setToken] = useState<string | null>(null);
+  const [autenticado, setAutenticado] = useState(false);
 
   useEffect(() => {
     const temaSalvo = window.localStorage.getItem("reciclabelo-tema");
     setEscuro(temaSalvo === "escuro");
-    setToken(window.sessionStorage.getItem("reciclabelo-token"));
+    const base = process.env.NEXT_PUBLIC_URL_API ?? "http://localhost:3333";
+    void fetch(`${base}/api/autenticacao/sessao`, { credentials: "include" })
+      .then((resposta) => setAutenticado(resposta.ok))
+      .catch(() => setAutenticado(false));
   }, []);
 
   useEffect(() => {
@@ -51,24 +55,23 @@ export function EstruturaAplicacao() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function autenticar(novoToken: string) {
-    window.sessionStorage.setItem("reciclabelo-token", novoToken);
-    setToken(novoToken);
+  function autenticar() {
+    setAutenticado(true);
   }
 
-  function sair() {
-    window.sessionStorage.removeItem("reciclabelo-token");
-    setToken(null);
+  async function sair() {
+    const base = process.env.NEXT_PUBLIC_URL_API ?? "http://localhost:3333";
+    await fetch(`${base}/api/autenticacao/sair`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}", credentials: "include" }).catch(() => undefined);
+    setAutenticado(false);
   }
 
-  if (!token) return <TelaLogin onAutenticado={autenticar} />;
+  if (!autenticado) return <TelaLogin onAutenticado={autenticar} />;
 
   return (
     <main className="aplicacao">
       <aside className="barra-lateral" aria-label="Navegação principal">
         <button className="marca" type="button" onClick={() => navegar("painel")} aria-label="Ir para visão geral">
-          <span className="marca-simbolo" aria-hidden="true">RB</span>
-          <div><strong>Recicla Belô</strong><small>Gestão que transforma</small></div>
+          <MarcaPlataforma compacta />
         </button>
         <nav>
           {itens.map((item) => (

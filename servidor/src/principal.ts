@@ -1,19 +1,25 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
-import { extname, resolve } from "node:path";
-import Fastify, { type FastifyRequest } from "fastify";
+import { basename, resolve } from "node:path";
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
+import helmet from "@fastify/helmet";
 import jwt from "@fastify/jwt";
 import multipart from "@fastify/multipart";
+import rateLimit from "@fastify/rate-limit";
 import bcrypt from "bcrypt";
 import { z } from "zod";
 import { banco } from "./banco/conexao.js";
 import { ambiente } from "./configuracao/ambiente.js";
 
 const aplicacao = Fastify({
-  logger: { level: ambiente.AMBIENTE === "producao" ? "info" : "debug" },
+  logger: {
+    level: ambiente.AMBIENTE === "producao" ? "info" : "debug",
+    redact: ["req.headers.authorization", "req.headers.cookie", "res.headers.set-cookie"],
+  },
   bodyLimit: ambiente.LIMITE_ARQUIVO_MB * 1024 * 1024,
-  trustProxy: true,
+  trustProxy: ambiente.confiarProxy,
 });
 
 await aplicacao.register(cors, {
@@ -23,35 +29,84 @@ await aplicacao.register(cors, {
   },
   credentials: true,
 });
-await aplicacao.register(jwt, { secret: ambiente.SEGREDO_JWT, sign: { expiresIn: ambiente.EXPIRACAO_SESSAO } });
+await aplicacao.register(helmet, { global: true });
+await aplicacao.register(rateLimit, {
+  global: true,
+  max: 240,
+  timeWindow: "1 minute",
+  errorResponseBuilder: () => ({ mensagem: "Muitas requisições. Aguarde alguns instantes e tente novamente." }),
+});
+await aplicacao.register(cookie);
+await aplicacao.register(jwt, {
+  secret: ambiente.SEGREDO_JWT,
+  cookie: { cookieName: "reciclabelo_sessao", signed: false },
+  sign: { expiresIn: ambiente.EXPIRACAO_SESSAO, algorithm: "HS256", iss: "recicla-belo-api", aud: "recicla-belo-web" },
+  verify: { algorithms: ["HS256"], allowedIss: "recicla-belo-api", allowedAud: "recicla-belo-web" },
+});
 await aplicacao.register(multipart, { limits: { fileSize: ambiente.LIMITE_ARQUIVO_MB * 1024 * 1024, files: 1 } });
 
-async function exigirAutenticacao(requisicao: FastifyRequest) {
-  await requisicao.jwtVerify();
+const rotasPublicas = new Set(["/api/autenticacao/entrar"]);
+const senhaFicticiaHash = await bcrypt.hash(`acesso-inexistente-${randomUUID()}`, 12);
+
+async function exigirAutenticacao(requisicao: FastifyRequest, resposta: FastifyReply) {
+  try {
+    await requisicao.jwtVerify();
+  } catch {
+    return resposta.code(401).send({ mensagem: "Sessão inválida ou expirada." });
+  }
+  const usuario = await banco.query("SELECT 1 FROM usuarios WHERE uuid = $1 AND ativo = TRUE AND administrador = TRUE LIMIT 1", [requisicao.user.usuarioUuid]);
+  if (!usuario.rowCount) {
+    resposta.clearCookie("reciclabelo_sessao", { path: "/" });
+    return resposta.code(401).send({ mensagem: "Sessão inválida ou expirada." });
+  }
 }
+
+aplicacao.addHook("onRequest", async (requisicao, resposta) => {
+  const caminho = requisicao.url.split("?", 1)[0] ?? "";
+  if (caminho.startsWith("/api/") && !rotasPublicas.has(caminho)) return exigirAutenticacao(requisicao, resposta);
+});
+
+aplicacao.addHook("onSend", async (requisicao, resposta, carga) => {
+  if ((requisicao.routeOptions.url ?? "").startsWith("/api/")) resposta.header("cache-control", "no-store");
+  return carga;
+});
 
 aplicacao.get("/saude", async () => {
   await banco.query("SELECT 1");
-  return { estado: "saudavel", servico: "recicla-belo-api", horario: new Date().toISOString() };
+  return { estado: "saudavel" };
 });
 
-aplicacao.post("/api/autenticacao/entrar", async (requisicao, resposta) => {
-  const entrada = z.object({ email: z.string().regex(/^[^\s@]+@[^\s@]+$/), senha: z.string().min(1) }).safeParse(requisicao.body);
+aplicacao.post("/api/autenticacao/entrar", { config: { rateLimit: { max: 5, timeWindow: "15 minutes" } } }, async (requisicao, resposta) => {
+  const entrada = z.object({ email: z.string().trim().max(254).regex(/^[^\s@]+@[^\s@]+$/), senha: z.string().min(1).max(128) }).safeParse(requisicao.body);
   if (!entrada.success) return resposta.code(400).send({ mensagem: "E-mail ou senha inválidos." });
   const resultado = await banco.query<{ uuid: string; email: string; nome: string; senha_hash: string; administrador: boolean }>(
     "SELECT uuid, email, nome, senha_hash, administrador FROM usuarios WHERE email = $1 AND ativo = TRUE LIMIT 1",
     [entrada.data.email.toLowerCase()],
   );
   const usuario = resultado.rows[0];
-  if (!usuario || !(await bcrypt.compare(entrada.data.senha, usuario.senha_hash))) {
+  const senhaCorreta = await bcrypt.compare(entrada.data.senha, usuario?.senha_hash ?? senhaFicticiaHash);
+  if (!usuario || !senhaCorreta) {
     return resposta.code(401).send({ mensagem: "E-mail ou senha inválidos." });
   }
   await banco.query("UPDATE usuarios SET ultimo_acesso_em = now() WHERE uuid = $1", [usuario.uuid]);
   const token = await resposta.jwtSign({ usuarioUuid: usuario.uuid, email: usuario.email, administrador: usuario.administrador });
-  return { token, usuario: { uuid: usuario.uuid, nome: usuario.nome, email: usuario.email, administrador: usuario.administrador } };
+  resposta.setCookie("reciclabelo_sessao", token, {
+    httpOnly: true,
+    sameSite: "strict",
+    secure: ambiente.AMBIENTE === "producao",
+    path: "/",
+  });
+  return { autenticado: true, usuario: { uuid: usuario.uuid, nome: usuario.nome, email: usuario.email, administrador: usuario.administrador } };
 });
 
-aplicacao.get("/api/painel", { preHandler: exigirAutenticacao }, async () => {
+aplicacao.get("/api/autenticacao/sessao", async (requisicao) => ({ autenticado: true, usuario: { email: requisicao.user.email, administrador: true } }));
+
+aplicacao.post("/api/autenticacao/sair", async (_requisicao, resposta) => {
+  resposta.clearCookie("reciclabelo_sessao", { path: "/" });
+  return resposta.code(204).send();
+});
+
+aplicacao.get("/api/painel", async () => {
   const { rows } = await banco.query(`SELECT
     (SELECT count(*)::int FROM catadores WHERE status = 'ativo') AS catadores_ativos,
     coalesce(sum(p.peso_total), 0)::float8 AS total_coletado,
@@ -62,7 +117,7 @@ aplicacao.get("/api/painel", { preHandler: exigirAutenticacao }, async () => {
   return rows[0];
 });
 
-aplicacao.get("/api/catadores", { preHandler: exigirAutenticacao }, async (requisicao) => {
+aplicacao.get("/api/catadores", async (requisicao) => {
   const consulta = z.object({ busca: z.string().trim().max(120).default(""), limite: z.coerce.number().int().min(1).max(100).default(30), deslocamento: z.coerce.number().int().min(0).default(0) }).parse(requisicao.query);
   const parametros: unknown[] = [consulta.limite, consulta.deslocamento];
   let filtro = "";
@@ -91,7 +146,7 @@ const esquemaCatador = z.object({
   endereco: z.object({ cep: z.string().regex(/^\d{8}$/).optional(), logradouro: z.string().max(200).optional(), numero: z.string().max(30).optional(), complemento: z.string().max(120).optional(), bairro: z.string().max(120).optional(), cidade: z.string().max(120).default("Belo Horizonte"), estado: z.string().length(2).default("MG") }).optional(),
 });
 
-aplicacao.post("/api/catadores", { preHandler: exigirAutenticacao }, async (requisicao, resposta) => {
+aplicacao.post("/api/catadores", async (requisicao, resposta) => {
   const entrada = esquemaCatador.safeParse(requisicao.body);
   if (!entrada.success) return resposta.code(400).send({ mensagem: "Revise os dados informados.", detalhes: z.treeifyError(entrada.error) });
   const cliente = await banco.connect();
@@ -112,27 +167,28 @@ aplicacao.post("/api/catadores", { preHandler: exigirAutenticacao }, async (requ
   } finally { cliente.release(); }
 });
 
-aplicacao.post("/api/catadores/:uuid/foto", { preHandler: exigirAutenticacao }, async (requisicao, resposta) => {
+aplicacao.post("/api/catadores/:uuid/foto", async (requisicao, resposta) => {
   const catadorUuid = z.uuid().parse((requisicao.params as { uuid: string }).uuid);
   const arquivo = await requisicao.file();
   if (!arquivo || !["image/jpeg", "image/png", "image/webp"].includes(arquivo.mimetype)) return resposta.code(400).send({ mensagem: "Envie uma foto JPG, PNG ou WebP." });
   const conteudo = await arquivo.toBuffer();
-  const extensao = extname(arquivo.filename).toLowerCase() || ".jpg";
+  const extensao = { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp" }[arquivo.mimetype]!;
   const chave = `${catadorUuid}/${randomUUID()}${extensao}`;
   const destino = resolve(ambiente.PASTA_ARQUIVOS, chave);
+  const nomeOriginal = [...basename(arquivo.filename)].filter((caractere) => caractere.charCodeAt(0) > 31 && caractere.charCodeAt(0) !== 127).join("").slice(0, 255) || `foto${extensao}`;
   await mkdir(resolve(destino, ".."), { recursive: true });
   await writeFile(destino, conteudo, { flag: "wx" });
   await banco.query(`INSERT INTO arquivos_catador (catador_uuid,nome_arquivo,chave_armazenamento,tipo_mime,tamanho_bytes,hash_sha256)
-    VALUES ($1,$2,$3,$4,$5,$6)`, [catadorUuid, arquivo.filename, chave, arquivo.mimetype, conteudo.length, createHash("sha256").update(conteudo).digest("hex")]);
+    VALUES ($1,$2,$3,$4,$5,$6)`, [catadorUuid, nomeOriginal, chave, arquivo.mimetype, conteudo.length, createHash("sha256").update(conteudo).digest("hex")]);
   return resposta.code(201).send({ chave });
 });
 
-aplicacao.get("/api/materiais", { preHandler: exigirAutenticacao }, async () => {
+aplicacao.get("/api/materiais", async () => {
   const { rows } = await banco.query("SELECT * FROM materiais ORDER BY status DESC, nome");
   return { dados: rows };
 });
 
-aplicacao.post("/api/pesagens", { preHandler: exigirAutenticacao }, async (requisicao, resposta) => {
+aplicacao.post("/api/pesagens", async (requisicao, resposta) => {
   const entrada = z.object({ catadorUuid: z.uuid(), pontoApoioUuid: z.uuid(), responsavelPesagemUuid: z.uuid().optional(), responsavelOutro: z.string().min(2).max(160).optional(), materialUuid: z.uuid(), peso: z.number().positive(), observacao: z.string().max(1000).optional() }).safeParse(requisicao.body);
   if (!entrada.success) return resposta.code(400).send({ mensagem: "Revise os dados da pesagem.", detalhes: z.treeifyError(entrada.error) });
   if (!entrada.data.responsavelPesagemUuid && !entrada.data.responsavelOutro) return resposta.code(400).send({ mensagem: "Informe o responsável pela pesagem." });
@@ -140,7 +196,10 @@ aplicacao.post("/api/pesagens", { preHandler: exigirAutenticacao }, async (requi
   try {
     await cliente.query("BEGIN");
     const material = await cliente.query<{ unidade: string; quantidade_referencia: number; valor_referencia: number }>("SELECT unidade, quantidade_referencia::float8, valor_referencia::float8 FROM materiais WHERE uuid=$1 AND status='ativo' FOR SHARE", [entrada.data.materialUuid]);
-    if (!material.rows[0]) return resposta.code(404).send({ mensagem: "Material não encontrado ou inativo." });
+    if (!material.rows[0]) {
+      await cliente.query("ROLLBACK");
+      return resposta.code(404).send({ mensagem: "Material não encontrado ou inativo." });
+    }
     const ref = material.rows[0];
     const valorTotal = Math.round((entrada.data.peso / ref.quantidade_referencia) * ref.valor_referencia * 100) / 100;
     const codigo = `PES-${Date.now().toString().slice(-8)}`;
@@ -152,7 +211,7 @@ aplicacao.post("/api/pesagens", { preHandler: exigirAutenticacao }, async (requi
   } catch (erro) { await cliente.query("ROLLBACK"); throw erro; } finally { cliente.release(); }
 });
 
-aplicacao.get("/api/relatorios/pesagens", { preHandler: exigirAutenticacao }, async (requisicao) => {
+aplicacao.get("/api/relatorios/pesagens", async (requisicao) => {
   const filtro = z.object({ inicio: z.iso.date().optional(), fim: z.iso.date().optional(), catadorUuid: z.uuid().optional(), limite: z.coerce.number().int().min(1).max(200).default(50) }).parse(requisicao.query);
   const { rows } = await banco.query(`SELECT p.uuid,p.codigo,p.criado_em,p.peso_total,p.valor_total,p.status,p.observacao,
       c.codigo AS codigo_catador,c.nome_completo AS catador,m.nome AS material,pa.nome AS ponto_apoio,
@@ -165,13 +224,19 @@ aplicacao.get("/api/relatorios/pesagens", { preHandler: exigirAutenticacao }, as
   return { dados: rows };
 });
 
+aplicacao.setNotFoundHandler((_requisicao, resposta) => resposta.code(404).send({ mensagem: "Recurso não encontrado." }));
+
 aplicacao.setErrorHandler((erro, requisicao, resposta) => {
-  requisicao.log.error(erro);
+  const status = (erro as { statusCode?: number }).statusCode;
+  if (status === 401) return resposta.code(401).send({ mensagem: "Sessão inválida ou expirada." });
+  if (status === 429) return resposta.code(429).send({ mensagem: "Muitas requisições. Aguarde alguns instantes e tente novamente." });
+  if (status === 415) return resposta.code(415).send({ mensagem: "Formato de conteúdo não aceito." });
   if (erro instanceof z.ZodError) return resposta.code(400).send({ mensagem: "Parâmetros inválidos.", detalhes: z.treeifyError(erro) });
   if ((erro as { code?: string }).code === "23505") return resposta.code(409).send({ mensagem: "Já existe um registro com esses dados." });
   if (["ECONNREFUSED", "57P01", "57P03"].includes((erro as { code?: string }).code ?? "")) {
     return resposta.code(503).send({ mensagem: "O banco de dados está indisponível. Inicie a aplicação com npm run dev." });
   }
+  requisicao.log.error(erro);
   return resposta.code(500).send({ mensagem: "Não foi possível concluir a operação." });
 });
 

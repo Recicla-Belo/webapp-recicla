@@ -21,22 +21,26 @@ test("renderiza a experiência do Recicla Belô", async () => {
   assert.match(html, /Acesso exclusivo do administrador/);
   assert.match(html, /Gestão que transforma/);
   assert.match(html, /Visualizar senha/);
+  assert.match(html, /Ambiente administrativo seguro/);
+  assert.doesNotMatch(html, /Cada pesagem conta|Cada pessoa importa/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Starter Project/i);
 });
 
 test("mantém ambiente, banco e instalação documentados", async () => {
-  const [exemplo, migracao, sqlCompleto, instalador, supervisor, leiaMe, pacote] = await Promise.all([
+  const [exemplo, migracao, sqlCompleto, instalador, supervisor, servidor, leiaMe, pacote] = await Promise.all([
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/001_estrutura_inicial.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/sql/recicla-belo-completo.sql", import.meta.url), "utf8"),
     readFile(new URL("../scripts/instalar-e-iniciar.sh", import.meta.url), "utf8"),
     readFile(new URL("../scripts/desenvolver.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../servidor/src/principal.ts", import.meta.url), "utf8"),
     readFile(new URL("../README.md", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
   assert.match(exemplo, /NEXT_PUBLIC_COR_PRIMARIA/);
   assert.match(exemplo, /ADMIN_EMAIL/);
   assert.match(exemplo, /PORTA_FRONTEND/);
+  assert.match(exemplo, /NEXT_PUBLIC_ICONE_APLICACAO="\/favicon\.svg"/);
   assert.match(migracao, /gen_random_uuid\(\)/);
   assert.match(migracao, /websearch_to_tsquery|to_tsvector/);
   assert.match(sqlCompleto, /CREATE TABLE IF NOT EXISTS pesagens/);
@@ -45,6 +49,10 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(instalador, /exec npm run dev/);
   assert.match(supervisor, /esperarBanco/);
   assert.match(supervisor, /esperarFrontend/);
+  assert.match(servidor, /httpOnly: true/);
+  assert.match(servidor, /sameSite: "strict"/);
+  assert.match(servidor, /addHook\("onRequest"/);
+  assert.match(servidor, /rateLimit/);
   assert.equal(JSON.parse(pacote).scripts.dev, "node scripts/desenvolver.mjs");
   assert.match(leiaMe, /PostgreSQL 18\.6/);
   await access(new URL("../public/og.png", import.meta.url));

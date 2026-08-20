@@ -41,7 +41,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <style>{`:root{--verde:${ambiente.corPrimaria};--verde-escuro:${ambiente.corPrimariaEscura};--fundo:${ambiente.corFundo}}`}</style>
+        <style>{`:root{--cor-primaria-config:${ambiente.corPrimaria};--cor-primaria-escura-config:${ambiente.corPrimariaEscura};--cor-fundo-config:${ambiente.corFundo}}`}</style>
         {children}
       </body>
     </html>

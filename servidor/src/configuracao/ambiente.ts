@@ -5,6 +5,7 @@ config({ path: new URL("../../../.env", import.meta.url).pathname.replace(/^\/(.
 
 const esquemaAmbiente = z.object({
   AMBIENTE: z.enum(["desenvolvimento", "teste", "producao"]).default("desenvolvimento"),
+  CONFIAR_PROXY: z.enum(["true", "false"]).default("false"),
   PORTA_API: z.coerce.number().int().positive().default(3333),
   ORIGEM_FRONTEND: z.string().default("http://localhost:3000"),
   SEGREDO_JWT: z.string().min(32),
@@ -27,4 +28,5 @@ export const ambiente = {
   ...resultado.data,
   origensPermitidas: resultado.data.ORIGEM_FRONTEND.split(",").map((origem) => origem.trim()),
   usarSsl: resultado.data.BANCO_SSL === "true",
+  confiarProxy: resultado.data.CONFIAR_PROXY === "true",
 };

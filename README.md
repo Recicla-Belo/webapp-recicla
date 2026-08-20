@@ -10,7 +10,7 @@ WebApp responsivo para gestão de cooperativas de reciclagem, catadores, produç
 - pesagem guiada com ponto de apoio, responsável, confirmação visual do catador, material, peso, observação e cálculo proporcional do valor;
 - materiais configuráveis por unidade, quantidade de referência, valor e situação ativa/inativa;
 - relatório detalhado e filtrável das reciclagens;
-- tema claro/escuro e layout responsivo para Android, iOS e desktop;
+- tema claro/escuro, identidade visual configurável e layout responsivo para Android, iOS e desktop;
 - API autenticada, PostgreSQL com UUID, auditoria, índices e pesquisa textual em português.
 
 ## Arquitetura
@@ -136,7 +136,11 @@ As buscas de catadores e cooperativas usam `to_tsvector`, `websearch_to_tsquery`
 ## Segurança e privacidade
 
 - senhas armazenadas apenas como hash bcrypt;
-- token JWT curto e obrigatório nas rotas de negócio;
+- sessão JWT em cookie `HttpOnly`, `SameSite=Strict`, com emissor, público e algoritmo verificados;
+- proteção automática de toda rota sob `/api/`, inclusive rotas adicionadas futuramente;
+- autorização administrativa conferida no banco em cada requisição autenticada;
+- limite global de requisições e limite reforçado contra força bruta no login;
+- cabeçalhos de segurança, respostas sem detalhes internos e logs com credenciais ocultadas;
 - CORS limitado às origens declaradas;
 - validação de entrada com Zod e parâmetros SQL posicionais;
 - cálculo do pagamento repetido e confirmado no servidor;
