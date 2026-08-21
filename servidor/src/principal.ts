@@ -76,6 +76,14 @@ async function criarNotificacao(executor: ExecutorSql, usuarioUuid: string, tipo
   );
 }
 
+async function registrarAuditoria(executor: ExecutorSql, usuarioUuid: string, acao: string, entidade: string, entidadeUuid: string, dados: Record<string, unknown>, enderecoIp?: string) {
+  await executor.query(
+    `INSERT INTO auditoria (usuario_uuid, acao, entidade, entidade_uuid, dados, endereco_ip)
+     VALUES ($1,$2,$3,$4,$5,$6)`,
+    [usuarioUuid, acao, entidade, entidadeUuid, dados, enderecoIp ?? null],
+  );
+}
+
 async function exigirAutenticacao(requisicao: FastifyRequest, resposta: FastifyReply) {
   try {
     await requisicao.jwtVerify();
@@ -150,16 +158,16 @@ aplicacao.get("/api/painel", async () => {
     coalesce(sum(p.valor_total), 0)::float8 AS valor_total_pagar,
     count(p.uuid)::int AS coletas_realizadas,
     coalesce(sum(p.peso_total) / nullif(count(DISTINCT p.catador_uuid), 0), 0)::float8 AS media_por_catador
-    FROM pesagens p WHERE p.status = 'confirmada' AND date_trunc('month', p.criado_em) = date_trunc('month', now())`);
+    FROM pesagens p WHERE p.status = 'concluida' AND p.excluida_em IS NULL AND date_trunc('month', p.data_hora) = date_trunc('month', now())`);
   const producao = await banco.query(`SELECT dia::date AS data, coalesce(sum(p.peso_total),0)::float8 AS peso
     FROM generate_series(current_date - interval '6 days', current_date, interval '1 day') dia
-    LEFT JOIN pesagens p ON p.status='confirmada' AND p.criado_em >= dia AND p.criado_em < dia + interval '1 day'
+    LEFT JOIN pesagens p ON p.status='concluida' AND p.excluida_em IS NULL AND p.data_hora >= dia AND p.data_hora < dia + interval '1 day'
     GROUP BY dia ORDER BY dia`);
-  const atividades = await banco.query(`SELECT p.uuid,p.codigo,p.criado_em,p.peso_total::float8,p.valor_total::float8,
+  const atividades = await banco.query(`SELECT p.uuid,p.codigo,p.data_hora AS criado_em,p.peso_total::float8,p.valor_total::float8,
       c.nome_completo AS catador,m.nome AS material
     FROM pesagens p JOIN catadores c ON c.uuid=p.catador_uuid
     JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN materiais m ON m.uuid=ip.material_uuid
-    WHERE p.status='confirmada' ORDER BY p.criado_em DESC LIMIT 5`);
+    WHERE p.status='concluida' AND p.excluida_em IS NULL ORDER BY p.data_hora DESC LIMIT 5`);
   return { indicadores: indicadores.rows[0], producaoSemanal: producao.rows, atividades: atividades.rows };
 });
 
@@ -174,7 +182,7 @@ aplicacao.get("/api/catadores", async (requisicao) => {
   }
   const { rows } = await banco.query(`SELECT c.uuid, c.codigo, c.nome_completo, c.apelido, c.genero, c.raca_cor, c.data_nascimento, c.cpf, c.status,
       co.nome AS cooperativa, coalesce(json_agg(json_build_object('tipo', ct.tipo, 'valor', ct.valor)) FILTER (WHERE ct.uuid IS NOT NULL), '[]') AS contatos
-      ,coalesce((SELECT sum(p.peso_total) FROM pesagens p WHERE p.catador_uuid=c.uuid AND p.status='confirmada'),0)::float8 AS total_quilos,
+      ,coalesce((SELECT sum(p.peso_total) FROM pesagens p WHERE p.catador_uuid=c.uuid AND p.status='concluida' AND p.excluida_em IS NULL),0)::float8 AS total_quilos,
       EXISTS(SELECT 1 FROM arquivos_catador ar WHERE ar.catador_uuid=c.uuid AND ar.tipo='foto_rosto') AS tem_foto
     FROM catadores c LEFT JOIN cooperativas co ON co.uuid = c.cooperativa_uuid
     LEFT JOIN contatos_catador ct ON ct.catador_uuid = c.uuid ${filtro}
@@ -219,6 +227,32 @@ aplicacao.delete("/api/cooperativas/:uuid", async (requisicao, resposta) => {
   return resposta.code(204).send();
 });
 
+const esquemaContaFinanceira = z.object({
+  tipo: z.enum(["pix", "conta_bancaria"]),
+  tipoChavePix: z.string().trim().max(30).optional(),
+  chavePix: z.string().trim().max(300).optional(),
+  banco: z.string().trim().max(120).optional(),
+  agencia: z.string().trim().max(20).optional(),
+  numeroConta: z.string().trim().max(30).optional(),
+  tipoConta: z.string().trim().max(40).optional(),
+  deTerceiro: z.boolean().default(false),
+  nomeTitular: z.string().trim().max(200).optional(),
+  cpfTitular: z.string().regex(/^\d{11}$/).optional(),
+  relacaoTitular: z.string().trim().max(120).optional(),
+}).superRefine((conta, contexto) => {
+  if (conta.tipo === "pix" && !conta.chavePix) contexto.addIssue({ code: "custom", path: ["chavePix"], message: "Informe a chave Pix." });
+  if (conta.tipo === "conta_bancaria") {
+    if (!conta.banco) contexto.addIssue({ code: "custom", path: ["banco"], message: "Informe o banco." });
+    if (!conta.agencia) contexto.addIssue({ code: "custom", path: ["agencia"], message: "Informe a agência." });
+    if (!conta.numeroConta) contexto.addIssue({ code: "custom", path: ["numeroConta"], message: "Informe a conta." });
+    if (!conta.tipoConta) contexto.addIssue({ code: "custom", path: ["tipoConta"], message: "Informe o tipo da conta." });
+  }
+  if (conta.deTerceiro) {
+    if (!conta.nomeTitular) contexto.addIssue({ code: "custom", path: ["nomeTitular"], message: "Informe o nome do titular." });
+    if (!conta.cpfTitular) contexto.addIssue({ code: "custom", path: ["cpfTitular"], message: "Informe o CPF do titular." });
+  }
+});
+
 const esquemaCatador = z.object({
   nomeCompleto: z.string().trim().min(2).max(200),
   apelido: z.string().trim().max(100).optional(),
@@ -229,7 +263,7 @@ const esquemaCatador = z.object({
   cpf: z.string().regex(/^\d{11}$/).optional(),
   contatos: z.array(z.object({ tipo: z.enum(["celular", "telefone", "whatsapp", "recado", "email"]), valor: z.string().min(3).max(254), principal: z.boolean().default(false) })).default([]),
   endereco: z.object({ cep: z.string().regex(/^\d{8}$/).optional(), logradouro: z.string().max(200).optional(), numero: z.string().max(30).optional(), complemento: z.string().max(120).optional(), bairro: z.string().max(120).optional(), cidade: z.string().max(120).default("Belo Horizonte"), estado: z.string().length(2).default("MG") }).optional(),
-  contaFinanceira: z.object({ tipo: z.enum(["pix", "conta_bancaria"]), tipoChavePix: z.string().max(30).optional(), chavePix: z.string().max(300).optional(), banco: z.string().max(120).optional(), agencia: z.string().max(20).optional(), numeroConta: z.string().max(30).optional(), tipoConta: z.string().max(40).optional(), deTerceiro: z.boolean().default(false), nomeTitular: z.string().max(200).optional(), cpfTitular: z.string().regex(/^\d{11}$/).optional(), relacaoTitular: z.string().max(120).optional() }).optional(),
+  contaFinanceira: esquemaContaFinanceira.optional(),
 });
 
 aplicacao.post("/api/catadores", async (requisicao, resposta) => {
@@ -363,8 +397,20 @@ aplicacao.get("/api/enderecos/cep/:cep", async (requisicao, resposta) => {
   }
 });
 
+const esquemaDadosPesagem = z.object({
+  catadorUuid: z.uuid(),
+  pontoApoioUuid: z.uuid(),
+  responsavelPesagemUuid: z.uuid().optional(),
+  responsavelOutro: z.string().trim().min(2).max(160).optional(),
+  materialUuid: z.uuid(),
+  peso: z.number().positive(),
+  observacao: z.string().trim().max(1000).optional(),
+  dataHora: z.iso.datetime({ offset: true }),
+  status: z.enum(["concluida", "agendada", "cancelada"]),
+});
+
 aplicacao.post("/api/pesagens", async (requisicao, resposta) => {
-  const entrada = z.object({ catadorUuid: z.uuid(), pontoApoioUuid: z.uuid(), responsavelPesagemUuid: z.uuid().optional(), responsavelOutro: z.string().min(2).max(160).optional(), materialUuid: z.uuid(), peso: z.number().positive(), observacao: z.string().max(1000).optional() }).safeParse(requisicao.body);
+  const entrada = esquemaDadosPesagem.safeParse(requisicao.body);
   if (!entrada.success) return resposta.code(400).send({ mensagem: "Revise os dados da pesagem.", detalhes: z.treeifyError(entrada.error) });
   if (!entrada.data.responsavelPesagemUuid && !entrada.data.responsavelOutro) return resposta.code(400).send({ mensagem: "Informe o responsável pela pesagem." });
   const cliente = await banco.connect();
@@ -388,21 +434,65 @@ aplicacao.post("/api/pesagens", async (requisicao, resposta) => {
     await cliente.query("SELECT pg_advisory_xact_lock(hashtext('pesagens_codigo'))");
     const proximo = await cliente.query<{ codigo: string }>("SELECT 'PES-' || lpad((coalesce(max(substring(codigo from '[0-9]+')::bigint),0) + 1)::text, 6, '0') AS codigo FROM pesagens");
     const codigo = proximo.rows[0]!.codigo;
-    const criada = await cliente.query<{ uuid: string }>(`INSERT INTO pesagens (codigo,catador_uuid,ponto_apoio_uuid,responsavel_pesagem_uuid,responsavel_outro,observacao,peso_total,valor_total,confirmada_em,criada_por_uuid)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now(),$9) RETURNING uuid`, [codigo, entrada.data.catadorUuid, entrada.data.pontoApoioUuid, entrada.data.responsavelPesagemUuid ?? null, entrada.data.responsavelOutro ?? null, entrada.data.observacao ?? null, entrada.data.peso, valorTotal, requisicao.user.usuarioUuid]);
+    const criada = await cliente.query<{ uuid: string }>(`INSERT INTO pesagens (codigo,catador_uuid,ponto_apoio_uuid,responsavel_pesagem_uuid,responsavel_outro,status,observacao,peso_total,valor_total,data_hora,confirmada_em,criada_por_uuid)
+      VALUES ($1,$2,$3,$4,$5,$6::status_pesagem,$7,$8,$9,$10,CASE WHEN $6::status_pesagem='concluida'::status_pesagem THEN $10::timestamptz ELSE NULL END,$11) RETURNING uuid`, [codigo, entrada.data.catadorUuid, entrada.data.pontoApoioUuid, entrada.data.responsavelPesagemUuid ?? null, entrada.data.responsavelOutro ?? null, entrada.data.status, entrada.data.observacao ?? null, entrada.data.peso, valorTotal, entrada.data.dataHora, requisicao.user.usuarioUuid]);
     await cliente.query(`INSERT INTO itens_pesagem (pesagem_uuid,material_uuid,peso,unidade,quantidade_referencia,valor_referencia,observacao) VALUES ($1,$2,$3,$4,$5,$6,$7)`, [criada.rows[0]!.uuid, entrada.data.materialUuid, entrada.data.peso, ref.unidade, ref.quantidade_referencia, ref.valor_referencia, entrada.data.observacao ?? null]);
+    await registrarAuditoria(cliente, requisicao.user.usuarioUuid, "criacao", "pesagens", criada.rows[0]!.uuid, { codigo, dados: entrada.data, valorTotal }, requisicao.ip);
     await criarNotificacao(cliente, requisicao.user.usuarioUuid, "pesagem", "Pesagem registrada", `${catador.rows[0].nome_completo}: ${entrada.data.peso.toLocaleString("pt-BR")} ${ref.unidade}, total de ${valorTotal.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}.`, "pesagens", criada.rows[0]!.uuid);
     await cliente.query("COMMIT");
-    return resposta.code(201).send({ uuid: criada.rows[0]!.uuid, codigo, pesoTotal: entrada.data.peso, valorTotal });
+    return resposta.code(201).send({ uuid: criada.rows[0]!.uuid, codigo, pesoTotal: entrada.data.peso, valorTotal, dataHora: entrada.data.dataHora, status: entrada.data.status });
+  } catch (erro) { await cliente.query("ROLLBACK"); throw erro; } finally { cliente.release(); }
+});
+
+aplicacao.put("/api/pesagens/:uuid", async (requisicao, resposta) => {
+  const uuid = z.uuid().parse((requisicao.params as { uuid: string }).uuid);
+  const entrada = esquemaDadosPesagem.extend({ motivoAlteracao: z.string().trim().min(3).max(500) }).safeParse(requisicao.body);
+  if (!entrada.success) return resposta.code(400).send({ mensagem: "Revise os dados e informe o motivo da alteração.", detalhes: z.treeifyError(entrada.error) });
+  if (!entrada.data.responsavelPesagemUuid && !entrada.data.responsavelOutro) return resposta.code(400).send({ mensagem: "Informe o responsável pela pesagem." });
+  const cliente = await banco.connect();
+  try {
+    await cliente.query("BEGIN");
+    const atual = await cliente.query<Record<string, unknown> & { codigo: string; item_uuid: string; excluida_em: string | null }>(`SELECT p.*,ip.uuid AS item_uuid,ip.material_uuid,ip.peso AS item_peso,ip.unidade,ip.quantidade_referencia,ip.valor_referencia
+      FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid WHERE p.uuid=$1 FOR UPDATE OF p,ip`, [uuid]);
+    if (!atual.rows[0]) { await cliente.query("ROLLBACK"); return resposta.code(404).send({ mensagem: "Pesagem não encontrada." }); }
+    if (atual.rows[0].excluida_em) { await cliente.query("ROLLBACK"); return resposta.code(409).send({ mensagem: "Uma pesagem excluída não pode ser alterada." }); }
+    const catador = await cliente.query<{ nome_completo: string }>("SELECT nome_completo FROM catadores WHERE uuid=$1 AND status='ativo' FOR SHARE", [entrada.data.catadorUuid]);
+    if (!catador.rows[0]) { await cliente.query("ROLLBACK"); return resposta.code(404).send({ mensagem: "Catador não encontrado ou inativo." }); }
+    const ponto = await cliente.query("SELECT 1 FROM pontos_apoio WHERE uuid=$1 AND status='ativo' FOR SHARE", [entrada.data.pontoApoioUuid]);
+    if (!ponto.rows[0]) { await cliente.query("ROLLBACK"); return resposta.code(404).send({ mensagem: "Ponto de apoio não encontrado ou inativo." }); }
+    if (entrada.data.responsavelPesagemUuid) {
+      const responsavel = await cliente.query("SELECT 1 FROM responsaveis_pesagem WHERE uuid=$1 AND status='ativo' FOR SHARE", [entrada.data.responsavelPesagemUuid]);
+      if (!responsavel.rows[0]) { await cliente.query("ROLLBACK"); return resposta.code(404).send({ mensagem: "Responsável pela pesagem não encontrado ou inativo." }); }
+    }
+    const material = await cliente.query<{ unidade: string; quantidade_referencia: number; valor_referencia: number }>("SELECT unidade,quantidade_referencia::float8,valor_referencia::float8 FROM materiais WHERE uuid=$1 AND status='ativo' FOR SHARE", [entrada.data.materialUuid]);
+    if (!material.rows[0]) { await cliente.query("ROLLBACK"); return resposta.code(404).send({ mensagem: "Material não encontrado ou inativo." }); }
+    const valorTotal = Math.round((entrada.data.peso / material.rows[0].quantidade_referencia) * material.rows[0].valor_referencia * 100) / 100;
+    await cliente.query(`UPDATE pesagens SET catador_uuid=$1,ponto_apoio_uuid=$2,responsavel_pesagem_uuid=$3,responsavel_outro=$4,status=$5::status_pesagem,observacao=$6,peso_total=$7,valor_total=$8,data_hora=$9,confirmada_em=CASE WHEN $5::status_pesagem='concluida'::status_pesagem THEN $9::timestamptz ELSE NULL END,atualizado_em=now() WHERE uuid=$10`, [entrada.data.catadorUuid, entrada.data.pontoApoioUuid, entrada.data.responsavelPesagemUuid ?? null, entrada.data.responsavelOutro ?? null, entrada.data.status, entrada.data.observacao ?? null, entrada.data.peso, valorTotal, entrada.data.dataHora, uuid]);
+    await cliente.query(`UPDATE itens_pesagem SET material_uuid=$1,peso=$2,unidade=$3,quantidade_referencia=$4,valor_referencia=$5,observacao=$6 WHERE uuid=$7`, [entrada.data.materialUuid, entrada.data.peso, material.rows[0].unidade, material.rows[0].quantidade_referencia, material.rows[0].valor_referencia, entrada.data.observacao ?? null, atual.rows[0].item_uuid]);
+    const depois = { ...entrada.data, valorTotal };
+    await registrarAuditoria(cliente, requisicao.user.usuarioUuid, "alteracao", "pesagens", uuid, { motivo: entrada.data.motivoAlteracao, antes: atual.rows[0], depois }, requisicao.ip);
+    await criarNotificacao(cliente, requisicao.user.usuarioUuid, "pesagem", "Pesagem alterada", `${atual.rows[0].codigo} foi corrigida. Motivo: ${entrada.data.motivoAlteracao}`, "pesagens", uuid);
+    await cliente.query("COMMIT");
+    return resposta.send({ uuid, codigo: atual.rows[0].codigo, pesoTotal: entrada.data.peso, valorTotal, dataHora: entrada.data.dataHora, status: entrada.data.status });
   } catch (erro) { await cliente.query("ROLLBACK"); throw erro; } finally { cliente.release(); }
 });
 
 aplicacao.delete("/api/pesagens/:uuid", async (requisicao, resposta) => {
   const uuid = z.uuid().parse((requisicao.params as { uuid: string }).uuid);
-  const excluida = await banco.query<{ codigo: string }>("DELETE FROM pesagens WHERE uuid=$1 RETURNING codigo", [uuid]);
-  if (!excluida.rowCount) return resposta.code(404).send({ mensagem: "Pesagem não encontrada." });
-  await criarNotificacao(banco, requisicao.user.usuarioUuid, "pesagem", "Pesagem removida", `${excluida.rows[0]!.codigo} foi removida do sistema.`, "pesagens", uuid);
-  return resposta.code(204).send();
+  const entrada = z.object({ motivo: z.string().trim().min(3).max(500) }).safeParse(requisicao.body);
+  if (!entrada.success) return resposta.code(400).send({ mensagem: "Informe o motivo da exclusão." });
+  const cliente = await banco.connect();
+  try {
+    await cliente.query("BEGIN");
+    const existente = await cliente.query<Record<string, unknown> & { codigo: string; excluida_em: string | null }>("SELECT * FROM pesagens WHERE uuid=$1 FOR UPDATE", [uuid]);
+    if (!existente.rows[0]) { await cliente.query("ROLLBACK"); return resposta.code(404).send({ mensagem: "Pesagem não encontrada." }); }
+    if (existente.rows[0].excluida_em) { await cliente.query("ROLLBACK"); return resposta.code(409).send({ mensagem: "A pesagem já foi excluída." }); }
+    await cliente.query("UPDATE pesagens SET excluida_em=now(),excluida_por_uuid=$1,motivo_exclusao=$2,atualizado_em=now() WHERE uuid=$3", [requisicao.user.usuarioUuid, entrada.data.motivo, uuid]);
+    await registrarAuditoria(cliente, requisicao.user.usuarioUuid, "exclusao_logica", "pesagens", uuid, { motivo: entrada.data.motivo, registro: existente.rows[0] }, requisicao.ip);
+    await criarNotificacao(cliente, requisicao.user.usuarioUuid, "pesagem", "Pesagem excluída", `${existente.rows[0].codigo} foi excluída e preservada para auditoria.`, "pesagens", uuid);
+    await cliente.query("COMMIT");
+    return resposta.code(204).send();
+  } catch (erro) { await cliente.query("ROLLBACK"); throw erro; } finally { cliente.release(); }
 });
 
 aplicacao.get("/api/notificacoes", async (requisicao) => {
@@ -438,14 +528,17 @@ aplicacao.delete("/api/notificacoes", async (requisicao, resposta) => {
 
 aplicacao.get("/api/relatorios/pesagens", async (requisicao) => {
   const filtro = z.object({ inicio: z.iso.date().optional(), fim: z.iso.date().optional(), catadorUuid: z.uuid().optional(), limite: z.coerce.number().int().min(1).max(200).default(50) }).parse(requisicao.query);
-  const { rows } = await banco.query(`SELECT p.uuid,p.codigo,p.criado_em,p.peso_total,p.valor_total,p.status,p.observacao,
-      c.codigo AS codigo_catador,c.nome_completo AS catador,m.nome AS material,pa.nome AS ponto_apoio,
-      coalesce(rp.nome,p.responsavel_outro) AS responsavel
+  const { rows } = await banco.query(`SELECT p.uuid,p.codigo,p.criado_em,p.data_hora,p.atualizado_em,p.peso_total,p.valor_total,p.status,p.observacao,
+      p.excluida_em,p.motivo_exclusao,p.catador_uuid,p.ponto_apoio_uuid,p.responsavel_pesagem_uuid,p.responsavel_outro,
+      c.codigo AS codigo_catador,c.nome_completo AS catador,ip.material_uuid,m.nome AS material,pa.nome AS ponto_apoio,
+      coalesce(rp.nome,p.responsavel_outro) AS responsavel,
+      coalesce((SELECT json_agg(json_build_object('uuid',a.uuid,'acao',a.acao,'dados',a.dados,'criado_em',a.criado_em) ORDER BY a.criado_em DESC)
+        FROM auditoria a WHERE a.entidade='pesagens' AND a.entidade_uuid=p.uuid), '[]'::json) AS historico
     FROM pesagens p JOIN catadores c ON c.uuid=p.catador_uuid JOIN pontos_apoio pa ON pa.uuid=p.ponto_apoio_uuid
     LEFT JOIN responsaveis_pesagem rp ON rp.uuid=p.responsavel_pesagem_uuid
     JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN materiais m ON m.uuid=ip.material_uuid
-    WHERE ($1::date IS NULL OR p.criado_em >= $1::date) AND ($2::date IS NULL OR p.criado_em < $2::date + interval '1 day')
-      AND ($3::uuid IS NULL OR p.catador_uuid=$3) ORDER BY p.criado_em DESC LIMIT $4`, [filtro.inicio ?? null, filtro.fim ?? null, filtro.catadorUuid ?? null, filtro.limite]);
+    WHERE ($1::date IS NULL OR p.data_hora >= $1::date) AND ($2::date IS NULL OR p.data_hora < $2::date + interval '1 day')
+      AND ($3::uuid IS NULL OR p.catador_uuid=$3) ORDER BY p.data_hora DESC LIMIT $4`, [filtro.inicio ?? null, filtro.fim ?? null, filtro.catadorUuid ?? null, filtro.limite]);
   return { dados: rows };
 });
 

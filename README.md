@@ -5,11 +5,12 @@ WebApp responsivo para gestão de cooperativas de reciclagem, catadores, produç
 ## Recursos disponíveis
 
 - painel com catadores ativos, total coletado, valor a pagar, média por catador e coletas realizadas;
-- cadastro de catadores em etapas, com campos opcionais, múltiplos contatos, endereço assistido por CEP, dados Pix/bancários de terceiros e foto de identificação;
+- cadastro de catadores em etapas, com nome como identificação mínima e os demais dados opcionais, múltiplos contatos, endereço assistido por CEP e foto opcional;
+- pagamento opcional por Pix ou conta bancária; ao habilitá-lo, o sistema exige os dados necessários para o recebimento e, quando a conta é de terceiro, nome e CPF do titular;
 - cooperativas e associações com responsável e vínculo de catadores;
-- pesagem guiada com ponto de apoio, responsável, confirmação visual do catador, material, peso, observação e cálculo proporcional do valor;
+- pesagem guiada com confirmação final em modal, código e nome do catador, ponto, material, peso, data e hora, status e cálculo proporcional do valor;
 - materiais configuráveis por unidade, quantidade de referência, valor e situação ativa/inativa;
-- relatório detalhado e filtrável das reciclagens;
+- relatório detalhado e filtrável das reciclagens, com edição justificada, exclusão lógica e histórico auditável;
 - central de notificações persistida no PostgreSQL, com leitura individual, marcação coletiva e limpeza;
 - tema claro/escuro, identidade visual configurável e layout responsivo para Android, iOS e desktop;
 - API autenticada, PostgreSQL com UUID, auditoria, índices e pesquisa textual em português.
@@ -148,7 +149,8 @@ As buscas de catadores e cooperativas usam `to_tsvector`, `websearch_to_tsquery`
 - upload limitado a JPG, PNG ou WebP, com nome UUID e hash SHA-256;
 - arquivos pessoais fora do versionamento;
 - transações nas operações com múltiplas tabelas;
-- trilha de auditoria pronta para registrar alterações relevantes.
+- trilha de auditoria persistente para registrar alterações relevantes;
+- pesagens nunca são apagadas fisicamente pela interface: correções preservam os valores anteriores e exclusões permanecem identificadas no relatório com motivo, usuário, IP, data e hora;
 
 Fotos e dados pessoais devem seguir a LGPD. Em produção, prefira armazenamento de objetos privado com criptografia, backup, política de retenção e URLs temporárias.
 

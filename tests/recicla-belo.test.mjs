@@ -24,17 +24,20 @@ test("renderiza a experiência do Recicla Belô", async () => {
 });
 
 test("mantém ambiente, banco e instalação documentados", async () => {
-  const [exemplo, estilos, migracao, migracaoNotificacoes, sqlCompleto, instalador, supervisor, servidor, estrutura, painel, leiaMe, pacote] = await Promise.all([
+  const [exemplo, estilos, migracao, migracaoNotificacoes, migracaoAuditoria, sqlCompleto, instalador, supervisor, servidor, estrutura, painel, telaPesagem, telaRelatorios, leiaMe, pacote] = await Promise.all([
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/001_estrutura_inicial.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/004_notificacoes.sql", import.meta.url), "utf8"),
+    readFile(new URL("../servidor/migracoes/006_auditoria_pesagens.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/sql/recicla-belo-completo.sql", import.meta.url), "utf8"),
     readFile(new URL("../scripts/instalar-e-iniciar.sh", import.meta.url), "utf8"),
     readFile(new URL("../scripts/desenvolver.mjs", import.meta.url), "utf8"),
     readFile(new URL("../servidor/src/principal.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/componentes/estrutura-aplicacao.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/componentes/painel-principal.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/componentes/tela-pesagem.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/componentes/tela-relatorios.tsx", import.meta.url), "utf8"),
     readFile(new URL("../README.md", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
@@ -49,6 +52,9 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(sqlCompleto, /REFERENCES catadores\(uuid\)/);
   assert.match(migracaoNotificacoes, /CREATE TABLE IF NOT EXISTS notificacoes/);
   assert.match(sqlCompleto, /CREATE TABLE IF NOT EXISTS notificacoes/);
+  assert.match(migracaoAuditoria, /excluida_em TIMESTAMPTZ/);
+  assert.match(migracaoAuditoria, /contas_terceiro_identificado/);
+  assert.match(sqlCompleto, /ALTER TYPE status_pesagem ADD VALUE IF NOT EXISTS 'agendada'/);
   assert.match(instalador, /docker compose up -d banco/);
   assert.match(instalador, /exec npm run dev/);
   assert.match(supervisor, /esperarBanco/);
@@ -68,6 +74,12 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.doesNotMatch(estrutura, /JosÃ© concluiu|Maria atingiu|Coopesol Leste registrou/);
   assert.doesNotMatch(painel, /RESUMO DO DIA|3,2 t|O trabalho de hoje gera/);
   assert.match(painel, /\/api\/painel/);
+  assert.match(telaPesagem, /CONFIRMAÇÃO FINAL/);
+  assert.match(telaPesagem, /Código do catador/);
+  assert.match(telaRelatorios, /CORREÇÃO AUDITÁVEL/);
+  assert.match(telaRelatorios, /exclusao_logica/);
+  assert.match(servidor, /registrarAuditoria/);
+  assert.match(servidor, /motivoAlteracao/);
   assert.match(estilos, /\.usuario\{[^}]*cursor:pointer/);
   assert.match(estilos, /\.campo input,\.campo select,\.campo textarea\{height:58px/);
   assert.match(estilos, /\.conteudo:before\{/);

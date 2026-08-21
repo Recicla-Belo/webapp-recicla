@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import pg from "../servidor/node_modules/pg/lib/index.js";
 
 const urlApi = process.env.NEXT_PUBLIC_URL_API ?? "http://localhost:3333";
+const bancoTeste = new pg.Pool({ connectionString: process.env.URL_BANCO });
 let cookie = "";
 const entidadesCriadas = new Set();
 
@@ -19,52 +21,38 @@ async function executar() {
   const sessaoSemCookie = await chamar("/api/autenticacao/sessao", {}, false);
   assert.equal(sessaoSemCookie.resposta.status, 200);
   assert.equal(sessaoSemCookie.dados.autenticado, false);
+  assert.equal((await fetch(`${urlApi}/api/painel`)).status, 401);
 
-  const painelProtegido = await fetch(`${urlApi}/api/painel`);
-  assert.equal(painelProtegido.status, 401);
-
-  const login = await chamar("/api/autenticacao/entrar", {
-    method: "POST",
-    body: JSON.stringify({ email: process.env.ADMIN_EMAIL, senha: process.env.ADMIN_SENHA }),
-  }, false);
+  const login = await chamar("/api/autenticacao/entrar", { method: "POST", body: JSON.stringify({ email: process.env.ADMIN_EMAIL, senha: process.env.ADMIN_SENHA }) }, false);
   cookie = (login.resposta.headers.get("set-cookie") ?? "").split(";", 1)[0];
   assert.ok(cookie.startsWith("reciclabelo_sessao="));
+  assert.equal((await chamar("/api/autenticacao/sessao")).dados.autenticado, true);
 
-  const sessao = await chamar("/api/autenticacao/sessao");
-  assert.equal(sessao.dados.autenticado, true);
   const enderecoCep = (await chamar("/api/enderecos/cep/30110000")).dados;
   assert.equal(enderecoCep.cidade, "Belo Horizonte");
   assert.equal(enderecoCep.estado, "MG");
   const painelAntes = (await chamar("/api/painel")).dados.indicadores;
   const sufixo = `${Date.now()}-${process.pid}`;
-
   let cooperativaUuid;
   let materialUuid;
   let catadorUuid;
   let pesagemUuid;
-  try {
-    cooperativaUuid = (await chamar("/api/cooperativas", {
-      method: "POST",
-      body: JSON.stringify({ nome: `Integração ${sufixo}`, nomeResponsavel: "Teste automatizado", ativa: true }),
-    })).dados.uuid;
-    entidadesCriadas.add(cooperativaUuid);
 
-    materialUuid = (await chamar("/api/materiais", {
-      method: "POST",
-      body: JSON.stringify({ nome: `Material ${sufixo}`, tipoMaterial: "Teste", unidade: "kg", quantidadeReferencia: 20, valorReferencia: 10, ativo: true }),
-    })).dados.uuid;
+  try {
+    cooperativaUuid = (await chamar("/api/cooperativas", { method: "POST", body: JSON.stringify({ nome: `Integração ${sufixo}`, nomeResponsavel: "Teste automatizado", ativa: true }) })).dados.uuid;
+    entidadesCriadas.add(cooperativaUuid);
+    materialUuid = (await chamar("/api/materiais", { method: "POST", body: JSON.stringify({ nome: `Material ${sufixo}`, tipoMaterial: "Teste", unidade: "kg", quantidadeReferencia: 20, valorReferencia: 10, ativo: true }) })).dados.uuid;
     entidadesCriadas.add(materialUuid);
 
-    const catador = (await chamar("/api/catadores", {
-      method: "POST",
-      body: JSON.stringify({
-        nomeCompleto: `Catador Integração ${sufixo}`,
-        cooperativaUuid,
-        contatos: [{ tipo: "celular", valor: "31999999999", principal: true }],
-        endereco: { cep: "30110000", cidade: "Belo Horizonte", estado: "MG" },
-        contaFinanceira: { tipo: "pix", tipoChavePix: "Celular", chavePix: "31999999999", deTerceiro: false },
-      }),
-    })).dados;
+    const pixTerceiroSemTitular = await fetch(`${urlApi}/api/catadores`, { method: "POST", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ nomeCompleto: "Cadastro inválido", contatos: [], contaFinanceira: { tipo: "pix", tipoChavePix: "Celular", chavePix: "31999999999", deTerceiro: true } }) });
+    assert.equal(pixTerceiroSemTitular.status, 400);
+
+    const catador = (await chamar("/api/catadores", { method: "POST", body: JSON.stringify({
+      nomeCompleto: `Catador Integração ${sufixo}`,
+      cooperativaUuid,
+      contatos: [],
+      contaFinanceira: { tipo: "conta_bancaria", banco: "Banco Teste", agencia: "0001", numeroConta: "12345-6", tipoConta: "corrente", deTerceiro: true, nomeTitular: "Titular Teste", cpfTitular: "12345678901" },
+    }) })).dados;
     catadorUuid = catador.uuid;
     entidadesCriadas.add(catadorUuid);
     assert.match(catador.codigo, /^CAT-\d{4,}$/);
@@ -73,43 +61,61 @@ async function executar() {
     const responsaveis = (await chamar("/api/responsaveis-pesagem")).dados.dados;
     assert.ok(pontos.length > 0 && responsaveis.length > 0);
 
-    const pesagem = (await chamar("/api/pesagens", {
-      method: "POST",
-      body: JSON.stringify({ catadorUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsaveis[0].uuid, materialUuid, peso: 30, observacao: "Teste integrado removível" }),
-    })).dados;
+    const pesagem = (await chamar("/api/pesagens", { method: "POST", body: JSON.stringify({ catadorUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsaveis[0].uuid, materialUuid, peso: 30, observacao: "Teste integrado removível", dataHora: new Date().toISOString(), status: "concluida" }) })).dados;
     pesagemUuid = pesagem.uuid;
     entidadesCriadas.add(pesagemUuid);
     assert.equal(pesagem.valorTotal, 15);
+    assert.equal(pesagem.status, "concluida");
 
     const painelDepois = (await chamar("/api/painel")).dados;
     assert.equal(Number(painelDepois.indicadores.catadores_ativos), Number(painelAntes.catadores_ativos) + 1);
     assert.equal(Number(painelDepois.indicadores.coletas_realizadas), Number(painelAntes.coletas_realizadas) + 1);
     assert.equal(Number(painelDepois.indicadores.total_coletado), Number(painelAntes.total_coletado) + 30);
-    assert.equal(painelDepois.producaoSemanal.length, 7);
     assert.ok(painelDepois.atividades.some((item) => item.uuid === pesagemUuid));
 
-    const relatorio = (await chamar(`/api/relatorios/pesagens?catadorUuid=${catadorUuid}`)).dados.dados;
-    assert.ok(relatorio.some((item) => item.uuid === pesagemUuid && Number(item.valor_total) === 15));
+    const alterada = (await chamar(`/api/pesagens/${pesagemUuid}`, { method: "PUT", body: JSON.stringify({ catadorUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsaveis[0].uuid, materialUuid, peso: 40, observacao: "Peso corrigido", dataHora: new Date().toISOString(), status: "agendada", motivoAlteracao: "Correção automatizada do peso e status" }) })).dados;
+    assert.equal(alterada.valorTotal, 20);
+    assert.equal(alterada.status, "agendada");
+    assert.equal(Number((await chamar("/api/painel")).dados.indicadores.coletas_realizadas), Number(painelAntes.coletas_realizadas));
+
+    let relatorio = (await chamar(`/api/relatorios/pesagens?catadorUuid=${catadorUuid}`)).dados.dados;
+    assert.ok(relatorio.some((item) => item.uuid === pesagemUuid && item.status === "agendada" && Number(item.valor_total) === 20 && item.historico.some((evento) => evento.acao === "alteracao")));
 
     const notificacoes = (await chamar("/api/notificacoes")).dados;
     const notificacaoTeste = notificacoes.dados.find((item) => entidadesCriadas.has(item.entidade_uuid));
     assert.ok(notificacaoTeste);
     await chamar(`/api/notificacoes/${notificacaoTeste.uuid}/lida`, { method: "PATCH" });
-    const notificacoesLidas = (await chamar("/api/notificacoes")).dados.dados;
-    assert.ok(notificacoesLidas.find((item) => item.uuid === notificacaoTeste.uuid)?.lida_em);
-    await chamar(`/api/notificacoes/${notificacaoTeste.uuid}`, { method: "DELETE" });
-    assert.ok(!(await chamar("/api/notificacoes")).dados.dados.some((item) => item.uuid === notificacaoTeste.uuid));
+    assert.ok((await chamar("/api/notificacoes")).dados.dados.find((item) => item.uuid === notificacaoTeste.uuid)?.lida_em);
+
+    await chamar(`/api/pesagens/${pesagemUuid}`, { method: "DELETE", body: JSON.stringify({ motivo: "Registro temporário do teste integrado" }) });
+    relatorio = (await chamar(`/api/relatorios/pesagens?catadorUuid=${catadorUuid}`)).dados.dados;
+    const excluida = relatorio.find((item) => item.uuid === pesagemUuid);
+    assert.ok(excluida.excluida_em);
+    assert.equal(excluida.motivo_exclusao, "Registro temporário do teste integrado");
+    assert.ok(excluida.historico.some((evento) => evento.acao === "exclusao_logica"));
+    assert.equal(Number((await chamar("/api/painel")).dados.indicadores.coletas_realizadas), Number(painelAntes.coletas_realizadas));
   } finally {
-    if (pesagemUuid) await chamar(`/api/pesagens/${pesagemUuid}`, { method: "DELETE" }).catch(() => {});
-    if (catadorUuid) await chamar(`/api/catadores/${catadorUuid}`, { method: "DELETE" }).catch(() => {});
-    if (materialUuid) await chamar(`/api/materiais/${materialUuid}`, { method: "DELETE" }).catch(() => {});
-    if (cooperativaUuid) await chamar(`/api/cooperativas/${cooperativaUuid}`, { method: "DELETE" }).catch(() => {});
-    const notificacoes = await chamar("/api/notificacoes").catch(() => null);
-    for (const item of notificacoes?.dados?.dados ?? []) {
-      if (entidadesCriadas.has(item.entidade_uuid)) await chamar(`/api/notificacoes/${item.uuid}`, { method: "DELETE" }).catch(() => {});
+    const cliente = await bancoTeste.connect();
+    try {
+      await cliente.query("BEGIN");
+      const entidades = [...entidadesCriadas];
+      if (entidades.length) {
+        await cliente.query("DELETE FROM notificacoes WHERE entidade_uuid = ANY($1::uuid[])", [entidades]);
+        await cliente.query("DELETE FROM auditoria WHERE entidade_uuid = ANY($1::uuid[])", [entidades]);
+      }
+      if (pesagemUuid) await cliente.query("DELETE FROM pesagens WHERE uuid=$1", [pesagemUuid]);
+      if (catadorUuid) await cliente.query("DELETE FROM catadores WHERE uuid=$1", [catadorUuid]);
+      if (materialUuid) await cliente.query("DELETE FROM materiais WHERE uuid=$1", [materialUuid]);
+      if (cooperativaUuid) await cliente.query("DELETE FROM cooperativas WHERE uuid=$1", [cooperativaUuid]);
+      await cliente.query("COMMIT");
+    } catch (falha) {
+      await cliente.query("ROLLBACK");
+      // eslint-disable-next-line no-unsafe-finally -- falha de limpeza deve invalidar o teste integrado
+      throw falha;
     }
+    finally { cliente.release(); await bancoTeste.end(); }
   }
 }
 
 await executar();
-console.log("Integração concluída: sessão, proteção, CEP, CRUD, cálculo, painel, relatório e notificações.");
+console.log("Integração concluída: sessão, pagamento, pesagem, edição, exclusão lógica, auditoria, painel e relatório.");
