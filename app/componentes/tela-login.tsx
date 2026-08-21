@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useIdentidadeVisual } from "@/app/configuracao/identidade-visual";
 import { MarcaPlataforma } from "./marca-plataforma";
+
+const CHAVE_EMAIL_LEMBRADO = "recicla-belo:email-lembrado";
 
 function IconeOlho({ visivel }: { visivel: boolean }) {
   return <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
@@ -20,11 +22,28 @@ function IconeOlho({ visivel }: { visivel: boolean }) {
 
 export function TelaLogin({ onAutenticado }: { onAutenticado: () => void }) {
   const { identidade } = useIdentidadeVisual();
-  const [email, setEmail] = useState("admin@reciclabelo");
+  const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
+  const [lembrarAcesso, setLembrarAcesso] = useState(false);
   const [senhaVisivel, setSenhaVisivel] = useState(false);
   const [erro, setErro] = useState("");
   const [enviando, setEnviando] = useState(false);
+
+  useEffect(() => {
+    const temporizador = window.setTimeout(() => {
+      const emailLembrado = window.localStorage.getItem(CHAVE_EMAIL_LEMBRADO);
+      if (emailLembrado) {
+        setEmail(emailLembrado);
+        setLembrarAcesso(true);
+      }
+    }, 0);
+    return () => window.clearTimeout(temporizador);
+  }, []);
+
+  function alterarLembrarAcesso(lembrar: boolean) {
+    setLembrarAcesso(lembrar);
+    if (!lembrar) window.localStorage.removeItem(CHAVE_EMAIL_LEMBRADO);
+  }
 
   async function entrar(evento: FormEvent) {
     evento.preventDefault();
@@ -40,6 +59,8 @@ export function TelaLogin({ onAutenticado }: { onAutenticado: () => void }) {
       });
       const dados = await resposta.json() as { autenticado?: boolean; mensagem?: string };
       if (!resposta.ok || !dados.autenticado) throw new Error(dados.mensagem ?? "Não foi possível entrar.");
+      if (lembrarAcesso) window.localStorage.setItem(CHAVE_EMAIL_LEMBRADO, email.trim().toLowerCase());
+      else window.localStorage.removeItem(CHAVE_EMAIL_LEMBRADO);
       onAutenticado();
     } catch (falha) {
       setErro(falha instanceof Error ? falha.message : "Não foi possível entrar. Verifique a inicialização da aplicação.");
@@ -65,13 +86,18 @@ export function TelaLogin({ onAutenticado }: { onAutenticado: () => void }) {
 
         <form onSubmit={entrar}>
           <label className="campo campo-login">E-mail
-            <input type="email" inputMode="email" autoComplete="username" value={email} onChange={(evento) => setEmail(evento.target.value)} required />
+            <input type="email" name="email" inputMode="email" autoComplete="username" value={email} onChange={(evento) => setEmail(evento.target.value)} placeholder="Digite seu e-mail" required />
           </label>
           <label className="campo campo-login">Senha
             <div className="campo-senha">
-              <input type={senhaVisivel ? "text" : "password"} autoComplete="current-password" value={senha} onChange={(evento) => setSenha(evento.target.value)} placeholder="Digite sua senha" required />
+              <input type={senhaVisivel ? "text" : "password"} name="senha" autoComplete="current-password" value={senha} onChange={(evento) => setSenha(evento.target.value)} placeholder="Digite sua senha" required />
               <button type="button" onClick={() => setSenhaVisivel((visivel) => !visivel)} aria-pressed={senhaVisivel} aria-label={senhaVisivel ? "Ocultar senha" : "Visualizar senha"} title={senhaVisivel ? "Ocultar senha" : "Visualizar senha"}><IconeOlho visivel={senhaVisivel} /></button>
             </div>
+          </label>
+          <label className="interruptor interruptor-login" htmlFor="lembrar-acesso" aria-label="Lembrar meu acesso neste dispositivo">
+            <input id="lembrar-acesso" type="checkbox" checked={lembrarAcesso} onChange={(evento) => alterarLembrarAcesso(evento.target.checked)} />
+            <span aria-hidden="true" />
+            <div><strong>Lembrar meu acesso</strong><small>Salva somente o e-mail neste dispositivo</small></div>
           </label>
           {erro && <div className="erro-login" role="alert">{erro}</div>}
           <button className="botao-primario botao-entrar" disabled={enviando}>{enviando ? "Verificando acesso..." : `Entrar no ${identidade.nomeAplicacao}`}</button>

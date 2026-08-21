@@ -24,7 +24,7 @@ test("renderiza a experiência do Recicla Belô", async () => {
 });
 
 test("mantém ambiente, banco e instalação documentados", async () => {
-  const [exemplo, estilos, migracao, migracaoNotificacoes, migracaoAuditoria, sqlCompleto, instalador, supervisor, servidor, estrutura, painel, telaPesagem, telaRelatorios, leiaMe, pacote] = await Promise.all([
+  const [exemplo, estilos, migracao, migracaoNotificacoes, migracaoAuditoria, sqlCompleto, instalador, supervisor, servidor, estrutura, painel, telaLogin, telaPesagem, telaRelatorios, leiaMe, pacote] = await Promise.all([
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/001_estrutura_inicial.sql", import.meta.url), "utf8"),
@@ -36,6 +36,7 @@ test("mantém ambiente, banco e instalação documentados", async () => {
     readFile(new URL("../servidor/src/principal.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/componentes/estrutura-aplicacao.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/componentes/painel-principal.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/componentes/tela-login.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/componentes/tela-pesagem.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/componentes/tela-relatorios.tsx", import.meta.url), "utf8"),
     readFile(new URL("../README.md", import.meta.url), "utf8"),
@@ -74,6 +75,11 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.doesNotMatch(estrutura, /JosÃ© concluiu|Maria atingiu|Coopesol Leste registrou/);
   assert.doesNotMatch(painel, /RESUMO DO DIA|3,2 t|O trabalho de hoje gera/);
   assert.match(painel, /\/api\/painel/);
+  assert.match(telaLogin, /useState\(""\)/);
+  assert.match(telaLogin, /placeholder="Digite seu e-mail"/);
+  assert.match(telaLogin, /Lembrar meu acesso/);
+  assert.match(telaLogin, /localStorage\.setItem\(CHAVE_EMAIL_LEMBRADO/);
+  assert.doesNotMatch(telaLogin, /useState\("admin@reciclabelo"\)/);
   assert.match(telaPesagem, /CONFIRMAÇÃO FINAL/);
   assert.match(telaPesagem, /Código do catador/);
   assert.match(telaRelatorios, /CORREÇÃO AUDITÁVEL/);
