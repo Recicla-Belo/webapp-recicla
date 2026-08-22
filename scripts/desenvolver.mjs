@@ -1,5 +1,6 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
+import { resolve } from "node:path";
 import { setTimeout as aguardar } from "node:timers/promises";
 
 try {
@@ -26,6 +27,35 @@ function executar(comando, argumentos, opcoes = {}) {
   });
   if (resultado.error) throw resultado.error;
   if (resultado.status !== 0) throw new Error(`Falha ao executar: ${comando} ${argumentos.join(" ")}`);
+}
+
+function processoAtivo(pid) {
+  try { process.kill(pid, 0); return true; }
+  catch { return false; }
+}
+
+async function liberarFrontendAnterior() {
+  const arquivoTrava = resolve(".vinext/dev/lock.json");
+  if (!existsSync(arquivoTrava)) return;
+  try {
+    const trava = JSON.parse(readFileSync(arquivoTrava, "utf8"));
+    const pid = Number(trava.pid);
+    const pertenceAoProjeto = resolve(String(trava.cwd ?? "")) === resolve(process.cwd());
+    if (!pertenceAoProjeto || !Number.isInteger(pid) || pid <= 0 || pid === process.pid) {
+      throw new Error("A trava do frontend não pertence a este projeto.");
+    }
+    if (processoAtivo(pid)) {
+      titulo("Encerrando um frontend anterior que ficou aberto...");
+      if (noWindows) spawnSync("taskkill.exe", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+      else process.kill(pid, "SIGTERM");
+      await aguardar(1_500);
+      if (processoAtivo(pid)) throw new Error(`Não foi possível encerrar o frontend anterior (processo ${pid}). Encerre-o e execute npm run dev novamente.`);
+    }
+    if (existsSync(arquivoTrava)) unlinkSync(arquivoTrava);
+  } catch (erro) {
+    if (erro instanceof SyntaxError && existsSync(arquivoTrava)) unlinkSync(arquivoTrava);
+    else if (erro instanceof Error && erro.message === "A trava do frontend não pertence a este projeto.") throw erro;
+  }
 }
 
 function estadoBanco() {
@@ -100,6 +130,7 @@ async function encerrar(codigo = 0, mensagem, aoReceberSinal = false) {
   if (encerrando) return;
   encerrando = true;
   if (mensagem) console.error(`\n[Recicla Belô] ${mensagem}`);
+  for (const processo of processos) encerrarArvore(processo);
   if (noWindows && aoReceberSinal) {
     const limpeza = spawn(docker, ["compose", "stop", "banco"], {
       cwd: process.cwd(), stdio: "ignore", windowsHide: true, detached: true,
@@ -108,7 +139,6 @@ async function encerrar(codigo = 0, mensagem, aoReceberSinal = false) {
   } else {
     spawnSync(docker, ["compose", "stop", "banco"], { cwd: process.cwd(), stdio: "inherit", windowsHide: true });
   }
-  for (const processo of processos) encerrarArvore(processo);
   process.exitCode = codigo;
 }
 
@@ -116,6 +146,7 @@ async function principal() {
   try {
     if (!npmCli) throw new Error("Não foi possível localizar o npm. Execute: npm run dev");
     titulo("Preparando banco, backend e frontend...");
+    await liberarFrontendAnterior();
     executar(docker, ["compose", "version"], { stdio: "ignore" });
     if (!existsSync("servidor/node_modules")) {
       titulo("Instalando dependências do backend...");

@@ -9,7 +9,13 @@ export class ErroApi extends Error {
 export async function requisitarApi<T>(caminho: string, opcoes: RequestInit = {}): Promise<T> {
   const cabecalhos = new Headers(opcoes.headers);
   if (opcoes.body && !(opcoes.body instanceof FormData) && !cabecalhos.has("content-type")) cabecalhos.set("content-type", "application/json");
-  const resposta = await fetch(`${URL_API}${caminho}`, { ...opcoes, headers: cabecalhos, credentials: "include" });
+  let resposta: Response;
+  try {
+    resposta = await fetch(`${URL_API}${caminho}`, { ...opcoes, headers: cabecalhos, credentials: "include" });
+  } catch (falha) {
+    if (falha instanceof DOMException && falha.name === "AbortError") throw falha;
+    throw new ErroApi("Não foi possível conectar ao servidor. Verifique se a aplicação foi iniciada com npm run dev e tente novamente.", 0);
+  }
   if (!resposta.ok) {
     const dados = await resposta.json().catch(() => ({})) as { mensagem?: string };
     if (resposta.status === 401) window.dispatchEvent(new Event("reciclabelo:sessao-expirada"));

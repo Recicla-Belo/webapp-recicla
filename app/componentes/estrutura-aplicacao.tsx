@@ -2,7 +2,7 @@
 
 /* eslint-disable react-hooks/set-state-in-effect -- restaura preferências persistidas somente após a montagem no navegador */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Bell,
   Building2,
@@ -51,13 +51,41 @@ const titulos: Record<Pagina, { sobrelinha: string; titulo: string }> = {
   configuracoes: { sobrelinha: "ADMINISTRAÇÃO", titulo: "Configurações" },
 };
 
+function mensagemFalha(falha: unknown, alternativa: string) {
+  return falha instanceof Error ? falha.message : alternativa;
+}
+
+function paginaDaNotificacao(entidade: string | null): Pagina {
+  if (entidade === "pesagens") return "relatorios";
+  if (entidade === "catadores" || entidade === "caixas_catador") return "catadores";
+  if (entidade === "cooperativas") return "cooperativas";
+  if (entidade === "materiais") return "configuracoes";
+  return "painel";
+}
+
 export function EstruturaAplicacao() {
   const [pagina, setPagina] = useState<Pagina>("painel");
   const [escuro, setEscuro] = useState(false);
   const [autenticado, setAutenticado] = useState<boolean | null>(null);
   const [notificacoesAbertas, setNotificacoesAbertas] = useState(false);
   const [notificacoes, setNotificacoes] = useState<NotificacaoApi[]>([]);
+  const [erroNotificacoes, setErroNotificacoes] = useState("");
+  const [acaoNotificacao, setAcaoNotificacao] = useState<string | null>(null);
+  const [carregandoNotificacoes, setCarregandoNotificacoes] = useState(false);
   const notificacoesNaoLidas = notificacoes.filter((item) => !item.lida_em).length;
+
+  const carregarNotificacoes = useCallback(async () => {
+    setCarregandoNotificacoes(true);
+    try {
+      const dados = await requisitarApi<{ dados: NotificacaoApi[] }>("/api/notificacoes");
+      setNotificacoes(dados.dados);
+      setErroNotificacoes("");
+    } catch (falha) {
+      setErroNotificacoes(mensagemFalha(falha, "Não foi possível carregar as notificações."));
+    } finally {
+      setCarregandoNotificacoes(false);
+    }
+  }, []);
 
   useEffect(() => {
     const temaSalvo = window.localStorage.getItem("reciclabelo-tema");
@@ -76,11 +104,9 @@ export function EstruturaAplicacao() {
   }, [escuro]);
 
   useEffect(() => {
-    if (!autenticado) return;
-    void requisitarApi<{ dados: NotificacaoApi[] }>("/api/notificacoes")
-      .then((dados) => setNotificacoes(dados.dados))
-      .catch(() => setNotificacoes([]));
-  }, [autenticado]);
+    if (!autenticado) { setNotificacoes([]); setErroNotificacoes(""); return; }
+    void carregarNotificacoes();
+  }, [autenticado, carregarNotificacoes]);
 
   function navegar(destino: Pagina) {
     setPagina(destino);
@@ -92,36 +118,52 @@ export function EstruturaAplicacao() {
     setAutenticado(true);
   }
 
-  async function carregarNotificacoes() {
-    const dados = await requisitarApi<{ dados: NotificacaoApi[] }>("/api/notificacoes");
-    setNotificacoes(dados.dados);
-  }
-
-  async function alternarNotificacoes() {
+  function alternarNotificacoes() {
     const abrir = !notificacoesAbertas;
     setNotificacoesAbertas(abrir);
-    if (abrir) await carregarNotificacoes().catch(() => setNotificacoes([]));
+    if (abrir) void carregarNotificacoes();
   }
 
   async function marcarTodasComoLidas() {
-    await requisitarApi<void>("/api/notificacoes/lidas", { method: "PATCH" });
-    const agora = new Date().toISOString();
-    setNotificacoes((lista) => lista.map((item) => ({ ...item, lida_em: item.lida_em ?? agora })));
+    setAcaoNotificacao("todas"); setErroNotificacoes("");
+    try {
+      await requisitarApi<void>("/api/notificacoes/lidas", { method: "PATCH" });
+      const agora = new Date().toISOString();
+      setNotificacoes((lista) => lista.map((item) => ({ ...item, lida_em: item.lida_em ?? agora })));
+    } catch (falha) {
+      setErroNotificacoes(mensagemFalha(falha, "Não foi possível marcar as notificações como lidas."));
+    } finally { setAcaoNotificacao(null); }
   }
 
-  async function marcarComoLida(uuid: string) {
-    await requisitarApi<void>(`/api/notificacoes/${uuid}/lida`, { method: "PATCH" });
-    setNotificacoes((lista) => lista.map((item) => item.uuid === uuid ? { ...item, lida_em: item.lida_em ?? new Date().toISOString() } : item));
+  async function abrirNotificacao(item: NotificacaoApi) {
+    setAcaoNotificacao(item.uuid); setErroNotificacoes("");
+    try {
+      if (!item.lida_em) await requisitarApi<void>(`/api/notificacoes/${item.uuid}/lida`, { method: "PATCH" });
+      setNotificacoes((lista) => lista.map((notificacao) => notificacao.uuid === item.uuid ? { ...notificacao, lida_em: notificacao.lida_em ?? new Date().toISOString() } : notificacao));
+      navegar(paginaDaNotificacao(item.entidade));
+    } catch (falha) {
+      setErroNotificacoes(mensagemFalha(falha, "Não foi possível abrir esta notificação."));
+    } finally { setAcaoNotificacao(null); }
   }
 
   async function excluirNotificacao(uuid: string) {
-    await requisitarApi<void>(`/api/notificacoes/${uuid}`, { method: "DELETE" });
-    setNotificacoes((lista) => lista.filter((item) => item.uuid !== uuid));
+    setAcaoNotificacao(uuid); setErroNotificacoes("");
+    try {
+      await requisitarApi<void>(`/api/notificacoes/${uuid}`, { method: "DELETE" });
+      setNotificacoes((lista) => lista.filter((item) => item.uuid !== uuid));
+    } catch (falha) {
+      setErroNotificacoes(mensagemFalha(falha, "Não foi possível excluir a notificação."));
+    } finally { setAcaoNotificacao(null); }
   }
 
   async function limparNotificacoes() {
-    await requisitarApi<void>("/api/notificacoes", { method: "DELETE" });
-    setNotificacoes([]);
+    setAcaoNotificacao("limpar"); setErroNotificacoes("");
+    try {
+      await requisitarApi<void>("/api/notificacoes", { method: "DELETE" });
+      setNotificacoes([]);
+    } catch (falha) {
+      setErroNotificacoes(mensagemFalha(falha, "Não foi possível limpar as notificações."));
+    } finally { setAcaoNotificacao(null); }
   }
 
   async function sair() {
@@ -155,11 +197,12 @@ export function EstruturaAplicacao() {
           <div className="acoes-cabecalho">
             <button className="botao-icone" onClick={() => setEscuro((valor) => !valor)} aria-label={escuro ? "Ativar tema claro" : "Ativar tema escuro"} title={escuro ? "Ativar tema claro" : "Ativar tema escuro"}>{escuro ? <Sun /> : <Moon />}</button>
             <div className="area-notificacoes">
-              <button className="botao-icone botao-notificacoes" type="button" onClick={() => void alternarNotificacoes()} aria-label={`Notificações: ${notificacoesNaoLidas} não lidas`} aria-expanded={notificacoesAbertas} aria-controls="painel-notificacoes"><Bell />{notificacoesNaoLidas > 0 && <span className="contador-notificacoes">{notificacoesNaoLidas}</span>}</button>
+              <button className="botao-icone botao-notificacoes" type="button" onClick={alternarNotificacoes} aria-label={`Notificações: ${notificacoesNaoLidas} não lidas`} aria-expanded={notificacoesAbertas} aria-controls="painel-notificacoes"><Bell />{notificacoesNaoLidas > 0 && <span className="contador-notificacoes">{notificacoesNaoLidas}</span>}</button>
               {notificacoesAbertas && <section className="painel-notificacoes" id="painel-notificacoes" aria-label="Central de notificações">
                 <header><div><span>ATUALIZAÇÕES</span><h2>Notificações</h2></div><button type="button" onClick={() => setNotificacoesAbertas(false)} aria-label="Fechar notificações"><X /></button></header>
-                <div className="lista-notificacoes">{notificacoes.length === 0 ? <p className="notificacoes-vazias">Nenhuma notificação registrada.</p> : notificacoes.map((item) => <article className={item.lida_em ? "" : "nao-lida"} key={item.uuid}><span>{item.tipo === "pesagem" ? <Scale /> : item.tipo === "catador" ? <UsersRound /> : <Building2 />}</span><button className="conteudo-notificacao" type="button" onClick={() => void marcarComoLida(item.uuid)}><strong>{item.titulo}</strong><p>{item.mensagem}</p><small>{new Date(item.criado_em).toLocaleString("pt-BR")}</small></button><button className="excluir-notificacao" type="button" onClick={() => void excluirNotificacao(item.uuid)} aria-label={`Excluir notificação: ${item.titulo}`}><Trash2 /></button></article>)}</div>
-                <footer className="acoes-notificacoes"><button className="marcar-notificacoes" type="button" onClick={() => void marcarTodasComoLidas()} disabled={notificacoesNaoLidas === 0}><CheckCheck />{notificacoesNaoLidas === 0 ? "Tudo lido" : "Marcar como lidas"}</button><button className="limpar-notificacoes" type="button" onClick={() => void limparNotificacoes()} disabled={notificacoes.length === 0}><Trash2 />Limpar</button></footer>
+                {erroNotificacoes && <div className="erro-notificacoes" role="alert"><p>{erroNotificacoes}</p><button type="button" onClick={() => void carregarNotificacoes()} disabled={carregandoNotificacoes}>{carregandoNotificacoes ? "Tentando..." : "Tentar novamente"}</button></div>}
+                <div className="lista-notificacoes" aria-busy={carregandoNotificacoes}>{carregandoNotificacoes && notificacoes.length === 0 ? <p className="notificacoes-vazias">Carregando notificações...</p> : notificacoes.length === 0 ? <p className="notificacoes-vazias">Nenhuma notificação registrada.</p> : notificacoes.map((item) => <article className={item.lida_em ? "" : "nao-lida"} key={item.uuid}><span>{item.tipo === "pesagem" || item.tipo === "meta" ? <Scale /> : item.tipo === "catador" || item.tipo === "caixa" ? <UsersRound /> : <Building2 />}</span><button className="conteudo-notificacao" type="button" onClick={() => void abrirNotificacao(item)} disabled={acaoNotificacao !== null}><strong>{item.titulo}</strong><p>{item.mensagem}</p><small>{new Date(item.criado_em).toLocaleString("pt-BR")}</small></button><button className="excluir-notificacao" type="button" onClick={() => void excluirNotificacao(item.uuid)} disabled={acaoNotificacao !== null} aria-label={`Excluir notificação: ${item.titulo}`}><Trash2 /></button></article>)}</div>
+                <footer className="acoes-notificacoes"><button className="marcar-notificacoes" type="button" onClick={() => void marcarTodasComoLidas()} disabled={notificacoesNaoLidas === 0 || acaoNotificacao !== null}><CheckCheck />{acaoNotificacao === "todas" ? "Marcando..." : notificacoesNaoLidas === 0 ? "Tudo lido" : "Marcar como lidas"}</button><button className="limpar-notificacoes" type="button" onClick={() => void limparNotificacoes()} disabled={notificacoes.length === 0 || acaoNotificacao !== null}><Trash2 />{acaoNotificacao === "limpar" ? "Limpando..." : "Limpar"}</button></footer>
               </section>}
             </div>
             <button className="botao-icone botao-sair-mobile" type="button" onClick={sair} aria-label="Sair do sistema" title="Sair do sistema"><LogOut /></button>

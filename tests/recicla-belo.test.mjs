@@ -24,7 +24,7 @@ test("renderiza a experiência do Recicla Belô", async () => {
 });
 
 test("mantém ambiente, banco e instalação documentados", async () => {
-  const [exemplo, estilos, migracao, migracaoNotificacoes, migracaoAuditoria, migracaoCaixas, migracaoLimpeza, sqlCompleto, instalador, supervisor, servidor, estrutura, painel, telaLogin, telaPesagem, telaCatadores, telaCooperativas, telaRelatorios, paginacao, leiaMe, pacote] = await Promise.all([
+  const [exemplo, estilos, migracao, migracaoNotificacoes, migracaoAuditoria, migracaoCaixas, migracaoLimpeza, sqlCompleto, instalador, supervisor, servidor, estrutura, api, painel, telaLogin, telaPesagem, telaCatadores, telaCooperativas, telaRelatorios, paginacao, leiaMe, pacote] = await Promise.all([
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/001_estrutura_inicial.sql", import.meta.url), "utf8"),
@@ -37,6 +37,7 @@ test("mantém ambiente, banco e instalação documentados", async () => {
     readFile(new URL("../scripts/desenvolver.mjs", import.meta.url), "utf8"),
     readFile(new URL("../servidor/src/principal.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/componentes/estrutura-aplicacao.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/dados/api.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/componentes/painel-principal.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/componentes/tela-login.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/componentes/tela-pesagem.tsx", import.meta.url), "utf8"),
@@ -69,6 +70,9 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(instalador, /exec npm run dev/);
   assert.match(supervisor, /esperarBanco/);
   assert.match(supervisor, /esperarFrontend/);
+  assert.match(supervisor, /liberarFrontendAnterior/);
+  assert.match(supervisor, /\.vinext\/dev\/lock\.json/);
+  assert.ok(supervisor.indexOf("for (const processo of processos) encerrarArvore(processo)") < supervisor.indexOf('spawnSync(docker, ["compose", "stop", "banco"]'));
   assert.match(servidor, /httpOnly: true/);
   assert.match(servidor, /sameSite: "strict"/);
   assert.match(servidor, /addHook\("onRequest"/);
@@ -80,6 +84,12 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(estrutura, /setAutenticado\(dados\.autenticado === true\)/);
   assert.match(estrutura, /aria-controls="painel-notificacoes"/);
   assert.match(estrutura, /\/api\/notificacoes\/lidas/);
+  assert.match(estrutura, /abrirNotificacao/);
+  assert.match(estrutura, /paginaDaNotificacao/);
+  assert.match(estrutura, /erroNotificacoes/);
+  assert.match(estrutura, /Tentar novamente/);
+  assert.match(api, /Não foi possível conectar ao servidor/);
+  assert.match(api, /catch \(falha\)/);
   assert.match(estrutura, /Carregando seu painel/);
   assert.doesNotMatch(estrutura, /JosÃ© concluiu|Maria atingiu|Coopesol Leste registrou/);
   assert.doesNotMatch(painel, /RESUMO DO DIA|3,2 t|O trabalho de hoje gera/);
@@ -114,6 +124,7 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(estilos, /\.conteudo:before\{/);
   assert.match(estilos, /env\(safe-area-inset-bottom/);
   assert.match(estilos, /\.barra-lateral nav\{[^}]*overflow-x:auto!important/);
+  assert.match(estilos, /\.erro-notificacoes\{/);
   assert.equal(JSON.parse(pacote).dependencies["lucide-react"], "^1.33.0");
   assert.equal(JSON.parse(pacote).scripts.dev, "node scripts/desenvolver.mjs");
   assert.match(leiaMe, /PostgreSQL 18\.6/);

@@ -16,7 +16,7 @@ WebApp responsivo para gestão de cooperativas de reciclagem, catadores, produç
 - atividade recente identificada com foto, código, nome e dados do catador, totais do caixa, pesagens, correções e motivo de reabertura;
 - ficha completa do catador com contatos, endereço, meios de pagamento, histórico, ganhos por material, metas e caixas;
 - relatório detalhado e filtrável das reciclagens, com edição justificada, exclusão lógica e histórico auditável;
-- central de notificações persistida no PostgreSQL, com leitura individual, marcação coletiva e limpeza;
+- central de notificações persistida no PostgreSQL, com abertura direcionada, leitura individual, marcação coletiva, limpeza e recuperação amigável quando a API estiver indisponível;
 - tema claro/escuro, identidade visual configurável e layout responsivo para Android, iOS e desktop;
 - menu móvel com rolagem própria, áreas seguras do iPhone e proteção contra estouro horizontal da página;
 - API autenticada, PostgreSQL com UUID, auditoria, índices e pesquisa textual em português.
@@ -105,7 +105,7 @@ Inicie banco, backend e frontend no mesmo terminal:
 npm run dev
 ```
 
-O comando inicia o PostgreSQL, aguarda o banco ficar saudável, aplica migrações e seed, valida a API e só então inicia o frontend. Por padrão, o frontend abre em `http://localhost:3001` e a API em `http://localhost:3333`; a porta do frontend pode ser alterada por `PORTA_FRONTEND` no `.env`. Se a porta configurada estiver ocupada, o comando informa o conflito em vez de trocar silenciosamente. `Ctrl+C` encerra frontend, backend e banco.
+O comando encerra automaticamente um frontend anterior deste mesmo projeto que tenha ficado órfão, inicia o PostgreSQL, aguarda o banco ficar saudável, aplica migrações e seed, valida a API e só então inicia o novo frontend. Por padrão, o frontend abre em `http://localhost:3001` e a API em `http://localhost:3333`; a porta do frontend pode ser alterada por `PORTA_FRONTEND` no `.env`. Conflitos externos continuam sendo informados sem trocar a porta silenciosamente. `Ctrl+C` encerra frontend, backend e banco na ordem segura.
 
 ## Acesso administrativo inicial
 

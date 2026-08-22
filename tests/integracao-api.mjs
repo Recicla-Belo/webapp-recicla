@@ -126,6 +126,8 @@ async function executar() {
     assert.ok(notificacaoTeste);
     await chamar(`/api/notificacoes/${notificacaoTeste.uuid}/lida`, { method: "PATCH" });
     assert.ok((await chamar("/api/notificacoes")).dados.dados.find((item) => item.uuid === notificacaoTeste.uuid)?.lida_em);
+    await chamar(`/api/notificacoes/${notificacaoTeste.uuid}`, { method: "DELETE" });
+    assert.equal((await chamar("/api/notificacoes")).dados.dados.some((item) => item.uuid === notificacaoTeste.uuid), false);
 
     await chamar(`/api/pesagens/${pesagemUuid}`, { method: "DELETE", body: JSON.stringify({ motivo: "Registro temporário do teste integrado" }) });
     relatorio = (await chamar(`/api/relatorios/pesagens?catadorUuid=${catadorUuid}`)).dados.dados;
