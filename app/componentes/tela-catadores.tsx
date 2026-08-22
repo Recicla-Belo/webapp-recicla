@@ -2,9 +2,10 @@
 
 /* eslint-disable jsx-a11y/label-has-associated-control, jsx-a11y/no-autofocus, @next/next/no-img-element -- controles aninhados e fotos autenticadas */
 
-import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 import { ArrowLeft, Camera, Eye, LockKeyhole, Plus, Search, Trash2, UnlockKeyhole, WalletCards } from "lucide-react";
 import { requisitarApi, URL_API, type CatadorApi, type CooperativaApi } from "@/app/dados/api";
+import { Paginacao } from "@/app/componentes/paginacao";
 
 const etapas = ["Identificação", "Contato e endereço", "Pagamento", "Foto e revisão"];
 const vazio = { nomeCompleto: "", apelido: "", cooperativaUuid: "", genero: "", racaCor: "", dataNascimento: "", cpf: "", cep: "", logradouro: "", numero: "", complemento: "", bairro: "", cidade: "Belo Horizonte", estado: "MG", tipoPagamento: "pix", tipoChavePix: "CPF", chavePix: "", banco: "", agencia: "", numeroConta: "", tipoConta: "corrente", nomeTitular: "", cpfTitular: "", relacaoTitular: "" };
@@ -16,26 +17,28 @@ export function TelaCatadores() {
   const [cadastroAberto, setCadastroAberto] = useState(false);
   const [perfilUuid, setPerfilUuid] = useState<string | null>(null);
   const [erro, setErro] = useState("");
+  const [pagina, setPagina] = useState(1);
+  const [itensPorPagina, setItensPorPagina] = useState(10);
+  const [total, setTotal] = useState(0);
   const carregar = useCallback(async () => {
     try {
       const [listaCatadores, listaCooperativas] = await Promise.all([
-        requisitarApi<{ dados: CatadorApi[] }>("/api/catadores?limite=100"),
+        requisitarApi<{ dados: CatadorApi[]; total: number }>(`/api/catadores?busca=${encodeURIComponent(busca)}&limite=${itensPorPagina}&deslocamento=${(pagina - 1) * itensPorPagina}`),
         requisitarApi<{ dados: CooperativaApi[] }>("/api/cooperativas"),
       ]);
-      setCatadores(listaCatadores.dados); setCooperativas(listaCooperativas.dados); setErro("");
+      setCatadores(listaCatadores.dados); setTotal(listaCatadores.total); setCooperativas(listaCooperativas.dados); setErro("");
     } catch (falha) { setErro(falha instanceof Error ? falha.message : "Não foi possível carregar os catadores."); }
-  }, []);
+  }, [busca, itensPorPagina, pagina]);
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void carregar(); }, [carregar]);
-  const filtrados = useMemo(() => catadores.filter((item) => `${item.nome_completo} ${item.apelido ?? ""} ${item.codigo}`.toLowerCase().includes(busca.toLowerCase())), [busca, catadores]);
-
   if (perfilUuid) return <PerfilCatador uuid={perfilUuid} onVoltar={() => { setPerfilUuid(null); void carregar(); }} />;
 
   return <section className="pagina-interna">
-    <div className="resumo-pagina"><div><h2>{catadores.length} catadores cadastrados</h2><p>Somente o nome completo é obrigatório; os demais dados são opcionais e vêm do PostgreSQL.</p></div><button className="botao-primario" onClick={() => setCadastroAberto(true)}><Plus /> Cadastrar catador</button></div>
+    <div className="resumo-pagina"><div><h2>{total} catadores cadastrados</h2><p>Somente o nome completo é obrigatório; os demais dados são opcionais e vêm do PostgreSQL.</p></div><button className="botao-primario" onClick={() => setCadastroAberto(true)}><Plus /> Cadastrar catador</button></div>
     {erro && <p className="mensagem-erro" role="alert">{erro}</p>}
-    <div className="barra-ferramentas"><label className="campo-busca"><Search /><input value={busca} onChange={(evento) => setBusca(evento.target.value)} placeholder="Buscar por nome, apelido ou código..." /></label></div>
-    <div className="tabela-responsiva"><table><thead><tr><th>Catador</th><th>Código</th><th>Cooperativa</th><th>Contato e endereço</th><th>Coletado e ganho</th><th>Meta / caixa hoje</th><th>Ficha</th></tr></thead><tbody>{filtrados.map((catador) => <tr key={catador.uuid}><td><div className="pessoa">{catador.tem_foto ? <img className="foto-lista" src={`${URL_API}/api/catadores/${catador.uuid}/foto`} alt={`Foto de ${catador.nome_completo}`} /> : <span>{iniciais(catador.nome_completo)}</span>}<div><strong>{catador.nome_completo}</strong><small>{catador.apelido ? `Prefere: ${catador.apelido}` : "Sem apelido informado"}</small></div></div></td><td><code>{catador.codigo}</code></td><td>{catador.cooperativa ?? "Sem vínculo"}</td><td><strong>{catador.contatos.map((item) => item.valor).join(" · ") || "Contato não informado"}</strong><small className="texto-bloco">{catador.endereco_resumo || "Endereço não informado"}</small></td><td><strong>{Number(catador.total_quilos).toLocaleString("pt-BR")} kg</strong><small className="texto-bloco valor-verde">{Number(catador.total_ganhos).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</small></td><td><BarraMeta percentual={Number(catador.percentual_meta_hoje)} texto={`${Number(catador.peso_hoje).toLocaleString("pt-BR")} / ${Number(catador.meta_hoje).toLocaleString("pt-BR")} kg`} /><span className={`status-caixa ${catador.status_caixa_hoje}`}>Caixa {catador.status_caixa_hoje}</span></td><td><button type="button" className="botao-ver-ficha" onClick={() => setPerfilUuid(catador.uuid)}><Eye /> Ver ficha</button></td></tr>)}</tbody></table>{filtrados.length === 0 && <p className="estado-vazio">Nenhum catador encontrado.</p>}</div>
+    <div className="barra-ferramentas"><label className="campo-busca"><Search /><input value={busca} onChange={(evento) => { setBusca(evento.target.value); setPagina(1); }} placeholder="Buscar por nome, apelido ou código..." /></label></div>
+    <div className="tabela-responsiva"><table><thead><tr><th>Catador</th><th>Código</th><th>Cooperativa</th><th>Contato e endereço</th><th>Coletado e ganho</th><th>Meta / caixa hoje</th><th>Ficha</th></tr></thead><tbody>{catadores.map((catador) => <tr key={catador.uuid}><td><div className="pessoa">{catador.tem_foto ? <img className="foto-lista" src={`${URL_API}/api/catadores/${catador.uuid}/foto`} alt={`Foto de ${catador.nome_completo}`} /> : <span>{iniciais(catador.nome_completo)}</span>}<div><strong>{catador.nome_completo}</strong><small>{catador.apelido ? `Prefere: ${catador.apelido}` : "Sem apelido informado"}</small></div></div></td><td><code>{catador.codigo}</code></td><td>{catador.cooperativa ?? "Sem vínculo"}</td><td><strong>{catador.contatos.map((item) => item.valor).join(" · ") || "Contato não informado"}</strong><small className="texto-bloco">{catador.endereco_resumo || "Endereço não informado"}</small></td><td><strong>{Number(catador.total_quilos).toLocaleString("pt-BR")} kg</strong><small className="texto-bloco valor-verde">{Number(catador.total_ganhos).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</small></td><td><BarraMeta percentual={Number(catador.percentual_meta_hoje)} texto={`${Number(catador.peso_hoje).toLocaleString("pt-BR")} / ${Number(catador.meta_hoje).toLocaleString("pt-BR")} kg`} /><span className={`status-caixa ${catador.status_caixa_hoje}`}>Caixa {catador.status_caixa_hoje}</span></td><td><button type="button" className="botao-ver-ficha" onClick={() => setPerfilUuid(catador.uuid)}><Eye /> Ver ficha</button></td></tr>)}</tbody></table>{catadores.length === 0 && <p className="estado-vazio">Nenhum catador encontrado.</p>}</div>
+    <Paginacao pagina={pagina} total={total} itensPorPagina={itensPorPagina} aoMudarPagina={setPagina} aoMudarQuantidade={(quantidade) => { setItensPorPagina(quantidade); setPagina(1); }} rotulo="catadores" />
     {cadastroAberto && <CadastroCatador cooperativas={cooperativas} onFechar={() => setCadastroAberto(false)} onSalvo={carregar} />}
   </section>;
 }

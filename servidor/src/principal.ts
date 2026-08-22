@@ -201,7 +201,9 @@ aplicacao.post("/api/autenticacao/sair", async (_requisicao, resposta) => {
   return resposta.code(204).send();
 });
 
-aplicacao.get("/api/painel", async () => {
+aplicacao.get("/api/painel", async (requisicao) => {
+  const paginacao = z.object({ paginaAtividades: z.coerce.number().int().min(1).default(1), limiteAtividades: z.coerce.number().int().min(5).max(20).default(5) }).parse(requisicao.query);
+  const deslocamentoAtividades = (paginacao.paginaAtividades - 1) * paginacao.limiteAtividades;
   const indicadores = await banco.query(`SELECT
     (SELECT count(*)::int FROM catadores WHERE status = 'ativo') AS catadores_ativos,
     (SELECT count(DISTINCT meta.catador_uuid)::int FROM (
@@ -249,19 +251,15 @@ aplicacao.get("/api/painel", async () => {
       FROM movimentacoes_caixa_catador mc WHERE mc.caixa_uuid=cx.uuid
     ) totais_caixa ON TRUE
     WHERE a.entidade<>'caixas_catador' OR cx.uuid IS NOT NULL
-    ORDER BY a.criado_em DESC LIMIT 100`);
-  return { indicadores: indicadores.rows[0], producaoSemanal: producao.rows, atividades: atividades.rows };
+    ORDER BY a.criado_em DESC LIMIT $1 OFFSET $2`, [paginacao.limiteAtividades, deslocamentoAtividades]);
+  const totalAtividades = await banco.query<{ total: number }>(`SELECT count(*)::int AS total FROM auditoria a
+    LEFT JOIN caixas_catador cx ON a.entidade='caixas_catador' AND cx.uuid=a.entidade_uuid
+    WHERE a.entidade<>'caixas_catador' OR cx.uuid IS NOT NULL`);
+  return { indicadores: indicadores.rows[0], producaoSemanal: producao.rows, atividades: atividades.rows, paginacaoAtividades: { pagina: paginacao.paginaAtividades, limite: paginacao.limiteAtividades, total: totalAtividades.rows[0]?.total ?? 0 } };
 });
 
 aplicacao.get("/api/catadores", async (requisicao) => {
-  const consulta = z.object({ busca: z.string().trim().max(120).default(""), limite: z.coerce.number().int().min(1).max(100).default(30), deslocamento: z.coerce.number().int().min(0).default(0) }).parse(requisicao.query);
-  const parametros: unknown[] = [consulta.limite, consulta.deslocamento];
-  let filtro = "";
-  if (consulta.busca) {
-    parametros.push(consulta.busca);
-    filtro = `WHERE to_tsvector('portuguese', coalesce(c.nome_completo,'') || ' ' || coalesce(c.apelido,'') || ' ' || c.codigo)
-      @@ websearch_to_tsquery('portuguese', $3)`;
-  }
+  const consulta = z.object({ busca: z.string().trim().max(120).default(""), status: z.enum(["ativo", "inativo"]).optional(), limite: z.coerce.number().int().min(1).max(100).default(30), deslocamento: z.coerce.number().int().min(0).default(0) }).parse(requisicao.query);
   const { rows } = await banco.query(`SELECT c.uuid, c.codigo, c.nome_completo, c.apelido, c.genero, c.raca_cor, c.data_nascimento, c.cpf, c.status,
       co.nome AS cooperativa, coalesce(json_agg(json_build_object('tipo', ct.tipo, 'valor', ct.valor)) FILTER (WHERE ct.uuid IS NOT NULL), '[]') AS contatos
       ,(SELECT concat_ws(', ',e.logradouro,e.numero,e.bairro,e.cidade,e.estado) FROM enderecos_catador e WHERE e.catador_uuid=c.uuid) AS endereco_resumo
@@ -273,9 +271,16 @@ aplicacao.get("/api/catadores", async (requisicao) => {
       coalesce((SELECT max(progresso) FROM (SELECT least(sum(ip.peso)/max(ip.meta_diaria)*100,100)::float8 AS progresso FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid WHERE p.catador_uuid=c.uuid AND p.status='concluida' AND p.excluida_em IS NULL AND (p.data_hora AT TIME ZONE 'America/Bahia')::date=(now() AT TIME ZONE 'America/Bahia')::date GROUP BY ip.material_uuid) metas),0)::float8 AS percentual_meta_hoje,
       coalesce((SELECT cx.status::text FROM caixas_catador cx WHERE cx.catador_uuid=c.uuid AND cx.data_caixa=(now() AT TIME ZONE 'America/Bahia')::date), 'aberto') AS status_caixa_hoje
     FROM catadores c LEFT JOIN cooperativas co ON co.uuid = c.cooperativa_uuid
-    LEFT JOIN contatos_catador ct ON ct.catador_uuid = c.uuid ${filtro}
-    GROUP BY c.uuid, co.nome ORDER BY c.nome_completo LIMIT $1 OFFSET $2`, parametros);
-  return { dados: rows, limite: consulta.limite, deslocamento: consulta.deslocamento };
+    LEFT JOIN contatos_catador ct ON ct.catador_uuid = c.uuid
+    WHERE ($3='' OR to_tsvector('portuguese', coalesce(c.nome_completo,'') || ' ' || coalesce(c.apelido,'') || ' ' || c.codigo)
+      @@ websearch_to_tsquery('portuguese', $3))
+      AND ($4::text IS NULL OR c.status::text=$4)
+    GROUP BY c.uuid, co.nome ORDER BY c.nome_completo LIMIT $1 OFFSET $2`, [consulta.limite, consulta.deslocamento, consulta.busca, consulta.status ?? null]);
+  const total = await banco.query<{ total: number }>(`SELECT count(*)::int AS total FROM catadores c
+    WHERE ($1='' OR to_tsvector('portuguese', coalesce(c.nome_completo,'') || ' ' || coalesce(c.apelido,'') || ' ' || c.codigo)
+      @@ websearch_to_tsquery('portuguese', $1))
+      AND ($2::text IS NULL OR c.status::text=$2)`, [consulta.busca, consulta.status ?? null]);
+  return { dados: rows, total: total.rows[0]?.total ?? 0, limite: consulta.limite, deslocamento: consulta.deslocamento };
 });
 
 aplicacao.get("/api/catadores/:uuid/perfil", async (requisicao, resposta) => {
@@ -313,12 +318,18 @@ aplicacao.get("/api/catadores/:uuid/perfil", async (requisicao, resposta) => {
 
 const esquemaCooperativa = z.object({ nome: z.string().trim().min(2).max(160), nomeResponsavel: z.string().trim().min(2).max(160), telefone: z.string().trim().max(30).optional(), observacao: z.string().trim().max(1000).optional(), ativa: z.boolean().default(true) });
 
-aplicacao.get("/api/cooperativas", async () => {
+aplicacao.get("/api/cooperativas", async (requisicao) => {
+  const consulta = z.object({ busca: z.string().trim().max(120).default(""), limite: z.coerce.number().int().min(1).max(100).default(100), deslocamento: z.coerce.number().int().min(0).default(0) }).parse(requisicao.query);
   const { rows } = await banco.query(`SELECT co.uuid,co.nome,co.nome_responsavel,co.telefone,co.observacao,co.status,
       count(c.uuid) FILTER (WHERE c.status='ativo')::int AS catadores_ativos
     FROM cooperativas co LEFT JOIN catadores c ON c.cooperativa_uuid=co.uuid
-    GROUP BY co.uuid ORDER BY co.nome`);
-  return { dados: rows };
+    WHERE ($3='' OR to_tsvector('portuguese',coalesce(co.nome,'') || ' ' || coalesce(co.nome_responsavel,'') || ' ' || coalesce(co.telefone,''))
+      @@ websearch_to_tsquery('portuguese',$3))
+    GROUP BY co.uuid ORDER BY co.nome LIMIT $1 OFFSET $2`, [consulta.limite, consulta.deslocamento, consulta.busca]);
+  const total = await banco.query<{ total: number }>(`SELECT count(*)::int AS total FROM cooperativas co
+    WHERE ($1='' OR to_tsvector('portuguese',coalesce(co.nome,'') || ' ' || coalesce(co.nome_responsavel,'') || ' ' || coalesce(co.telefone,''))
+      @@ websearch_to_tsquery('portuguese',$1))`, [consulta.busca]);
+  return { dados: rows, total: total.rows[0]?.total ?? 0, limite: consulta.limite, deslocamento: consulta.deslocamento };
 });
 
 aplicacao.post("/api/cooperativas", async (requisicao, resposta) => {
@@ -742,8 +753,9 @@ aplicacao.delete("/api/notificacoes", async (requisicao, resposta) => {
 });
 
 aplicacao.get("/api/relatorios/pesagens", async (requisicao) => {
-  const filtro = z.object({ inicio: z.iso.date().optional(), fim: z.iso.date().optional(), catadorUuid: z.uuid().optional(), limite: z.coerce.number().int().min(1).max(200).default(50) }).parse(requisicao.query);
-    const { rows } = await banco.query(`SELECT p.uuid,p.codigo,p.criado_em,p.data_hora,p.atualizado_em,p.peso_total,p.valor_total,p.status,p.observacao,
+  const filtro = z.object({ inicio: z.iso.date().optional(), fim: z.iso.date().optional(), catadorUuid: z.uuid().optional(), busca: z.string().trim().max(120).default(""), limite: z.coerce.number().int().min(5).max(50).default(10), deslocamento: z.coerce.number().int().min(0).default(0) }).parse(requisicao.query);
+  const parametros = [filtro.inicio ?? null, filtro.fim ?? null, filtro.catadorUuid ?? null, filtro.busca, filtro.limite, filtro.deslocamento];
+  const { rows } = await banco.query(`SELECT p.uuid,p.codigo,p.criado_em,p.data_hora,p.atualizado_em,p.peso_total,p.valor_total,p.status,p.observacao,
       p.excluida_em,p.motivo_exclusao,p.catador_uuid,p.cooperativa_uuid,p.ponto_apoio_uuid,p.responsavel_pesagem_uuid,p.responsavel_outro,
       c.codigo AS codigo_catador,c.nome_completo AS catador,ip.material_uuid,m.nome AS material,ip.meta_diaria::float8 AS meta_diaria,pa.nome AS ponto_apoio,co.nome AS cooperativa,
       cx.status::text AS status_caixa,
@@ -757,8 +769,18 @@ aplicacao.get("/api/relatorios/pesagens", async (requisicao) => {
     LEFT JOIN responsaveis_pesagem rp ON rp.uuid=p.responsavel_pesagem_uuid
     JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN materiais m ON m.uuid=ip.material_uuid
     WHERE ($1::date IS NULL OR p.data_hora >= $1::date) AND ($2::date IS NULL OR p.data_hora < $2::date + interval '1 day')
-      AND ($3::uuid IS NULL OR p.catador_uuid=$3) ORDER BY p.data_hora DESC LIMIT $4`, [filtro.inicio ?? null, filtro.fim ?? null, filtro.catadorUuid ?? null, filtro.limite]);
-  return { dados: rows };
+      AND ($3::uuid IS NULL OR p.catador_uuid=$3)
+      AND ($4='' OR to_tsvector('portuguese',c.nome_completo || ' ' || c.codigo || ' ' || p.codigo || ' ' || m.nome || ' ' || p.status::text || ' ' || coalesce(co.nome,'')) @@ websearch_to_tsquery('portuguese',$4))
+    ORDER BY p.data_hora DESC LIMIT $5 OFFSET $6`, parametros);
+  const totais = await banco.query<{ total: number; peso: number; valor: number }>(`SELECT count(*)::int AS total,
+      coalesce(sum(p.peso_total) FILTER (WHERE p.status='concluida' AND p.excluida_em IS NULL),0)::float8 AS peso,
+      coalesce(sum(p.valor_total) FILTER (WHERE p.status='concluida' AND p.excluida_em IS NULL),0)::float8 AS valor
+    FROM pesagens p JOIN catadores c ON c.uuid=p.catador_uuid JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN materiais m ON m.uuid=ip.material_uuid
+    LEFT JOIN cooperativas co ON co.uuid=p.cooperativa_uuid
+    WHERE ($1::date IS NULL OR p.data_hora >= $1::date) AND ($2::date IS NULL OR p.data_hora < $2::date + interval '1 day')
+      AND ($3::uuid IS NULL OR p.catador_uuid=$3)
+      AND ($4='' OR to_tsvector('portuguese',c.nome_completo || ' ' || c.codigo || ' ' || p.codigo || ' ' || m.nome || ' ' || p.status::text || ' ' || coalesce(co.nome,'')) @@ websearch_to_tsquery('portuguese',$4))`, parametros.slice(0, 4));
+  return { dados: rows, total: totais.rows[0]?.total ?? 0, totais: { peso: totais.rows[0]?.peso ?? 0, valor: totais.rows[0]?.valor ?? 0 }, limite: filtro.limite, deslocamento: filtro.deslocamento };
 });
 
 aplicacao.setNotFoundHandler((_requisicao, resposta) => resposta.code(404).send({ mensagem: "Recurso não encontrado." }));

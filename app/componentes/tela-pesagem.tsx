@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Search, ShieldCheck, Sparkles, X } from "lucide-react";
 import { requisitarApi, URL_API, type CatadorApi, type CooperativaApi, type MaterialApi, type ProgressoMetaApi } from "@/app/dados/api";
+import { Paginacao } from "@/app/componentes/paginacao";
 
 type Referencia = { uuid: string; nome: string };
 type StatusPesagem = "concluida" | "agendada" | "cancelada";
@@ -31,7 +32,11 @@ export function TelaPesagem() {
   const [responsavelUuid, setResponsavelUuid] = useState("");
   const [responsavelOutro, setResponsavelOutro] = useState("");
   const [buscaCatador, setBuscaCatador] = useState("");
+  const [paginaCatadores, setPaginaCatadores] = useState(1);
+  const [totalCatadores, setTotalCatadores] = useState(0);
+  const [paginaMateriais, setPaginaMateriais] = useState(1);
   const [catadorUuid, setCatadorUuid] = useState("");
+  const [catadorSelecionado, setCatadorSelecionado] = useState<CatadorApi | null>(null);
   const [materialUuid, setMaterialUuid] = useState("");
   const [metas, setMetas] = useState<ProgressoMetaApi[]>([]);
   const [caixa, setCaixa] = useState<CaixaDia | null>(null);
@@ -46,13 +51,11 @@ export function TelaPesagem() {
 
   useEffect(() => {
     void Promise.all([
-      requisitarApi<{ dados: CatadorApi[] }>("/api/catadores?limite=100"),
       requisitarApi<{ dados: CooperativaApi[] }>("/api/cooperativas"),
       requisitarApi<{ dados: MaterialApi[] }>("/api/materiais"),
       requisitarApi<{ dados: Referencia[] }>("/api/pontos-apoio"),
       requisitarApi<{ dados: Referencia[] }>("/api/responsaveis-pesagem"),
-    ]).then(([c, co, m, p, r]) => {
-      setCatadores(c.dados.filter((item) => item.status === "ativo"));
+    ]).then(([co, m, p, r]) => {
       setCooperativas(co.dados.filter((item) => item.status === "ativo"));
       setMateriais(m.dados.filter((item) => item.status === "ativo"));
       setPontos(p.dados); setResponsaveis(r.dados);
@@ -60,6 +63,13 @@ export function TelaPesagem() {
       setPontoUuid(p.dados[0]?.uuid ?? "");
     }).catch((falha) => setErro(falha instanceof Error ? falha.message : "Não foi possível carregar os dados."));
   }, []);
+
+  const carregarCatadores = useCallback(async () => {
+    const dados = await requisitarApi<{ dados: CatadorApi[]; total: number }>(`/api/catadores?busca=${encodeURIComponent(buscaCatador)}&status=ativo&limite=6&deslocamento=${(paginaCatadores - 1) * 6}`);
+    setCatadores(dados.dados); setTotalCatadores(dados.total);
+  }, [buscaCatador, paginaCatadores]);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- paginação da busca de catadores da pesagem
+  useEffect(() => { void carregarCatadores().catch((falha) => setErro(falha instanceof Error ? falha.message : "Não foi possível buscar os catadores.")); }, [carregarCatadores]);
 
   const carregarMetas = useCallback(async () => {
     if (!catadorUuid || !dataHora) return;
@@ -69,7 +79,7 @@ export function TelaPesagem() {
   // eslint-disable-next-line react-hooks/set-state-in-effect -- sincroniza meta e caixa do catador/data selecionados
   useEffect(() => { void carregarMetas().catch((falha) => setErro(falha instanceof Error ? falha.message : "Não foi possível carregar a meta.")); }, [carregarMetas]);
 
-  const catador = catadores.find((item) => item.uuid === catadorUuid);
+  const catador = catadorSelecionado ?? undefined;
   const material = materiais.find((item) => item.uuid === materialUuid);
   const cooperativa = cooperativas.find((item) => item.uuid === cooperativaUuid);
   const ponto = pontos.find((item) => item.uuid === pontoUuid);
@@ -84,7 +94,8 @@ export function TelaPesagem() {
   const responsavelValido = responsavelUuid === "outro" ? responsavelOutro.trim().length >= 2 : Boolean(responsavelUuid);
   const dataHoraValida = Boolean(dataHora) && !Number.isNaN(new Date(dataHora).getTime());
   const caixaBloqueado = status === "concluida" && caixa?.status === "fechado";
-  const catadoresFiltrados = catadores.filter((item) => `${item.codigo} ${item.nome_completo} ${item.apelido ?? ""}`.toLowerCase().includes(buscaCatador.toLowerCase())).slice(0, 8);
+  const catadoresFiltrados = catadores;
+  const materiaisPaginados = materiais.slice((paginaMateriais - 1) * 6, paginaMateriais * 6);
 
   async function registrar() {
     if (!catador || !material || !cooperativaUuid || !pontoUuid || !responsavelValido || pesoNumero <= 0 || !dataHoraValida || caixaBloqueado) return;
@@ -103,7 +114,7 @@ export function TelaPesagem() {
   }
 
   function reiniciar() {
-    setEtapa(0); setCatadorUuid(""); setBuscaCatador(""); setMaterialUuid(""); setMetas([]); setCaixa(null);
+    setEtapa(0); setCatadorUuid(""); setCatadorSelecionado(null); setBuscaCatador(""); setMaterialUuid(""); setMetas([]); setCaixa(null);
     setPeso(""); setObservacao(""); setDataHora(dataHoraLocalAtual()); setStatus("concluida"); setRegistro(null);
   }
 
@@ -122,8 +133,8 @@ export function TelaPesagem() {
     <div className="progresso-pesagem">{["Operação", "Confirmar catador", "Material e meta", "Revisar"].map((item, i) => <div className={i === etapa ? "atual" : i < etapa ? "feito" : ""} key={item}><span>{i < etapa ? "✓" : i + 1}</span><small>{item}</small></div>)}</div>
     <div className="painel formulario-pesagem">
       {etapa === 0 && <div className="animar-etapa"><span className="sobrelinha">ETAPA 1 DE 4</span><h2>Dados da operação</h2><p>Identifique a cooperativa, o local e quem realizou a pesagem.</p><div className="grade-formulario espacada"><label className="campo">Cooperativa / associação<select value={cooperativaUuid} onChange={(e) => setCooperativaUuid(e.target.value)}><option value="">Selecionar</option>{cooperativas.map((item) => <option value={item.uuid} key={item.uuid}>{item.nome}</option>)}</select></label><label className="campo">Central / ponto de apoio<select value={pontoUuid} onChange={(e) => setPontoUuid(e.target.value)}><option value="">Selecionar</option>{pontos.map((item) => <option value={item.uuid} key={item.uuid}>{item.nome}</option>)}</select></label><label className="campo">Responsável pela pesagem<select value={responsavelUuid} onChange={(e) => setResponsavelUuid(e.target.value)}><option value="">Selecionar</option>{responsaveis.map((item) => <option value={item.uuid} key={item.uuid}>{item.nome}</option>)}<option value="outro">Outro</option></select></label>{responsavelUuid === "outro" && <label className="campo">Nome do responsável<input value={responsavelOutro} onChange={(e) => setResponsavelOutro(e.target.value)} /></label>}</div></div>}
-      {etapa === 1 && <div className="animar-etapa"><span className="sobrelinha">ETAPA 2 DE 4</span><h2>Confirme o catador</h2><p>Pesquise por nome, apelido ou código e confira a identidade.</p><label className="campo-busca busca-grande"><Search /><input value={buscaCatador} onChange={(e) => setBuscaCatador(e.target.value)} placeholder="Digite o nome ou código do catador" /></label><div className="resultados-catadores">{catadoresFiltrados.map((item) => <button type="button" className={item.uuid === catadorUuid ? "resultado-catador selecionado" : "resultado-catador"} key={item.uuid} onClick={() => { setCatadorUuid(item.uuid); setBuscaCatador(`${item.codigo} — ${item.nome_completo}`); }}>{item.tem_foto ? <img src={`${URL_API}/api/catadores/${item.uuid}/foto`} alt={`Foto de ${item.nome_completo}`} /> : <i>{item.nome_completo.split(/\s+/).slice(0, 2).map((parte) => parte[0]).join("")}</i>}<span><strong>{item.codigo} — {item.nome_completo}</strong><small>{[item.cooperativa, item.contatos.map((contato) => contato.valor).join(" · "), item.endereco_resumo].filter(Boolean).join(" · ") || "Dados complementares não informados"}</small></span><b><small>Meta hoje</small>{Math.round(Number(item.percentual_meta_hoje))}%</b><em className={`status-caixa ${item.status_caixa_hoje}`}>Caixa {item.status_caixa_hoje}</em></button>)}</div>{catador && <CartaoCatador catador={catador} caixa={caixa} metas={metas} />}</div>}
-      {etapa === 2 && <div className="animar-etapa"><span className="sobrelinha">ETAPA 3 DE 4</span><h2>Material, peso e meta diária</h2><p>O pagamento e a meta usam a configuração preservada no banco.</p><div className="grade-materiais">{materiais.map((item) => <button type="button" className={materialUuid === item.uuid ? "cartao-material selecionado" : "cartao-material"} onClick={() => setMaterialUuid(item.uuid)} key={item.uuid}><span>{item.tipo_material.slice(0, 2).toUpperCase()}</span><strong>{item.nome}</strong><small>{dinheiro(Number(item.valor_referencia))} / {Number(item.quantidade_referencia)} {item.unidade}</small><small>Meta: {Number(item.meta_diaria)} {item.unidade}/dia</small>{materialUuid === item.uuid && <i>✓</i>}</button>)}</div><div className="grade-formulario espacada"><label className="campo campo-peso">Peso do material<div><input value={peso} onChange={(e) => setPeso(e.target.value)} inputMode="decimal" placeholder="0,00" /><span>{material?.unidade.toUpperCase() ?? "KG"}</span></div></label><label className="campo">Data e hora<input type="datetime-local" value={dataHora} onChange={(e) => setDataHora(e.target.value)} /></label><label className="campo">Status<select value={status} onChange={(e) => setStatus(e.target.value as StatusPesagem)}><option value="concluida">Concluída</option><option value="agendada">Agendada</option><option value="cancelada">Cancelada</option></select></label><label className="campo campo-largo">Observação <small>Opcional</small><textarea value={observacao} onChange={(e) => setObservacao(e.target.value)} /></label></div>{material && <ProgressoMeta percentual={percentualDepois} peso={pesoDiaDepois} meta={metaDiaria} falta={faltaDepois} ganho={ganhoDiaDepois} caixa={caixa} />}</div>}
+      {etapa === 1 && <div className="animar-etapa"><span className="sobrelinha">ETAPA 2 DE 4</span><h2>Confirme o catador</h2><p>Pesquise por nome, apelido ou código e confira a identidade.</p><label className="campo-busca busca-grande"><Search /><input value={buscaCatador} onChange={(e) => { setBuscaCatador(e.target.value); setCatadorUuid(""); setCatadorSelecionado(null); setPaginaCatadores(1); }} placeholder="Digite o nome ou código do catador" /></label><div className="resultados-catadores">{catadoresFiltrados.map((item) => <button type="button" className={item.uuid === catadorUuid ? "resultado-catador selecionado" : "resultado-catador"} key={item.uuid} onClick={() => { setCatadorUuid(item.uuid); setCatadorSelecionado(item); setBuscaCatador(`${item.codigo} — ${item.nome_completo}`); setPaginaCatadores(1); }}>{item.tem_foto ? <img src={`${URL_API}/api/catadores/${item.uuid}/foto`} alt={`Foto de ${item.nome_completo}`} /> : <i>{item.nome_completo.split(/\s+/).slice(0, 2).map((parte) => parte[0]).join("")}</i>}<span><strong>{item.codigo} — {item.nome_completo}</strong><small>{[item.cooperativa, item.contatos.map((contato) => contato.valor).join(" · "), item.endereco_resumo].filter(Boolean).join(" · ") || "Dados complementares não informados"}</small></span><b><small>Meta hoje</small>{Math.round(Number(item.percentual_meta_hoje))}%</b><em className={`status-caixa ${item.status_caixa_hoje}`}>Caixa {item.status_caixa_hoje}</em></button>)}</div><Paginacao pagina={paginaCatadores} total={totalCatadores} itensPorPagina={6} aoMudarPagina={setPaginaCatadores} rotulo="catadores encontrados" />{catador && <CartaoCatador catador={catador} caixa={caixa} metas={metas} />}</div>}
+      {etapa === 2 && <div className="animar-etapa"><span className="sobrelinha">ETAPA 3 DE 4</span><h2>Material, peso e meta diária</h2><p>O pagamento e a meta usam a configuração preservada no banco.</p><div className="grade-materiais">{materiaisPaginados.map((item) => <button type="button" className={materialUuid === item.uuid ? "cartao-material selecionado" : "cartao-material"} onClick={() => setMaterialUuid(item.uuid)} key={item.uuid}><span>{item.tipo_material.slice(0, 2).toUpperCase()}</span><strong>{item.nome}</strong><small>{dinheiro(Number(item.valor_referencia))} / {Number(item.quantidade_referencia)} {item.unidade}</small><small>Meta: {Number(item.meta_diaria)} {item.unidade}/dia</small>{materialUuid === item.uuid && <i>✓</i>}</button>)}</div><Paginacao pagina={paginaMateriais} total={materiais.length} itensPorPagina={6} aoMudarPagina={setPaginaMateriais} rotulo="materiais" /><div className="grade-formulario espacada"><label className="campo campo-peso">Peso do material<div><input value={peso} onChange={(e) => setPeso(e.target.value)} inputMode="decimal" placeholder="0,00" /><span>{material?.unidade.toUpperCase() ?? "KG"}</span></div></label><label className="campo">Data e hora<input type="datetime-local" value={dataHora} onChange={(e) => setDataHora(e.target.value)} /></label><label className="campo">Status<select value={status} onChange={(e) => setStatus(e.target.value as StatusPesagem)}><option value="concluida">Concluída</option><option value="agendada">Agendada</option><option value="cancelada">Cancelada</option></select></label><label className="campo campo-largo">Observação <small>Opcional</small><textarea value={observacao} onChange={(e) => setObservacao(e.target.value)} /></label></div>{material && <ProgressoMeta percentual={percentualDepois} peso={pesoDiaDepois} meta={metaDiaria} falta={faltaDepois} ganho={ganhoDiaDepois} caixa={caixa} />}</div>}
       {etapa === 3 && <div className="animar-etapa"><span className="sobrelinha">ETAPA 4 DE 4</span><h2>Revise antes de registrar</h2><ResumoPesagem catador={catador} cooperativa={cooperativa} ponto={ponto} material={material} peso={pesoNumero} valor={valor} dataHora={dataHora} status={status} percentual={percentualDepois} falta={faltaDepois} ganhoDia={ganhoDiaDepois} /></div>}
       {erro && <p className="mensagem-erro" role="alert">{erro}</p>}
       {caixaBloqueado && <p className="mensagem-erro" role="alert">O caixa deste catador está fechado para o dia selecionado. Reabra-o na ficha do catador antes de registrar.</p>}

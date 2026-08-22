@@ -5,6 +5,7 @@ WebApp responsivo para gestão de cooperativas de reciclagem, catadores, produç
 ## Recursos disponíveis
 
 - painel com catadores ativos, total coletado, valor a pagar, média por catador e coletas realizadas;
+- paginação inteligente e responsiva no painel, catadores, cooperativas, pesagem/produção e relatórios, com totais calculados diretamente no PostgreSQL;
 - cadastro de catadores em etapas, com nome como identificação mínima e os demais dados opcionais, múltiplos contatos, endereço assistido por CEP e foto opcional;
 - pagamento opcional por Pix ou conta bancária; ao habilitá-lo, o sistema exige os dados necessários para o recebimento e, quando a conta é de terceiro, nome e CPF do titular;
 - cooperativas e associações com responsável e vínculo de catadores;

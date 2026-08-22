@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { requisitarApi, type CooperativaApi } from "@/app/dados/api";
+import { Paginacao } from "@/app/componentes/paginacao";
 
 const formularioVazio = { nome: "", nomeResponsavel: "", telefone: "", observacao: "", ativa: true };
 
@@ -12,16 +13,21 @@ export function TelaCooperativas() {
   const [edicao, setEdicao] = useState<CooperativaApi | null>(null);
   const [formulario, setFormulario] = useState(formularioVazio);
   const [erro, setErro] = useState("");
+  const [busca, setBusca] = useState("");
+  const [pagina, setPagina] = useState(1);
+  const [itensPorPagina, setItensPorPagina] = useState(8);
+  const [total, setTotal] = useState(0);
 
   const carregar = useCallback(async () => {
     try {
-      const dados = await requisitarApi<{ dados: CooperativaApi[] }>("/api/cooperativas");
+      const dados = await requisitarApi<{ dados: CooperativaApi[]; total: number }>(`/api/cooperativas?busca=${encodeURIComponent(busca)}&limite=${itensPorPagina}&deslocamento=${(pagina - 1) * itensPorPagina}`);
       setCooperativas(dados.dados);
+      setTotal(dados.total);
       setErro("");
     } catch (falha) {
       setErro(falha instanceof Error ? falha.message : "Não foi possível carregar as cooperativas.");
     }
-  }, []);
+  }, [busca, itensPorPagina, pagina]);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void carregar(); }, [carregar]);
@@ -64,10 +70,11 @@ export function TelaCooperativas() {
   return (
     <section className="pagina-interna">
       <div className="resumo-pagina">
-        <div><h2>Cooperativas e associações</h2><p>{cooperativas.length} organizações cadastradas no PostgreSQL.</p></div>
+        <div><h2>Cooperativas e associações</h2><p>{total} organizações encontradas no PostgreSQL.</p></div>
         <button type="button" className="botao-primario" onClick={() => abrir()}><Plus /> Nova cooperativa</button>
       </div>
       {erro && <p className="mensagem-erro" role="alert">{erro}</p>}
+      <div className="barra-ferramentas"><label className="campo-busca"><Search /><input value={busca} onChange={(evento) => { setBusca(evento.target.value); setPagina(1); }} placeholder="Buscar por cooperativa, responsável ou telefone..." /></label></div>
       <div className="grade-cooperativas">
         {cooperativas.map((item) => (
           <article className="cartao-cooperativa" key={item.uuid}>
@@ -81,6 +88,7 @@ export function TelaCooperativas() {
         ))}
       </div>
       {cooperativas.length === 0 && <p className="estado-vazio painel">Nenhuma cooperativa cadastrada.</p>}
+      <Paginacao pagina={pagina} total={total} itensPorPagina={itensPorPagina} aoMudarPagina={setPagina} aoMudarQuantidade={(quantidade) => { setItensPorPagina(quantidade); setPagina(1); }} opcoesQuantidade={[4, 8, 12]} rotulo="organizações" />
 
       {modal && <div className="sobreposicao" role="dialog" aria-modal="true" aria-labelledby="titulo-cooperativa"><div className="modal pequeno">
         <header className="cabecalho-modal"><div><span>CADASTRO</span><h2 id="titulo-cooperativa">{edicao ? "Editar cooperativa" : "Adicionar cooperativa"}</h2><p>As alterações serão salvas no banco de dados.</p></div><button type="button" onClick={() => setModal(false)} aria-label="Fechar">×</button></header>

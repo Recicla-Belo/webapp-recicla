@@ -2,9 +2,10 @@
 
 /* eslint-disable @next/next/no-img-element -- fotos privadas são servidas pela API autenticada */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Gauge, Recycle, Scale, Target, UsersRound, WalletCards, type LucideIcon } from "lucide-react";
 import { requisitarApi, URL_API } from "@/app/dados/api";
+import { Paginacao } from "@/app/componentes/paginacao";
 
 type DadosAuditoria = { motivo?: string; antes?: Record<string, unknown>; depois?: Record<string, unknown> };
 type AtividadeApi = {
@@ -20,19 +21,26 @@ type DadosPainel = {
   indicadores: { catadores_ativos: number; catadores_meta_atingida: number; total_coletado: number; valor_total_pagar: number; coletas_realizadas: number; media_por_catador: number };
   producaoSemanal: Array<{ data: string; peso: number }>;
   atividades: AtividadeApi[];
+  paginacaoAtividades: { pagina: number; limite: number; total: number };
 };
 
-const estadoVazio: DadosPainel = { indicadores: { catadores_ativos: 0, catadores_meta_atingida: 0, total_coletado: 0, valor_total_pagar: 0, coletas_realizadas: 0, media_por_catador: 0 }, producaoSemanal: [], atividades: [] };
+const estadoVazio: DadosPainel = { indicadores: { catadores_ativos: 0, catadores_meta_atingida: 0, total_coletado: 0, valor_total_pagar: 0, coletas_realizadas: 0, media_por_catador: 0 }, producaoSemanal: [], atividades: [], paginacaoAtividades: { pagina: 1, limite: 5, total: 0 } };
 const dinheiro = (valor: number) => Number(valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
 export function PainelPrincipal({ onNovaPesagem }: { onNovaPesagem: () => void }) {
   const [dados, setDados] = useState<DadosPainel>(estadoVazio);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState("");
+  const [paginaAtividades, setPaginaAtividades] = useState(1);
+  const [limiteAtividades, setLimiteAtividades] = useState(5);
 
-  useEffect(() => {
-    void requisitarApi<DadosPainel>("/api/painel").then(setDados).catch((falha) => setErro(falha instanceof Error ? falha.message : "Não foi possível carregar o painel.")).finally(() => setCarregando(false));
-  }, []);
+  const carregar = useCallback(async () => {
+    try { setDados(await requisitarApi<DadosPainel>(`/api/painel?paginaAtividades=${paginaAtividades}&limiteAtividades=${limiteAtividades}`)); setErro(""); }
+    catch (falha) { setErro(falha instanceof Error ? falha.message : "Não foi possível carregar o painel."); }
+    finally { setCarregando(false); }
+  }, [limiteAtividades, paginaAtividades]);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- sincroniza a página de atividades com a API
+  useEffect(() => { void carregar(); }, [carregar]);
 
   const indicadores = useMemo<Array<{ rotulo: string; valor: string; icone: LucideIcon }>>(() => [
     { rotulo: "Catadores ativos", valor: dados.indicadores.catadores_ativos.toLocaleString("pt-BR"), icone: UsersRound },
@@ -55,8 +63,9 @@ export function PainelPrincipal({ onNovaPesagem }: { onNovaPesagem: () => void }
     <div className="grade-inferior">
       <section className="painel"><div className="titulo-secao"><div><h2>Produção dos últimos 7 dias</h2><p>Volume confirmado no banco de dados</p></div></div><div className="grafico" aria-label="Gráfico de produção dos últimos sete dias">{dados.producaoSemanal.map((item) => <div className="barra-grupo" key={item.data}><div className="barra" title={`${Number(item.peso).toLocaleString("pt-BR")} kg`} style={{ height: `${Math.max((Number(item.peso) / maiorPeso) * 100, Number(item.peso) > 0 ? 6 : 1)}%` }} /><span>{new Date(`${item.data}T12:00:00`).toLocaleDateString("pt-BR", { weekday: "short" }).replace(".", "")}</span></div>)}</div></section>
       <section className="painel atividade">
-        <div className="titulo-secao"><div><h2>Atividade recente</h2><p>Até 100 ações recentes; a auditoria completa permanece preservada</p></div><button type="button" onClick={onNovaPesagem}>Registrar nova</button></div>
+        <div className="titulo-secao"><div><h2>Atividade recente</h2><p>Todas as ações auditadas, organizadas em páginas</p></div><button type="button" onClick={onNovaPesagem}>Registrar nova</button></div>
         {dados.atividades.length === 0 ? <p className="estado-vazio">Nenhuma movimentação registrada.</p> : dados.atividades.map((atividade) => <AtividadeRecente atividade={atividade} key={atividade.uuid} />)}
+        <Paginacao pagina={paginaAtividades} total={dados.paginacaoAtividades.total} itensPorPagina={limiteAtividades} aoMudarPagina={setPaginaAtividades} aoMudarQuantidade={(quantidade) => { setLimiteAtividades(quantidade); setPaginaAtividades(1); }} opcoesQuantidade={[5, 10, 20]} rotulo="atividades" />
       </section>
     </div>
   </section>;

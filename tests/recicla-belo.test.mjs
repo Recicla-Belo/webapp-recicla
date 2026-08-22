@@ -24,7 +24,7 @@ test("renderiza a experiência do Recicla Belô", async () => {
 });
 
 test("mantém ambiente, banco e instalação documentados", async () => {
-  const [exemplo, estilos, migracao, migracaoNotificacoes, migracaoAuditoria, migracaoCaixas, migracaoLimpeza, sqlCompleto, instalador, supervisor, servidor, estrutura, painel, telaLogin, telaPesagem, telaCatadores, telaRelatorios, leiaMe, pacote] = await Promise.all([
+  const [exemplo, estilos, migracao, migracaoNotificacoes, migracaoAuditoria, migracaoCaixas, migracaoLimpeza, sqlCompleto, instalador, supervisor, servidor, estrutura, painel, telaLogin, telaPesagem, telaCatadores, telaCooperativas, telaRelatorios, paginacao, leiaMe, pacote] = await Promise.all([
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/001_estrutura_inicial.sql", import.meta.url), "utf8"),
@@ -41,7 +41,9 @@ test("mantém ambiente, banco e instalação documentados", async () => {
     readFile(new URL("../app/componentes/tela-login.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/componentes/tela-pesagem.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/componentes/tela-catadores.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/componentes/tela-cooperativas.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/componentes/tela-relatorios.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/componentes/paginacao.tsx", import.meta.url), "utf8"),
     readFile(new URL("../README.md", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
@@ -84,6 +86,8 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(painel, /\/api\/painel/);
   assert.match(painel, /avatar-atividade/);
   assert.match(painel, /Motivo:/);
+  assert.match(painel, /paginacaoAtividades/);
+  assert.match(painel, /<Paginacao/);
   assert.match(telaLogin, /useState\(""\)/);
   assert.match(telaLogin, /placeholder="Digite seu e-mail"/);
   assert.match(telaLogin, /Lembrar meu acesso/);
@@ -93,10 +97,16 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(telaPesagem, /Código do catador/);
   assert.match(telaPesagem, /metaAtingidaAgora/);
   assert.match(telaPesagem, /Cooperativa \/ associação/);
+  assert.match(telaPesagem, /<Paginacao/);
   assert.match(telaCatadores, /PerfilCatador/);
   assert.match(telaCatadores, /caixa\/\$\{acao\}/);
+  assert.match(telaCatadores, /<Paginacao/);
+  assert.match(telaCooperativas, /<Paginacao/);
   assert.match(telaRelatorios, /CORREÇÃO AUDITÁVEL/);
   assert.match(telaRelatorios, /exclusao_logica/);
+  assert.match(telaRelatorios, /<Paginacao/);
+  assert.match(paginacao, /paginasVisiveis/);
+  assert.match(estilos, /\.paginacao\{[^}]*max-width:100%/);
   assert.match(servidor, /registrarAuditoria/);
   assert.match(servidor, /motivoAlteracao/);
   assert.match(estilos, /\.usuario\{[^}]*cursor:pointer/);

@@ -57,6 +57,12 @@ async function executar() {
     catadorUuid = catador.uuid;
     entidadesCriadas.add(catadorUuid);
     assert.match(catador.codigo, /^CAT-\d{4,}$/);
+    const paginaCatadores = (await chamar(`/api/catadores?busca=${encodeURIComponent(`Catador Integração ${sufixo}`)}&status=ativo&limite=5&deslocamento=0`)).dados;
+    assert.equal(paginaCatadores.total, 1);
+    assert.equal(paginaCatadores.dados[0]?.uuid, catadorUuid);
+    const paginaCooperativas = (await chamar(`/api/cooperativas?busca=${encodeURIComponent(`Integração ${sufixo}`)}&limite=4&deslocamento=0`)).dados;
+    assert.equal(paginaCooperativas.total, 1);
+    assert.equal(paginaCooperativas.dados[0]?.uuid, cooperativaUuid);
 
     const pontos = (await chamar("/api/pontos-apoio")).dados.dados;
     const responsaveis = (await chamar("/api/responsaveis-pesagem")).dados.dados;
@@ -85,6 +91,12 @@ async function executar() {
     assert.equal(caixaReaberto.status, "aberto");
 
     const painelDepois = (await chamar("/api/painel")).dados;
+    assert.equal(painelDepois.paginacaoAtividades.pagina, 1);
+    assert.equal(painelDepois.paginacaoAtividades.limite, 5);
+    assert.ok(painelDepois.paginacaoAtividades.total >= painelDepois.atividades.length);
+    const segundaPaginaAtividades = (await chamar("/api/painel?paginaAtividades=2&limiteAtividades=5")).dados;
+    assert.equal(segundaPaginaAtividades.paginacaoAtividades.pagina, 2);
+    assert.ok(segundaPaginaAtividades.atividades.length <= 5);
     assert.equal(Number(painelDepois.indicadores.catadores_ativos), Number(painelAntes.catadores_ativos) + 1);
     assert.equal(Number(painelDepois.indicadores.coletas_realizadas), Number(painelAntes.coletas_realizadas) + 1);
     assert.equal(Number(painelDepois.indicadores.total_coletado), Number(painelAntes.total_coletado) + 30);
@@ -99,7 +111,11 @@ async function executar() {
     assert.equal(alterada.status, "agendada");
     assert.equal(Number((await chamar("/api/painel")).dados.indicadores.coletas_realizadas), Number(painelAntes.coletas_realizadas));
 
-    let relatorio = (await chamar(`/api/relatorios/pesagens?catadorUuid=${catadorUuid}`)).dados.dados;
+    const respostaRelatorio = (await chamar(`/api/relatorios/pesagens?catadorUuid=${catadorUuid}&limite=5&deslocamento=0`)).dados;
+    assert.equal(respostaRelatorio.total, 1);
+    assert.equal(Number(respostaRelatorio.totais.peso), 0);
+    assert.equal(Number(respostaRelatorio.totais.valor), 0);
+    let relatorio = respostaRelatorio.dados;
     assert.ok(relatorio.some((item) => item.uuid === pesagemUuid && item.status === "agendada" && Number(item.valor_total) === 20 && item.historico.some((evento) => evento.acao === "alteracao")));
     const perfil = (await chamar(`/api/catadores/${catadorUuid}/perfil`)).dados;
     assert.equal(perfil.catador.uuid, catadorUuid);
