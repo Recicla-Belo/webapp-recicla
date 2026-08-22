@@ -21,7 +21,7 @@ export async function requisitarApi<T>(caminho: string, opcoes: RequestInit = {}
 
 export type CatadorApi = {
   uuid: string; codigo: string; nome_completo: string; apelido: string | null; status: "ativo" | "inativo";
-  cooperativa: string | null; contatos: Array<{ tipo: string; valor: string }>; total_quilos: number; total_ganhos: number;
+  cooperativa: string | null; contatos: Array<{ tipo: string; valor: string }>; endereco_resumo: string | null; total_quilos: number; total_ganhos: number;
   peso_hoje: number; meta_hoje: number; percentual_meta_hoje: number; status_caixa_hoje: "aberto" | "fechado"; tem_foto: boolean;
 };
 

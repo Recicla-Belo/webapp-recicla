@@ -24,13 +24,14 @@ test("renderiza a experiência do Recicla Belô", async () => {
 });
 
 test("mantém ambiente, banco e instalação documentados", async () => {
-  const [exemplo, estilos, migracao, migracaoNotificacoes, migracaoAuditoria, migracaoCaixas, sqlCompleto, instalador, supervisor, servidor, estrutura, painel, telaLogin, telaPesagem, telaCatadores, telaRelatorios, leiaMe, pacote] = await Promise.all([
+  const [exemplo, estilos, migracao, migracaoNotificacoes, migracaoAuditoria, migracaoCaixas, migracaoLimpeza, sqlCompleto, instalador, supervisor, servidor, estrutura, painel, telaLogin, telaPesagem, telaCatadores, telaRelatorios, leiaMe, pacote] = await Promise.all([
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/001_estrutura_inicial.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/004_notificacoes.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/006_auditoria_pesagens.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/008_metas_e_caixas_catadores.sql", import.meta.url), "utf8"),
+    readFile(new URL("../servidor/migracoes/009_limpa_auditorias_caixa_orfas.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/sql/recicla-belo-completo.sql", import.meta.url), "utf8"),
     readFile(new URL("../scripts/instalar-e-iniciar.sh", import.meta.url), "utf8"),
     readFile(new URL("../scripts/desenvolver.mjs", import.meta.url), "utf8"),
@@ -60,6 +61,7 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(migracaoCaixas, /CREATE TABLE IF NOT EXISTS caixas_catador/);
   assert.match(migracaoCaixas, /CREATE TABLE IF NOT EXISTS movimentacoes_caixa_catador/);
   assert.match(migracaoCaixas, /meta_diaria/);
+  assert.match(migracaoLimpeza, /NOT EXISTS/);
   assert.match(sqlCompleto, /ALTER TYPE status_pesagem ADD VALUE IF NOT EXISTS 'agendada'/);
   assert.match(instalador, /docker compose up -d banco/);
   assert.match(instalador, /exec npm run dev/);
@@ -80,6 +82,8 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.doesNotMatch(estrutura, /JosÃ© concluiu|Maria atingiu|Coopesol Leste registrou/);
   assert.doesNotMatch(painel, /RESUMO DO DIA|3,2 t|O trabalho de hoje gera/);
   assert.match(painel, /\/api\/painel/);
+  assert.match(painel, /avatar-atividade/);
+  assert.match(painel, /Motivo:/);
   assert.match(telaLogin, /useState\(""\)/);
   assert.match(telaLogin, /placeholder="Digite seu e-mail"/);
   assert.match(telaLogin, /Lembrar meu acesso/);

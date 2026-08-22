@@ -99,7 +99,15 @@ async function obterCaixaAberto(cliente: PoolClient, catadorUuid: string, dataHo
        VALUES ($1,$2::date,$3) RETURNING uuid,status`,
       [catadorUuid, dataCaixa, usuarioUuid],
     );
-    await registrarAuditoria(cliente, usuarioUuid, "abertura", "caixas_catador", caixa.rows[0]!.uuid, { catadorUuid, dataCaixa, aberturaAutomatica: true }, enderecoIp);
+    const catador = await cliente.query<{ codigo: string; nome_completo: string }>("SELECT codigo,nome_completo FROM catadores WHERE uuid=$1", [catadorUuid]);
+    await registrarAuditoria(cliente, usuarioUuid, "abertura", "caixas_catador", caixa.rows[0]!.uuid, {
+      catadorUuid,
+      codigoCatador: catador.rows[0]?.codigo,
+      nomeCatador: catador.rows[0]?.nome_completo,
+      dataCaixa,
+      aberturaAutomatica: true,
+      totais: { peso: 0, valor: 0, movimentacoes: 0 },
+    }, enderecoIp);
   }
   if (caixa.rows[0]!.status === "fechado") throw Object.assign(new Error("O caixa deste catador está fechado para a data informada. Reabra-o antes de registrar ou corrigir movimentações."), { statusCode: 409 });
   return { uuid: caixa.rows[0]!.uuid, dataCaixa };
@@ -212,18 +220,36 @@ aplicacao.get("/api/painel", async () => {
     GROUP BY dia ORDER BY dia`);
   const atividades = await banco.query(`SELECT a.uuid,a.acao,a.entidade,a.criado_em,a.dados,
       p.codigo,p.peso_total::float8,p.valor_total::float8,p.status,p.excluida_em,
-      c.codigo AS codigo_catador,c.nome_completo AS catador,m.nome AS material,ip.meta_diaria::float8,
-      co.nome AS cooperativa,pa.nome AS ponto_apoio,coalesce(rp.nome,p.responsavel_outro) AS responsavel
+      c.uuid AS catador_uuid,c.codigo AS codigo_catador,c.nome_completo AS catador,
+      EXISTS(SELECT 1 FROM arquivos_catador ar WHERE ar.catador_uuid=c.uuid AND ar.tipo='foto_rosto') AS tem_foto,
+      (SELECT ct.valor FROM contatos_catador ct WHERE ct.catador_uuid=c.uuid ORDER BY ct.principal DESC,ct.criado_em LIMIT 1) AS contato_catador,
+      concat_ws(', ',ec.logradouro,ec.numero,ec.bairro,ec.cidade,ec.estado) AS endereco_catador,
+      co_catador.nome AS cooperativa_catador,m.nome AS material,ip.meta_diaria::float8,
+      co.nome AS cooperativa,pa.nome AS ponto_apoio,coalesce(rp.nome,p.responsavel_outro) AS responsavel,
+      coalesce(cx.data_caixa::text,a.dados->>'data',a.dados->>'dataCaixa') AS data_caixa,
+      coalesce(nullif(a.dados#>>'{totais,peso}','')::numeric,totais_caixa.peso,0)::float8 AS peso_caixa,
+      coalesce(nullif(a.dados#>>'{totais,valor}','')::numeric,totais_caixa.valor,0)::float8 AS valor_caixa,
+      coalesce(nullif(a.dados#>>'{totais,movimentacoes}','')::int,totais_caixa.movimentacoes,0)::int AS movimentacoes_caixa,
+      coalesce(a.dados->>'motivo',cx.motivo_reabertura) AS motivo
     FROM auditoria a
     LEFT JOIN pesagens p ON a.entidade='pesagens' AND p.uuid=a.entidade_uuid
     LEFT JOIN caixas_catador cx ON a.entidade='caixas_catador' AND cx.uuid=a.entidade_uuid
-    LEFT JOIN catadores c ON c.uuid=coalesce(p.catador_uuid,cx.catador_uuid)
+    LEFT JOIN catadores c ON c.uuid=coalesce(p.catador_uuid,cx.catador_uuid,CASE WHEN a.entidade='catadores' THEN a.entidade_uuid END)
+    LEFT JOIN enderecos_catador ec ON ec.catador_uuid=c.uuid
+    LEFT JOIN cooperativas co_catador ON co_catador.uuid=c.cooperativa_uuid
     LEFT JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid
     LEFT JOIN materiais m ON m.uuid=ip.material_uuid
     LEFT JOIN cooperativas co ON co.uuid=p.cooperativa_uuid
     LEFT JOIN pontos_apoio pa ON pa.uuid=p.ponto_apoio_uuid
     LEFT JOIN responsaveis_pesagem rp ON rp.uuid=p.responsavel_pesagem_uuid
-    ORDER BY a.criado_em DESC LIMIT 20`);
+    LEFT JOIN LATERAL (
+      SELECT coalesce(sum(mc.peso) FILTER (WHERE mc.ativa),0) AS peso,
+        coalesce(sum(mc.valor) FILTER (WHERE mc.ativa),0) AS valor,
+        count(mc.uuid) FILTER (WHERE mc.ativa)::int AS movimentacoes
+      FROM movimentacoes_caixa_catador mc WHERE mc.caixa_uuid=cx.uuid
+    ) totais_caixa ON TRUE
+    WHERE a.entidade<>'caixas_catador' OR cx.uuid IS NOT NULL
+    ORDER BY a.criado_em DESC LIMIT 100`);
   return { indicadores: indicadores.rows[0], producaoSemanal: producao.rows, atividades: atividades.rows };
 });
 
@@ -238,6 +264,7 @@ aplicacao.get("/api/catadores", async (requisicao) => {
   }
   const { rows } = await banco.query(`SELECT c.uuid, c.codigo, c.nome_completo, c.apelido, c.genero, c.raca_cor, c.data_nascimento, c.cpf, c.status,
       co.nome AS cooperativa, coalesce(json_agg(json_build_object('tipo', ct.tipo, 'valor', ct.valor)) FILTER (WHERE ct.uuid IS NOT NULL), '[]') AS contatos
+      ,(SELECT concat_ws(', ',e.logradouro,e.numero,e.bairro,e.cidade,e.estado) FROM enderecos_catador e WHERE e.catador_uuid=c.uuid) AS endereco_resumo
       ,coalesce((SELECT sum(p.peso_total) FROM pesagens p WHERE p.catador_uuid=c.uuid AND p.status='concluida' AND p.excluida_em IS NULL),0)::float8 AS total_quilos,
       EXISTS(SELECT 1 FROM arquivos_catador ar WHERE ar.catador_uuid=c.uuid AND ar.tipo='foto_rosto') AS tem_foto
       ,coalesce((SELECT sum(p.valor_total) FROM pesagens p WHERE p.catador_uuid=c.uuid AND p.status='concluida' AND p.excluida_em IS NULL),0)::float8 AS total_ganhos,
@@ -273,9 +300,11 @@ aplicacao.get("/api/catadores/:uuid/perfil", async (requisicao, resposta) => {
     WHERE p.catador_uuid=$1 AND p.status='concluida' AND p.excluida_em IS NULL
     GROUP BY (p.data_hora AT TIME ZONE 'America/Bahia')::date,m.uuid,m.nome ORDER BY data DESC,m.nome LIMIT 120`, [uuid]);
   const caixas = await banco.query(`SELECT cx.uuid,cx.data_caixa,cx.status,cx.aberto_em,cx.fechado_em,cx.reaberto_em,cx.motivo_reabertura,
+      ua.nome AS aberto_por,uf.nome AS fechado_por,ur.nome AS reaberto_por,
       coalesce(sum(mc.peso) FILTER (WHERE mc.ativa),0)::float8 AS peso,coalesce(sum(mc.valor) FILTER (WHERE mc.ativa),0)::float8 AS valor,count(mc.uuid) FILTER (WHERE mc.ativa)::int AS movimentacoes
     FROM caixas_catador cx LEFT JOIN movimentacoes_caixa_catador mc ON mc.caixa_uuid=cx.uuid
-    WHERE cx.catador_uuid=$1 GROUP BY cx.uuid ORDER BY cx.data_caixa DESC LIMIT 60`, [uuid]);
+    LEFT JOIN usuarios ua ON ua.uuid=cx.aberto_por_uuid LEFT JOIN usuarios uf ON uf.uuid=cx.fechado_por_uuid LEFT JOIN usuarios ur ON ur.uuid=cx.reaberto_por_uuid
+    WHERE cx.catador_uuid=$1 GROUP BY cx.uuid,ua.nome,uf.nome,ur.nome ORDER BY cx.data_caixa DESC LIMIT 60`, [uuid]);
   const historico = await banco.query(`SELECT p.uuid,p.codigo,p.data_hora,p.status,p.peso_total::float8,p.valor_total::float8,p.excluida_em,m.nome AS material,pa.nome AS ponto_apoio,co.nome AS cooperativa,coalesce(rp.nome,p.responsavel_outro) AS responsavel
     FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN materiais m ON m.uuid=ip.material_uuid JOIN pontos_apoio pa ON pa.uuid=p.ponto_apoio_uuid LEFT JOIN cooperativas co ON co.uuid=p.cooperativa_uuid LEFT JOIN responsaveis_pesagem rp ON rp.uuid=p.responsavel_pesagem_uuid
     WHERE p.catador_uuid=$1 ORDER BY p.data_hora DESC LIMIT 100`, [uuid]);
@@ -641,12 +670,19 @@ aplicacao.post("/api/catadores/:uuid/caixa/fechar", async (requisicao, resposta)
     await cliente.query("BEGIN");
     const catador = await cliente.query<{ nome_completo: string; codigo: string }>("SELECT nome_completo,codigo FROM catadores WHERE uuid=$1 FOR SHARE", [catadorUuid]);
     if (!catador.rows[0]) { await cliente.query("ROLLBACK"); return resposta.code(404).send({ mensagem: "Catador não encontrado." }); }
+    await cliente.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`caixa:${catadorUuid}:${entrada.data.data}`]);
     let caixa = await cliente.query<{ uuid: string; status: string }>("SELECT uuid,status FROM caixas_catador WHERE catador_uuid=$1 AND data_caixa=$2::date FOR UPDATE", [catadorUuid, entrada.data.data]);
-    if (!caixa.rows[0]) caixa = await cliente.query<{ uuid: string; status: string }>(`INSERT INTO caixas_catador (catador_uuid,data_caixa,aberto_por_uuid) VALUES ($1,$2::date,$3) RETURNING uuid,status`, [catadorUuid, entrada.data.data, requisicao.user.usuarioUuid]);
+    if (!caixa.rows[0]) {
+      caixa = await cliente.query<{ uuid: string; status: string }>(`INSERT INTO caixas_catador (catador_uuid,data_caixa,aberto_por_uuid) VALUES ($1,$2::date,$3) RETURNING uuid,status`, [catadorUuid, entrada.data.data, requisicao.user.usuarioUuid]);
+      await registrarAuditoria(cliente, requisicao.user.usuarioUuid, "abertura", "caixas_catador", caixa.rows[0]!.uuid, {
+        catadorUuid, codigoCatador: catador.rows[0].codigo, nomeCatador: catador.rows[0].nome_completo,
+        dataCaixa: entrada.data.data, aberturaAutomatica: false, totais: { peso: 0, valor: 0, movimentacoes: 0 },
+      }, requisicao.ip);
+    }
     if (caixa.rows[0]!.status === "fechado") { await cliente.query("ROLLBACK"); return resposta.code(409).send({ mensagem: "Este caixa já está fechado." }); }
     const totais = await cliente.query<{ peso: number; valor: number; movimentacoes: number }>(`SELECT coalesce(sum(peso) FILTER (WHERE ativa),0)::float8 AS peso,coalesce(sum(valor) FILTER (WHERE ativa),0)::float8 AS valor,count(*) FILTER (WHERE ativa)::int AS movimentacoes FROM movimentacoes_caixa_catador WHERE caixa_uuid=$1`, [caixa.rows[0]!.uuid]);
     await cliente.query("UPDATE caixas_catador SET status='fechado',fechado_por_uuid=$1,fechado_em=now(),atualizado_em=now() WHERE uuid=$2", [requisicao.user.usuarioUuid, caixa.rows[0]!.uuid]);
-    await registrarAuditoria(cliente, requisicao.user.usuarioUuid, "fechamento", "caixas_catador", caixa.rows[0]!.uuid, { catadorUuid, codigoCatador: catador.rows[0]!.codigo, data: entrada.data.data, totais: totais.rows[0] }, requisicao.ip);
+    await registrarAuditoria(cliente, requisicao.user.usuarioUuid, "fechamento", "caixas_catador", caixa.rows[0]!.uuid, { catadorUuid, codigoCatador: catador.rows[0]!.codigo, nomeCatador: catador.rows[0]!.nome_completo, data: entrada.data.data, totais: totais.rows[0] }, requisicao.ip);
     await criarNotificacao(cliente, requisicao.user.usuarioUuid, "caixa", "Caixa individual fechado", `${catador.rows[0]!.codigo} — ${catador.rows[0]!.nome_completo}: caixa de ${entrada.data.data} fechado em ${Number(totais.rows[0]?.valor ?? 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}.`, "caixas_catador", caixa.rows[0]!.uuid);
     await cliente.query("COMMIT");
     return { uuid: caixa.rows[0]!.uuid, status: "fechado", totais: totais.rows[0] };
@@ -660,12 +696,14 @@ aplicacao.post("/api/catadores/:uuid/caixa/reabrir", async (requisicao, resposta
   const cliente = await banco.connect();
   try {
     await cliente.query("BEGIN");
+    await cliente.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`caixa:${catadorUuid}:${entrada.data.data}`]);
     const caixa = await cliente.query<{ uuid: string; status: string }>("SELECT uuid,status FROM caixas_catador WHERE catador_uuid=$1 AND data_caixa=$2::date FOR UPDATE", [catadorUuid, entrada.data.data]);
     if (!caixa.rows[0]) { await cliente.query("ROLLBACK"); return resposta.code(404).send({ mensagem: "Caixa não encontrado para esta data." }); }
     if (caixa.rows[0].status === "aberto") { await cliente.query("ROLLBACK"); return resposta.code(409).send({ mensagem: "Este caixa já está aberto." }); }
     const catador = await cliente.query<{ nome_completo: string; codigo: string }>("SELECT nome_completo,codigo FROM catadores WHERE uuid=$1 FOR SHARE", [catadorUuid]);
+    const totais = await cliente.query<{ peso: number; valor: number; movimentacoes: number }>(`SELECT coalesce(sum(peso) FILTER (WHERE ativa),0)::float8 AS peso,coalesce(sum(valor) FILTER (WHERE ativa),0)::float8 AS valor,count(*) FILTER (WHERE ativa)::int AS movimentacoes FROM movimentacoes_caixa_catador WHERE caixa_uuid=$1`, [caixa.rows[0].uuid]);
     await cliente.query("UPDATE caixas_catador SET status='aberto',reaberto_por_uuid=$1,reaberto_em=now(),motivo_reabertura=$2,atualizado_em=now() WHERE uuid=$3", [requisicao.user.usuarioUuid, entrada.data.motivo, caixa.rows[0].uuid]);
-    await registrarAuditoria(cliente, requisicao.user.usuarioUuid, "reabertura", "caixas_catador", caixa.rows[0].uuid, { catadorUuid, codigoCatador: catador.rows[0]?.codigo, data: entrada.data.data, motivo: entrada.data.motivo }, requisicao.ip);
+    await registrarAuditoria(cliente, requisicao.user.usuarioUuid, "reabertura", "caixas_catador", caixa.rows[0].uuid, { catadorUuid, codigoCatador: catador.rows[0]?.codigo, nomeCatador: catador.rows[0]?.nome_completo, data: entrada.data.data, motivo: entrada.data.motivo, totais: totais.rows[0] }, requisicao.ip);
     await criarNotificacao(cliente, requisicao.user.usuarioUuid, "caixa", "Caixa individual reaberto", `${catador.rows[0]?.codigo} — ${catador.rows[0]?.nome_completo}: caixa reaberto. Motivo: ${entrada.data.motivo}`, "caixas_catador", caixa.rows[0].uuid);
     await cliente.query("COMMIT");
     return { uuid: caixa.rows[0].uuid, status: "aberto" };

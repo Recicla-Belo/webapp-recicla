@@ -37,6 +37,7 @@ async function executar() {
   let materialUuid;
   let catadorUuid;
   let pesagemUuid;
+  let caixaUuid;
 
   try {
     cooperativaUuid = (await chamar("/api/cooperativas", { method: "POST", body: JSON.stringify({ nome: `Integração ${sufixo}`, nomeResponsavel: "Teste automatizado", ativa: true }) })).dados.uuid;
@@ -73,6 +74,8 @@ async function executar() {
     const progresso = (await chamar(`/api/catadores/${catadorUuid}/metas?data=${dataCaixa}`)).dados;
     assert.equal(progresso.metas.find((item) => item.material_uuid === materialUuid).atingida, true);
     assert.equal(progresso.caixa.status, "aberto");
+    caixaUuid = progresso.caixa.uuid;
+    entidadesCriadas.add(caixaUuid);
 
     const caixaFechado = (await chamar(`/api/catadores/${catadorUuid}/caixa/fechar`, { method: "POST", body: JSON.stringify({ data: dataCaixa }) })).dados;
     assert.equal(caixaFechado.status, "fechado");
@@ -85,7 +88,11 @@ async function executar() {
     assert.equal(Number(painelDepois.indicadores.catadores_ativos), Number(painelAntes.catadores_ativos) + 1);
     assert.equal(Number(painelDepois.indicadores.coletas_realizadas), Number(painelAntes.coletas_realizadas) + 1);
     assert.equal(Number(painelDepois.indicadores.total_coletado), Number(painelAntes.total_coletado) + 30);
-    assert.ok(painelDepois.atividades.some((item) => item.codigo === pesagem.codigo && item.entidade === "pesagens"));
+    assert.ok(painelDepois.atividades.some((item) => item.codigo === pesagem.codigo && item.entidade === "pesagens" && item.catador_uuid === catadorUuid));
+    const atividadeCaixa = painelDepois.atividades.find((item) => item.entidade === "caixas_catador" && item.catador_uuid === catadorUuid && item.acao === "reabertura");
+    assert.equal(atividadeCaixa.codigo_catador, catador.codigo);
+    assert.equal(atividadeCaixa.motivo, "Correção controlada do teste");
+    assert.equal(Number(atividadeCaixa.valor_caixa), 15);
 
     const alterada = (await chamar(`/api/pesagens/${pesagemUuid}`, { method: "PUT", body: JSON.stringify({ catadorUuid, cooperativaUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsaveis[0].uuid, materialUuid, peso: 40, observacao: "Peso corrigido", dataHora: dataHoraPesagem, status: "agendada", motivoAlteracao: "Correção automatizada do peso e status" }) })).dados;
     assert.equal(alterada.valorTotal, 20);

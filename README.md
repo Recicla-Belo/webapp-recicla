@@ -12,6 +12,7 @@ WebApp responsivo para gestão de cooperativas de reciclagem, catadores, produç
 - materiais configuráveis por unidade, quantidade de referência, valor e situação ativa/inativa;
 - meta diária configurável por material, progresso individual por catador e comemoração ao atingir a meta;
 - caixa diário independente por catador, com fechamento que bloqueia novos lançamentos, reabertura justificada e trilha de auditoria;
+- atividade recente identificada com foto, código, nome e dados do catador, totais do caixa, pesagens, correções e motivo de reabertura;
 - ficha completa do catador com contatos, endereço, meios de pagamento, histórico, ganhos por material, metas e caixas;
 - relatório detalhado e filtrável das reciclagens, com edição justificada, exclusão lógica e histórico auditável;
 - central de notificações persistida no PostgreSQL, com leitura individual, marcação coletiva e limpeza;
