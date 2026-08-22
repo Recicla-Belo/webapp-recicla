@@ -121,13 +121,44 @@ async function executar() {
     assert.equal(perfil.catador.uuid, catadorUuid);
     assert.ok(perfil.caixas.some((item) => String(item.data_caixa).slice(0, 10) === dataCaixa && item.reaberto_em));
 
-    const notificacoes = (await chamar("/api/notificacoes")).dados;
-    const notificacaoTeste = notificacoes.dados.find((item) => entidadesCriadas.has(item.entidade_uuid));
+    const notificacoes = (await chamar("/api/notificacoes?limite=5")).dados;
+    assert.ok(notificacoes.dados.length <= 5);
+    assert.ok(notificacoes.total >= notificacoes.dados.length);
+    assert.ok(notificacoes.naoLidas >= 0);
+    assert.ok(notificacoes.proximoCursor);
+    const cursor = new URLSearchParams({
+      limite: "5",
+      cursorData: notificacoes.proximoCursor.criadoEm,
+      cursorUuid: notificacoes.proximoCursor.uuid,
+    });
+    const paginaSeguinte = (await chamar(`/api/notificacoes?${cursor.toString()}`)).dados;
+    assert.equal(paginaSeguinte.dados.some((item) => notificacoes.dados.some((anterior) => anterior.uuid === item.uuid)), false);
+    const notificacaoTeste = [...notificacoes.dados, ...paginaSeguinte.dados].find((item) => entidadesCriadas.has(item.entidade_uuid));
     assert.ok(notificacaoTeste);
     await chamar(`/api/notificacoes/${notificacaoTeste.uuid}/lida`, { method: "PATCH" });
     assert.ok((await chamar("/api/notificacoes")).dados.dados.find((item) => item.uuid === notificacaoTeste.uuid)?.lida_em);
     await chamar(`/api/notificacoes/${notificacaoTeste.uuid}`, { method: "DELETE" });
     assert.equal((await chamar("/api/notificacoes")).dados.dados.some((item) => item.uuid === notificacaoTeste.uuid), false);
+
+    const cookieAdministrador = cookie;
+    const emailCentralTeste = `notificacoes-${sufixo}@reciclabelo.local`;
+    const usuarioCentral = await bancoTeste.query(`INSERT INTO usuarios (nome,email,senha_hash,administrador,ativo)
+      SELECT 'Teste da central de notificações',$1,senha_hash,TRUE,TRUE FROM usuarios WHERE email=$2 RETURNING uuid`, [emailCentralTeste, process.env.ADMIN_EMAIL]);
+    const usuarioCentralUuid = usuarioCentral.rows[0].uuid;
+    try {
+      await bancoTeste.query("INSERT INTO notificacoes (usuario_uuid,tipo,titulo,mensagem) VALUES ($1,'sistema','Teste temporário','Validação da limpeza coletiva')", [usuarioCentralUuid]);
+      const loginCentral = await chamar("/api/autenticacao/entrar", { method: "POST", body: JSON.stringify({ email: emailCentralTeste, senha: process.env.ADMIN_SENHA }) }, false);
+      cookie = (loginCentral.resposta.headers.get("set-cookie") ?? "").split(";", 1)[0];
+      assert.equal((await chamar("/api/notificacoes")).dados.total, 1);
+      assert.equal((await chamar("/api/notificacoes", { method: "DELETE" })).resposta.status, 204);
+      const centralLimpa = (await chamar("/api/notificacoes")).dados;
+      assert.equal(centralLimpa.total, 0);
+      assert.equal(centralLimpa.naoLidas, 0);
+      assert.equal(centralLimpa.dados.length, 0);
+    } finally {
+      cookie = cookieAdministrador;
+      await bancoTeste.query("DELETE FROM usuarios WHERE uuid=$1", [usuarioCentralUuid]);
+    }
 
     await chamar(`/api/pesagens/${pesagemUuid}`, { method: "DELETE", body: JSON.stringify({ motivo: "Registro temporário do teste integrado" }) });
     relatorio = (await chamar(`/api/relatorios/pesagens?catadorUuid=${catadorUuid}`)).dados.dados;
@@ -162,4 +193,4 @@ async function executar() {
 }
 
 await executar();
-console.log("Integração concluída: sessão, pagamento, pesagem, edição, exclusão lógica, auditoria, painel e relatório.");
+console.log("Integração concluída: sessão, pagamento, pesagem, auditoria, painel, relatório e central de notificações.");

@@ -16,7 +16,7 @@ WebApp responsivo para gestão de cooperativas de reciclagem, catadores, produç
 - atividade recente identificada com foto, código, nome e dados do catador, totais do caixa, pesagens, correções e motivo de reabertura;
 - ficha completa do catador com contatos, endereço, meios de pagamento, histórico, ganhos por material, metas e caixas;
 - relatório detalhado e filtrável das reciclagens, com edição justificada, exclusão lógica e histórico auditável;
-- central de notificações persistida no PostgreSQL, com abertura direcionada, leitura individual, marcação coletiva, limpeza e recuperação amigável quando a API estiver indisponível;
+- central de notificações persistida no PostgreSQL, com abertura direcionada, leitura individual, exclusão, limpeza, contador global e rolagem infinita paginada por cursor;
 - tema claro/escuro, identidade visual configurável e layout responsivo para Android, iOS e desktop;
 - menu móvel com rolagem própria, áreas seguras do iPhone e proteção contra estouro horizontal da página;
 - API autenticada, PostgreSQL com UUID, auditoria, índices e pesquisa textual em português.
@@ -129,6 +129,8 @@ O `.env` real é ignorado pelo Git. Apenas o `.env.example`, sem segredos de pro
 ## Banco de dados
 
 As tabelas e colunas usam nomes claros em português do Brasil. A estrutura cobre usuários, cooperativas, catadores, contatos, endereços, contas financeiras, fotos, pontos de apoio, responsáveis, materiais, pesagens, itens de pesagem, caixas individuais, movimentações financeiras, notificações e auditoria.
+
+Notificações ligadas a registros removidos são eliminadas pelas rotas de exclusão e por uma migração de saneamento. A consulta também ignora referências órfãs, evitando que uma instalação sem catadores ou pesagens exiba avisos antigos.
 
 O pagamento é calculado exclusivamente pelo backend com o preço e a quantidade de referência vigentes no material. A meta não retira o pagamento do peso anterior: ela acompanha o objetivo diário e, depois de atingida, cada novo lançamento continua sendo pago normalmente conforme o material. O valor e a meta são gravados como fotografia histórica na pesagem para que mudanças futuras de configuração não alterem lançamentos já realizados.
 

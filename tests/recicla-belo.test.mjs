@@ -24,7 +24,7 @@ test("renderiza a experiência do Recicla Belô", async () => {
 });
 
 test("mantém ambiente, banco e instalação documentados", async () => {
-  const [exemplo, estilos, migracao, migracaoNotificacoes, migracaoAuditoria, migracaoCaixas, migracaoLimpeza, sqlCompleto, instalador, supervisor, servidor, estrutura, api, painel, telaLogin, telaPesagem, telaCatadores, telaCooperativas, telaRelatorios, paginacao, leiaMe, pacote] = await Promise.all([
+  const [exemplo, estilos, migracao, migracaoNotificacoes, migracaoAuditoria, migracaoCaixas, migracaoLimpeza, migracaoNotificacoesOrfas, sqlCompleto, instalador, supervisor, servidor, estrutura, api, painel, telaLogin, telaPesagem, telaCatadores, telaCooperativas, telaRelatorios, paginacao, leiaMe, pacote] = await Promise.all([
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/001_estrutura_inicial.sql", import.meta.url), "utf8"),
@@ -32,6 +32,7 @@ test("mantém ambiente, banco e instalação documentados", async () => {
     readFile(new URL("../servidor/migracoes/006_auditoria_pesagens.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/008_metas_e_caixas_catadores.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/009_limpa_auditorias_caixa_orfas.sql", import.meta.url), "utf8"),
+    readFile(new URL("../servidor/migracoes/010_limpa_notificacoes_orfas.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/sql/recicla-belo-completo.sql", import.meta.url), "utf8"),
     readFile(new URL("../scripts/instalar-e-iniciar.sh", import.meta.url), "utf8"),
     readFile(new URL("../scripts/desenvolver.mjs", import.meta.url), "utf8"),
@@ -65,6 +66,8 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(migracaoCaixas, /CREATE TABLE IF NOT EXISTS movimentacoes_caixa_catador/);
   assert.match(migracaoCaixas, /meta_diaria/);
   assert.match(migracaoLimpeza, /NOT EXISTS/);
+  assert.match(migracaoNotificacoesOrfas, /DELETE FROM notificacoes/);
+  assert.match(migracaoNotificacoesOrfas, /caixas_catador/);
   assert.match(sqlCompleto, /ALTER TYPE status_pesagem ADD VALUE IF NOT EXISTS 'agendada'/);
   assert.match(instalador, /docker compose up -d banco/);
   assert.match(instalador, /exec npm run dev/);
@@ -88,6 +91,9 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(estrutura, /paginaDaNotificacao/);
   assert.match(estrutura, /erroNotificacoes/);
   assert.match(estrutura, /Tentar novamente/);
+  assert.match(estrutura, /proximoCursorNotificacoes/);
+  assert.match(estrutura, /onScroll=\{carregarAoRolar\}/);
+  assert.match(estrutura, /carregandoMaisNotificacoes/);
   assert.match(api, /Não foi possível conectar ao servidor/);
   assert.match(api, /catch \(falha\)/);
   assert.match(estrutura, /Carregando seu painel/);
@@ -125,6 +131,9 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(estilos, /env\(safe-area-inset-bottom/);
   assert.match(estilos, /\.barra-lateral nav\{[^}]*overflow-x:auto!important/);
   assert.match(estilos, /\.erro-notificacoes\{/);
+  assert.match(estilos, /\.lista-notificacoes\{[^}]*overflow-y:scroll/);
+  assert.match(estilos, /\.lista-notificacoes::-webkit-scrollbar/);
+  assert.match(servidor, /proximoCursor/);
   assert.equal(JSON.parse(pacote).dependencies["lucide-react"], "^1.33.0");
   assert.equal(JSON.parse(pacote).scripts.dev, "node scripts/desenvolver.mjs");
   assert.match(leiaMe, /PostgreSQL 18\.6/);

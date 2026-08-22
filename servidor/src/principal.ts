@@ -358,7 +358,7 @@ aplicacao.delete("/api/cooperativas/:uuid", async (requisicao, resposta) => {
   const uuid = z.uuid().parse((requisicao.params as { uuid: string }).uuid);
   const excluida = await banco.query<{ nome: string }>("DELETE FROM cooperativas WHERE uuid=$1 RETURNING nome", [uuid]);
   if (!excluida.rowCount) return resposta.code(404).send({ mensagem: "Cooperativa não encontrada." });
-  await criarNotificacao(banco, requisicao.user.usuarioUuid, "cooperativa", "Cooperativa removida", `${excluida.rows[0]!.nome} foi removida do sistema.`, "cooperativas", uuid);
+  await banco.query("DELETE FROM notificacoes WHERE usuario_uuid=$1 AND entidade='cooperativas' AND entidade_uuid=$2", [requisicao.user.usuarioUuid, uuid]);
   return resposta.code(204).send();
 });
 
@@ -447,7 +447,10 @@ aplicacao.delete("/api/catadores/:uuid", async (requisicao, resposta) => {
   const uuid = z.uuid().parse((requisicao.params as { uuid: string }).uuid);
   const excluido = await banco.query<{ nome_completo: string }>("DELETE FROM catadores WHERE uuid=$1 RETURNING nome_completo", [uuid]);
   if (!excluido.rowCount) return resposta.code(404).send({ mensagem: "Catador não encontrado." });
-  await criarNotificacao(banco, requisicao.user.usuarioUuid, "catador", "Catador removido", `${excluido.rows[0]!.nome_completo} foi removido do sistema.`, "catadores", uuid);
+  await banco.query(`DELETE FROM notificacoes n WHERE n.usuario_uuid=$1 AND (
+    (n.entidade='catadores' AND n.entidade_uuid=$2) OR
+    (n.entidade='caixas_catador' AND NOT EXISTS (SELECT 1 FROM caixas_catador cx WHERE cx.uuid=n.entidade_uuid)) OR
+    (n.entidade='pesagens' AND NOT EXISTS (SELECT 1 FROM pesagens p WHERE p.uuid=n.entidade_uuid)))`, [requisicao.user.usuarioUuid, uuid]);
   return resposta.code(204).send();
 });
 
@@ -495,7 +498,7 @@ aplicacao.delete("/api/materiais/:uuid", async (requisicao, resposta) => {
   const uuid = z.uuid().parse((requisicao.params as { uuid: string }).uuid);
   const excluido = await banco.query<{ nome: string }>("DELETE FROM materiais WHERE uuid=$1 RETURNING nome", [uuid]);
   if (!excluido.rowCount) return resposta.code(404).send({ mensagem: "Material não encontrado." });
-  await criarNotificacao(banco, requisicao.user.usuarioUuid, "material", "Material removido", `${excluido.rows[0]!.nome} foi removido das configurações.`, "materiais", uuid);
+  await banco.query("DELETE FROM notificacoes WHERE usuario_uuid=$1 AND entidade='materiais' AND entidade_uuid=$2", [requisicao.user.usuarioUuid, uuid]);
   return resposta.code(204).send();
 });
 
@@ -722,10 +725,33 @@ aplicacao.post("/api/catadores/:uuid/caixa/reabrir", async (requisicao, resposta
 });
 
 aplicacao.get("/api/notificacoes", async (requisicao) => {
-  const { rows } = await banco.query(`SELECT uuid,tipo,titulo,mensagem,entidade,entidade_uuid,lida_em,criado_em
-    FROM notificacoes WHERE usuario_uuid=$1 ORDER BY criado_em DESC LIMIT 50`, [requisicao.user.usuarioUuid]);
-  const contagem = await banco.query<{ total: number }>("SELECT count(*)::int AS total FROM notificacoes WHERE usuario_uuid=$1 AND lida_em IS NULL", [requisicao.user.usuarioUuid]);
-  return { dados: rows, naoLidas: contagem.rows[0]?.total ?? 0 };
+  const consulta = z.object({
+    limite: z.coerce.number().int().min(5).max(30).default(10),
+    cursorData: z.iso.datetime({ offset: true }).optional(),
+    cursorUuid: z.uuid().optional(),
+  }).refine((dados) => Boolean(dados.cursorData) === Boolean(dados.cursorUuid), { message: "Informe o cursor completo." }).parse(requisicao.query);
+  const notificacaoValida = `CASE n.entidade
+      WHEN 'catadores' THEN EXISTS (SELECT 1 FROM catadores c WHERE c.uuid=n.entidade_uuid)
+      WHEN 'cooperativas' THEN EXISTS (SELECT 1 FROM cooperativas co WHERE co.uuid=n.entidade_uuid)
+      WHEN 'materiais' THEN EXISTS (SELECT 1 FROM materiais m WHERE m.uuid=n.entidade_uuid)
+      WHEN 'pesagens' THEN EXISTS (SELECT 1 FROM pesagens p WHERE p.uuid=n.entidade_uuid)
+      WHEN 'caixas_catador' THEN EXISTS (SELECT 1 FROM caixas_catador cx WHERE cx.uuid=n.entidade_uuid)
+      ELSE TRUE END`;
+  const resultado = await banco.query(`SELECT n.uuid,n.tipo,n.titulo,n.mensagem,n.entidade,n.entidade_uuid,n.lida_em,n.criado_em
+    FROM notificacoes n WHERE n.usuario_uuid=$1 AND ${notificacaoValida}
+      AND ($2::timestamptz IS NULL OR (n.criado_em,n.uuid)<($2::timestamptz,$3::uuid))
+    ORDER BY n.criado_em DESC,n.uuid DESC LIMIT $4`, [requisicao.user.usuarioUuid, consulta.cursorData ?? null, consulta.cursorUuid ?? null, consulta.limite + 1]);
+  const temMais = resultado.rows.length > consulta.limite;
+  const dados = temMais ? resultado.rows.slice(0, consulta.limite) : resultado.rows;
+  const ultimo = dados.at(-1) as { uuid?: string; criado_em?: string | Date } | undefined;
+  const contagem = await banco.query<{ total: number; nao_lidas: number }>(`SELECT count(*)::int AS total,count(*) FILTER (WHERE n.lida_em IS NULL)::int AS nao_lidas
+    FROM notificacoes n WHERE n.usuario_uuid=$1 AND ${notificacaoValida}`, [requisicao.user.usuarioUuid]);
+  return {
+    dados,
+    total: contagem.rows[0]?.total ?? 0,
+    naoLidas: contagem.rows[0]?.nao_lidas ?? 0,
+    proximoCursor: temMais && ultimo?.uuid && ultimo.criado_em ? { criadoEm: new Date(ultimo.criado_em).toISOString(), uuid: ultimo.uuid } : null,
+  };
 });
 
 aplicacao.patch("/api/notificacoes/lidas", async (requisicao, resposta) => {
