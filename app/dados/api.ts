@@ -21,7 +21,8 @@ export async function requisitarApi<T>(caminho: string, opcoes: RequestInit = {}
 
 export type CatadorApi = {
   uuid: string; codigo: string; nome_completo: string; apelido: string | null; status: "ativo" | "inativo";
-  cooperativa: string | null; contatos: Array<{ tipo: string; valor: string }>; total_quilos: number; tem_foto: boolean;
+  cooperativa: string | null; contatos: Array<{ tipo: string; valor: string }>; total_quilos: number; total_ganhos: number;
+  peso_hoje: number; meta_hoje: number; percentual_meta_hoje: number; status_caixa_hoje: "aberto" | "fechado"; tem_foto: boolean;
 };
 
 export type CooperativaApi = {
@@ -31,7 +32,12 @@ export type CooperativaApi = {
 
 export type MaterialApi = {
   uuid: string; nome: string; tipo_material: string; unidade: string; quantidade_referencia: string | number;
-  valor_referencia: string | number; status: "ativo" | "inativo";
+  valor_referencia: string | number; meta_diaria: string | number; status: "ativo" | "inativo";
+};
+
+export type ProgressoMetaApi = {
+  material_uuid: string; nome: string; unidade: string; meta: number; peso: number; ganho: number;
+  percentual: number; falta: number; atingida: boolean;
 };
 
 export type NotificacaoApi = {

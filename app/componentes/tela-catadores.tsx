@@ -3,7 +3,7 @@
 /* eslint-disable jsx-a11y/label-has-associated-control, jsx-a11y/no-autofocus, @next/next/no-img-element -- controles aninhados e fotos autenticadas */
 
 import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from "react";
-import { Camera, Plus, Search, Trash2 } from "lucide-react";
+import { ArrowLeft, Camera, Eye, LockKeyhole, Plus, Search, Trash2, UnlockKeyhole, WalletCards } from "lucide-react";
 import { requisitarApi, URL_API, type CatadorApi, type CooperativaApi } from "@/app/dados/api";
 
 const etapas = ["Identificação", "Contato e endereço", "Pagamento", "Foto e revisão"];
@@ -14,6 +14,7 @@ export function TelaCatadores() {
   const [cooperativas, setCooperativas] = useState<CooperativaApi[]>([]);
   const [busca, setBusca] = useState("");
   const [cadastroAberto, setCadastroAberto] = useState(false);
+  const [perfilUuid, setPerfilUuid] = useState<string | null>(null);
   const [erro, setErro] = useState("");
   const carregar = useCallback(async () => {
     try {
@@ -28,17 +29,75 @@ export function TelaCatadores() {
   useEffect(() => { void carregar(); }, [carregar]);
   const filtrados = useMemo(() => catadores.filter((item) => `${item.nome_completo} ${item.apelido ?? ""} ${item.codigo}`.toLowerCase().includes(busca.toLowerCase())), [busca, catadores]);
 
+  if (perfilUuid) return <PerfilCatador uuid={perfilUuid} onVoltar={() => { setPerfilUuid(null); void carregar(); }} />;
+
   return <section className="pagina-interna">
     <div className="resumo-pagina"><div><h2>{catadores.length} catadores cadastrados</h2><p>Somente o nome completo é obrigatório; os demais dados são opcionais e vêm do PostgreSQL.</p></div><button className="botao-primario" onClick={() => setCadastroAberto(true)}><Plus /> Cadastrar catador</button></div>
     {erro && <p className="mensagem-erro" role="alert">{erro}</p>}
     <div className="barra-ferramentas"><label className="campo-busca"><Search /><input value={busca} onChange={(evento) => setBusca(evento.target.value)} placeholder="Buscar por nome, apelido ou código..." /></label></div>
-    <div className="tabela-responsiva"><table><thead><tr><th>Catador</th><th>Código</th><th>Cooperativa</th><th>Contato</th><th>Coletado</th><th>Status</th></tr></thead><tbody>{filtrados.map((catador) => <tr key={catador.uuid}><td><div className="pessoa">{catador.tem_foto ? <img className="foto-lista" src={`${URL_API}/api/catadores/${catador.uuid}/foto`} alt={`Foto de ${catador.nome_completo}`} /> : <span>{iniciais(catador.nome_completo)}</span>}<div><strong>{catador.nome_completo}</strong><small>{catador.apelido ? `Prefere: ${catador.apelido}` : "Sem apelido informado"}</small></div></div></td><td><code>{catador.codigo}</code></td><td>{catador.cooperativa ?? "Sem vínculo"}</td><td>{catador.contatos[0]?.valor ?? "Não informado"}</td><td><strong>{Number(catador.total_quilos).toLocaleString("pt-BR")} kg</strong></td><td><span className={catador.status === "ativo" ? "status ativo" : "status"}>● {catador.status}</span></td></tr>)}</tbody></table>{filtrados.length === 0 && <p className="estado-vazio">Nenhum catador encontrado.</p>}</div>
+    <div className="tabela-responsiva"><table><thead><tr><th>Catador</th><th>Código</th><th>Cooperativa</th><th>Contato</th><th>Coletado e ganho</th><th>Meta / caixa hoje</th><th>Ficha</th></tr></thead><tbody>{filtrados.map((catador) => <tr key={catador.uuid}><td><div className="pessoa">{catador.tem_foto ? <img className="foto-lista" src={`${URL_API}/api/catadores/${catador.uuid}/foto`} alt={`Foto de ${catador.nome_completo}`} /> : <span>{iniciais(catador.nome_completo)}</span>}<div><strong>{catador.nome_completo}</strong><small>{catador.apelido ? `Prefere: ${catador.apelido}` : "Sem apelido informado"}</small></div></div></td><td><code>{catador.codigo}</code></td><td>{catador.cooperativa ?? "Sem vínculo"}</td><td>{catador.contatos.map((item) => item.valor).join(" · ") || "Não informado"}</td><td><strong>{Number(catador.total_quilos).toLocaleString("pt-BR")} kg</strong><small className="texto-bloco valor-verde">{Number(catador.total_ganhos).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</small></td><td><BarraMeta percentual={Number(catador.percentual_meta_hoje)} texto={`${Number(catador.peso_hoje).toLocaleString("pt-BR")} / ${Number(catador.meta_hoje).toLocaleString("pt-BR")} kg`} /><span className={`status-caixa ${catador.status_caixa_hoje}`}>Caixa {catador.status_caixa_hoje}</span></td><td><button type="button" className="botao-ver-ficha" onClick={() => setPerfilUuid(catador.uuid)}><Eye /> Ver ficha</button></td></tr>)}</tbody></table>{filtrados.length === 0 && <p className="estado-vazio">Nenhum catador encontrado.</p>}</div>
     {cadastroAberto && <CadastroCatador cooperativas={cooperativas} onFechar={() => setCadastroAberto(false)} onSalvo={carregar} />}
   </section>;
 }
 
 function iniciais(nome: string) { return nome.split(/\s+/).slice(0, 2).map((parte) => parte[0]).join("").toUpperCase(); }
 function somenteNumeros(valor: string) { return valor.replace(/\D/g, ""); }
+
+type PerfilApi = {
+  catador: CatadorApi & { genero: string | null; raca_cor: string | null; data_nascimento: string | null; cpf: string | null; endereco: Record<string, string | null> | null; contas_financeiras: Array<Record<string, string | boolean | null>> };
+  resumo: { peso_total: number; ganho_total: number; pesagens: number };
+  materiais: Array<{ uuid: string; nome: string; peso_total: number; ganho_total: number; pesagens: number }>;
+  metas: Array<{ data: string; nome: string; peso: number; meta: number; percentual: number; atingida: boolean; ganho: number }>;
+  caixas: Array<{ uuid: string; data_caixa: string; status: "aberto" | "fechado"; aberto_em: string; fechado_em: string | null; reaberto_em: string | null; motivo_reabertura: string | null; peso: number; valor: number; movimentacoes: number }>;
+  historico: Array<{ uuid: string; codigo: string; data_hora: string; status: string; peso_total: number; valor_total: number; excluida_em: string | null; material: string; ponto_apoio: string; cooperativa: string | null; responsavel: string }>;
+};
+
+function BarraMeta({ percentual, texto }: { percentual: number; texto: string }) {
+  return <div className="barra-meta-compacta" aria-label={`Progresso da meta: ${Math.round(percentual)}%`}><div><i style={{ width: `${Math.min(Math.max(percentual, 0), 100)}%` }} /></div><small>{texto} · {Math.round(percentual)}%</small></div>;
+}
+
+function PerfilCatador({ uuid, onVoltar }: { uuid: string; onVoltar: () => void }) {
+  const [dados, setDados] = useState<PerfilApi | null>(null);
+  const [erro, setErro] = useState("");
+  const [processando, setProcessando] = useState(false);
+  const hoje = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bahia" }).format(new Date());
+  const carregar = useCallback(async () => {
+    try { setDados(await requisitarApi<PerfilApi>(`/api/catadores/${uuid}/perfil`)); setErro(""); }
+    catch (falha) { setErro(falha instanceof Error ? falha.message : "Não foi possível carregar a ficha do catador."); }
+  }, [uuid]);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- carregamento da ficha ao trocar o catador
+  useEffect(() => { void carregar(); }, [carregar]);
+
+  async function alterarCaixa(acao: "fechar" | "reabrir") {
+    const motivo = acao === "reabrir" ? window.prompt("Informe o motivo obrigatório para reabrir o caixa:")?.trim() : undefined;
+    if (acao === "reabrir" && (!motivo || motivo.length < 3)) return;
+    setProcessando(true); setErro("");
+    try {
+      await requisitarApi(`/api/catadores/${uuid}/caixa/${acao}`, { method: "POST", body: JSON.stringify({ data: hoje, motivo }) });
+      await carregar();
+    } catch (falha) { setErro(falha instanceof Error ? falha.message : "Não foi possível alterar o caixa."); }
+    finally { setProcessando(false); }
+  }
+
+  if (!dados) return <section className="pagina-interna"><button className="botao-secundario" onClick={onVoltar}><ArrowLeft /> Voltar</button><div className="painel estado-pagina">{erro || "Carregando ficha completa..."}</div></section>;
+  const { catador, resumo } = dados;
+  const caixaHoje = dados.caixas.find((item) => String(item.data_caixa).slice(0, 10) === hoje);
+  const endereco = catador.endereco;
+  return <section className="pagina-interna ficha-catador">
+    <div className="barra-ficha"><button className="botao-secundario" onClick={onVoltar}><ArrowLeft /> Voltar aos catadores</button><div className="acoes-caixa"><span className={`status-caixa ${caixaHoje?.status ?? "aberto"}`}>Caixa de hoje {caixaHoje?.status ?? "aberto"}</span>{caixaHoje?.status === "fechado" ? <button className="botao-primario" disabled={processando} onClick={() => void alterarCaixa("reabrir")}><UnlockKeyhole /> Reabrir caixa</button> : <button className="botao-primario" disabled={processando} onClick={() => void alterarCaixa("fechar")}><LockKeyhole /> Fechar caixa</button>}</div></div>
+    {erro && <p className="mensagem-erro" role="alert">{erro}</p>}
+    <header className="painel cabecalho-ficha">{catador.tem_foto ? <img src={`${URL_API}/api/catadores/${uuid}/foto`} alt={`Foto de ${catador.nome_completo}`} /> : <span>{iniciais(catador.nome_completo)}</span>}<div><small>FICHA COMPLETA DO CATADOR</small><h2>{catador.nome_completo}</h2><p><code>{catador.codigo}</code> · {catador.apelido || "Sem apelido"} · {catador.cooperativa || "Sem cooperativa"}</p><div className="chips-ficha"><b>{catador.status}</b><b>{catador.contatos.length} contato(s)</b></div></div></header>
+    <div className="grade-resumo-relatorio resumo-ficha"><article><span>KG</span><div><small>Total coletado</small><strong>{Number(resumo.peso_total).toLocaleString("pt-BR")} kg</strong></div></article><article><span>R$</span><div><small>Caixa acumulado</small><strong>{Number(resumo.ganho_total).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong></div></article><article><span>№</span><div><small>Pesagens concluídas</small><strong>{resumo.pesagens}</strong></div></article><article><span>✓</span><div><small>Metas batidas</small><strong>{dados.metas.filter((item) => item.atingida).length}</strong></div></article></div>
+    <div className="grade-ficha">
+      <section className="painel"><h3>Dados pessoais e contato</h3><dl className="lista-dados"><div><dt>Código</dt><dd>{catador.codigo}</dd></div><div><dt>CPF</dt><dd>{catador.cpf || "Não informado"}</dd></div><div><dt>Nascimento</dt><dd>{catador.data_nascimento ? new Date(`${catador.data_nascimento}T12:00:00`).toLocaleDateString("pt-BR") : "Não informado"}</dd></div><div><dt>Gênero</dt><dd>{catador.genero || "Não informado"}</dd></div><div><dt>Raça / cor</dt><dd>{catador.raca_cor || "Não informado"}</dd></div><div><dt>Contatos</dt><dd>{catador.contatos.map((item) => `${item.tipo}: ${item.valor}`).join(" · ") || "Não informado"}</dd></div><div><dt>Endereço</dt><dd>{endereco ? [endereco.logradouro, endereco.numero, endereco.bairro, endereco.cidade, endereco.estado, endereco.cep].filter(Boolean).join(", ") : "Não informado"}</dd></div></dl></section>
+      <section className="painel"><h3><WalletCards /> Dados para recebimento</h3>{catador.contas_financeiras.length === 0 ? <p className="estado-vazio">Nenhuma forma de pagamento cadastrada.</p> : catador.contas_financeiras.map((conta, indice) => <dl className="lista-dados" key={indice}><div><dt>Tipo</dt><dd>{conta.tipo === "pix" ? "Pix" : "Conta bancária"}</dd></div>{conta.tipo === "pix" ? <div><dt>Chave</dt><dd>{String(conta.chave_pix ?? "Não informada")}</dd></div> : <><div><dt>Banco</dt><dd>{String(conta.banco ?? "Não informado")}</dd></div><div><dt>Agência / conta</dt><dd>{String(conta.agencia ?? "—")} / {String(conta.numero_conta ?? "—")}</dd></div></>}<div><dt>Titular</dt><dd>{conta.de_terceiro ? `${String(conta.nome_titular)} · CPF ${String(conta.cpf_titular)}` : "O próprio catador"}</dd></div></dl>)}</section>
+    </div>
+    <section className="painel"><div className="titulo-secao"><div><h2>Ganhos por material</h2><p>Totais financeiros separados por material pesado</p></div></div><div className="grade-materiais-ficha">{dados.materiais.map((item) => <article key={item.uuid}><strong>{item.nome}</strong><span>{Number(item.peso_total).toLocaleString("pt-BR")} kg</span><b>{Number(item.ganho_total).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</b><small>{item.pesagens} pesagem(ns)</small></article>)}</div></section>
+    <section className="painel"><div className="titulo-secao"><div><h2>Histórico de metas</h2><p>Progresso diário e ganho de cada meta</p></div></div><div className="lista-metas-ficha">{dados.metas.map((meta, indice) => <article key={`${meta.data}-${meta.nome}-${indice}`}><header><strong>{meta.nome}</strong><span>{new Date(`${String(meta.data).slice(0, 10)}T12:00:00`).toLocaleDateString("pt-BR")} · {meta.atingida ? "Meta batida" : "Em andamento"}</span></header><BarraMeta percentual={Number(meta.percentual)} texto={`${Number(meta.peso).toLocaleString("pt-BR")} / ${Number(meta.meta).toLocaleString("pt-BR")} kg`} /><b>{Number(meta.ganho).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</b></article>)}</div></section>
+    <section className="painel"><div className="titulo-secao"><div><h2>Caixas individuais</h2><p>Aberturas, fechamentos, reaberturas e totais por dia</p></div></div><div className="tabela-responsiva"><table><thead><tr><th>Data</th><th>Status</th><th>Movimentações</th><th>Peso</th><th>Valor</th><th>Reabertura</th></tr></thead><tbody>{dados.caixas.map((item) => <tr key={item.uuid}><td>{new Date(`${String(item.data_caixa).slice(0, 10)}T12:00:00`).toLocaleDateString("pt-BR")}</td><td><span className={`status-caixa ${item.status}`}>{item.status}</span></td><td>{item.movimentacoes}</td><td>{Number(item.peso).toLocaleString("pt-BR")} kg</td><td>{Number(item.valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</td><td>{item.reaberto_em ? `${new Date(item.reaberto_em).toLocaleString("pt-BR")} · ${item.motivo_reabertura}` : "—"}</td></tr>)}</tbody></table></div></section>
+    <section className="painel"><div className="titulo-secao"><div><h2>Histórico completo de pesagens</h2><p>Inclui registros cancelados, alterados e excluídos</p></div></div><div className="tabela-responsiva"><table><thead><tr><th>Registro</th><th>Data</th><th>Material</th><th>Operação</th><th>Peso</th><th>Ganho</th><th>Status</th></tr></thead><tbody>{dados.historico.map((item) => <tr key={item.uuid}><td><code>{item.codigo}</code></td><td>{new Date(item.data_hora).toLocaleString("pt-BR")}</td><td>{item.material}</td><td>{item.cooperativa || "—"} · {item.ponto_apoio} · {item.responsavel}</td><td>{Number(item.peso_total).toLocaleString("pt-BR")} kg</td><td>{Number(item.valor_total).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</td><td><span className={`status-pesagem ${item.excluida_em ? "excluida" : item.status}`}>{item.excluida_em ? "Excluída" : item.status}</span></td></tr>)}</tbody></table></div></section>
+  </section>;
+}
 
 function CadastroCatador({ cooperativas, onFechar, onSalvo }: { cooperativas: CooperativaApi[]; onFechar: () => void; onSalvo: () => Promise<void> }) {
   const [etapa, setEtapa] = useState(0);

@@ -41,7 +41,7 @@ async function executar() {
   try {
     cooperativaUuid = (await chamar("/api/cooperativas", { method: "POST", body: JSON.stringify({ nome: `Integração ${sufixo}`, nomeResponsavel: "Teste automatizado", ativa: true }) })).dados.uuid;
     entidadesCriadas.add(cooperativaUuid);
-    materialUuid = (await chamar("/api/materiais", { method: "POST", body: JSON.stringify({ nome: `Material ${sufixo}`, tipoMaterial: "Teste", unidade: "kg", quantidadeReferencia: 20, valorReferencia: 10, ativo: true }) })).dados.uuid;
+    materialUuid = (await chamar("/api/materiais", { method: "POST", body: JSON.stringify({ nome: `Material ${sufixo}`, tipoMaterial: "Teste", unidade: "kg", quantidadeReferencia: 20, valorReferencia: 10, metaDiaria: 20, ativo: true }) })).dados.uuid;
     entidadesCriadas.add(materialUuid);
 
     const pixTerceiroSemTitular = await fetch(`${urlApi}/api/catadores`, { method: "POST", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ nomeCompleto: "Cadastro inválido", contatos: [], contaFinanceira: { tipo: "pix", tipoChavePix: "Celular", chavePix: "31999999999", deTerceiro: true } }) });
@@ -61,25 +61,42 @@ async function executar() {
     const responsaveis = (await chamar("/api/responsaveis-pesagem")).dados.dados;
     assert.ok(pontos.length > 0 && responsaveis.length > 0);
 
-    const pesagem = (await chamar("/api/pesagens", { method: "POST", body: JSON.stringify({ catadorUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsaveis[0].uuid, materialUuid, peso: 30, observacao: "Teste integrado removível", dataHora: new Date().toISOString(), status: "concluida" }) })).dados;
+    const dataHoraPesagem = new Date().toISOString();
+    const dataCaixa = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bahia" }).format(new Date(dataHoraPesagem));
+    const pesagem = (await chamar("/api/pesagens", { method: "POST", body: JSON.stringify({ catadorUuid, cooperativaUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsaveis[0].uuid, materialUuid, peso: 30, observacao: "Teste integrado removível", dataHora: dataHoraPesagem, status: "concluida" }) })).dados;
     pesagemUuid = pesagem.uuid;
     entidadesCriadas.add(pesagemUuid);
     assert.equal(pesagem.valorTotal, 15);
     assert.equal(pesagem.status, "concluida");
+    assert.equal(pesagem.metaAtingidaAgora, true);
+    assert.equal(pesagem.progressoMeta.percentual, 100);
+    const progresso = (await chamar(`/api/catadores/${catadorUuid}/metas?data=${dataCaixa}`)).dados;
+    assert.equal(progresso.metas.find((item) => item.material_uuid === materialUuid).atingida, true);
+    assert.equal(progresso.caixa.status, "aberto");
+
+    const caixaFechado = (await chamar(`/api/catadores/${catadorUuid}/caixa/fechar`, { method: "POST", body: JSON.stringify({ data: dataCaixa }) })).dados;
+    assert.equal(caixaFechado.status, "fechado");
+    const edicaoBloqueada = await fetch(`${urlApi}/api/pesagens/${pesagemUuid}`, { method: "PUT", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ catadorUuid, cooperativaUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsaveis[0].uuid, materialUuid, peso: 31, dataHora: dataHoraPesagem, status: "concluida", motivoAlteracao: "Deve ser bloqueada" }) });
+    assert.equal(edicaoBloqueada.status, 409);
+    const caixaReaberto = (await chamar(`/api/catadores/${catadorUuid}/caixa/reabrir`, { method: "POST", body: JSON.stringify({ data: dataCaixa, motivo: "Correção controlada do teste" }) })).dados;
+    assert.equal(caixaReaberto.status, "aberto");
 
     const painelDepois = (await chamar("/api/painel")).dados;
     assert.equal(Number(painelDepois.indicadores.catadores_ativos), Number(painelAntes.catadores_ativos) + 1);
     assert.equal(Number(painelDepois.indicadores.coletas_realizadas), Number(painelAntes.coletas_realizadas) + 1);
     assert.equal(Number(painelDepois.indicadores.total_coletado), Number(painelAntes.total_coletado) + 30);
-    assert.ok(painelDepois.atividades.some((item) => item.uuid === pesagemUuid));
+    assert.ok(painelDepois.atividades.some((item) => item.codigo === pesagem.codigo && item.entidade === "pesagens"));
 
-    const alterada = (await chamar(`/api/pesagens/${pesagemUuid}`, { method: "PUT", body: JSON.stringify({ catadorUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsaveis[0].uuid, materialUuid, peso: 40, observacao: "Peso corrigido", dataHora: new Date().toISOString(), status: "agendada", motivoAlteracao: "Correção automatizada do peso e status" }) })).dados;
+    const alterada = (await chamar(`/api/pesagens/${pesagemUuid}`, { method: "PUT", body: JSON.stringify({ catadorUuid, cooperativaUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsaveis[0].uuid, materialUuid, peso: 40, observacao: "Peso corrigido", dataHora: dataHoraPesagem, status: "agendada", motivoAlteracao: "Correção automatizada do peso e status" }) })).dados;
     assert.equal(alterada.valorTotal, 20);
     assert.equal(alterada.status, "agendada");
     assert.equal(Number((await chamar("/api/painel")).dados.indicadores.coletas_realizadas), Number(painelAntes.coletas_realizadas));
 
     let relatorio = (await chamar(`/api/relatorios/pesagens?catadorUuid=${catadorUuid}`)).dados.dados;
     assert.ok(relatorio.some((item) => item.uuid === pesagemUuid && item.status === "agendada" && Number(item.valor_total) === 20 && item.historico.some((evento) => evento.acao === "alteracao")));
+    const perfil = (await chamar(`/api/catadores/${catadorUuid}/perfil`)).dados;
+    assert.equal(perfil.catador.uuid, catadorUuid);
+    assert.ok(perfil.caixas.some((item) => String(item.data_caixa).slice(0, 10) === dataCaixa && item.reaberto_em));
 
     const notificacoes = (await chamar("/api/notificacoes")).dados;
     const notificacaoTeste = notificacoes.dados.find((item) => entidadesCriadas.has(item.entidade_uuid));
@@ -103,7 +120,9 @@ async function executar() {
         await cliente.query("DELETE FROM notificacoes WHERE entidade_uuid = ANY($1::uuid[])", [entidades]);
         await cliente.query("DELETE FROM auditoria WHERE entidade_uuid = ANY($1::uuid[])", [entidades]);
       }
+      if (pesagemUuid) await cliente.query("DELETE FROM movimentacoes_caixa_catador WHERE pesagem_uuid=$1", [pesagemUuid]);
       if (pesagemUuid) await cliente.query("DELETE FROM pesagens WHERE uuid=$1", [pesagemUuid]);
+      if (catadorUuid) await cliente.query("DELETE FROM caixas_catador WHERE catador_uuid=$1", [catadorUuid]);
       if (catadorUuid) await cliente.query("DELETE FROM catadores WHERE uuid=$1", [catadorUuid]);
       if (materialUuid) await cliente.query("DELETE FROM materiais WHERE uuid=$1", [materialUuid]);
       if (cooperativaUuid) await cliente.query("DELETE FROM cooperativas WHERE uuid=$1", [cooperativaUuid]);

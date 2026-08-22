@@ -24,12 +24,13 @@ test("renderiza a experiência do Recicla Belô", async () => {
 });
 
 test("mantém ambiente, banco e instalação documentados", async () => {
-  const [exemplo, estilos, migracao, migracaoNotificacoes, migracaoAuditoria, sqlCompleto, instalador, supervisor, servidor, estrutura, painel, telaLogin, telaPesagem, telaRelatorios, leiaMe, pacote] = await Promise.all([
+  const [exemplo, estilos, migracao, migracaoNotificacoes, migracaoAuditoria, migracaoCaixas, sqlCompleto, instalador, supervisor, servidor, estrutura, painel, telaLogin, telaPesagem, telaCatadores, telaRelatorios, leiaMe, pacote] = await Promise.all([
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/001_estrutura_inicial.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/004_notificacoes.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/006_auditoria_pesagens.sql", import.meta.url), "utf8"),
+    readFile(new URL("../servidor/migracoes/008_metas_e_caixas_catadores.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/sql/recicla-belo-completo.sql", import.meta.url), "utf8"),
     readFile(new URL("../scripts/instalar-e-iniciar.sh", import.meta.url), "utf8"),
     readFile(new URL("../scripts/desenvolver.mjs", import.meta.url), "utf8"),
@@ -38,6 +39,7 @@ test("mantém ambiente, banco e instalação documentados", async () => {
     readFile(new URL("../app/componentes/painel-principal.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/componentes/tela-login.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/componentes/tela-pesagem.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/componentes/tela-catadores.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/componentes/tela-relatorios.tsx", import.meta.url), "utf8"),
     readFile(new URL("../README.md", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
@@ -55,6 +57,9 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(sqlCompleto, /CREATE TABLE IF NOT EXISTS notificacoes/);
   assert.match(migracaoAuditoria, /excluida_em TIMESTAMPTZ/);
   assert.match(migracaoAuditoria, /contas_terceiro_identificado/);
+  assert.match(migracaoCaixas, /CREATE TABLE IF NOT EXISTS caixas_catador/);
+  assert.match(migracaoCaixas, /CREATE TABLE IF NOT EXISTS movimentacoes_caixa_catador/);
+  assert.match(migracaoCaixas, /meta_diaria/);
   assert.match(sqlCompleto, /ALTER TYPE status_pesagem ADD VALUE IF NOT EXISTS 'agendada'/);
   assert.match(instalador, /docker compose up -d banco/);
   assert.match(instalador, /exec npm run dev/);
@@ -82,6 +87,10 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.doesNotMatch(telaLogin, /useState\("admin@reciclabelo"\)/);
   assert.match(telaPesagem, /CONFIRMAÇÃO FINAL/);
   assert.match(telaPesagem, /Código do catador/);
+  assert.match(telaPesagem, /metaAtingidaAgora/);
+  assert.match(telaPesagem, /Cooperativa \/ associação/);
+  assert.match(telaCatadores, /PerfilCatador/);
+  assert.match(telaCatadores, /caixa\/\$\{acao\}/);
   assert.match(telaRelatorios, /CORREÇÃO AUDITÁVEL/);
   assert.match(telaRelatorios, /exclusao_logica/);
   assert.match(servidor, /registrarAuditoria/);
@@ -89,6 +98,8 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(estilos, /\.usuario\{[^}]*cursor:pointer/);
   assert.match(estilos, /\.campo input,\.campo select,\.campo textarea\{height:58px/);
   assert.match(estilos, /\.conteudo:before\{/);
+  assert.match(estilos, /env\(safe-area-inset-bottom/);
+  assert.match(estilos, /\.barra-lateral nav\{[^}]*overflow-x:auto!important/);
   assert.equal(JSON.parse(pacote).dependencies["lucide-react"], "^1.33.0");
   assert.equal(JSON.parse(pacote).scripts.dev, "node scripts/desenvolver.mjs");
   assert.match(leiaMe, /PostgreSQL 18\.6/);
