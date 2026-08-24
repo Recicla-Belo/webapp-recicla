@@ -237,6 +237,7 @@ export function EstruturaAplicacao() {
   return (
     <main className="aplicacao">
       <aside className="barra-lateral" aria-label="Navegação principal">
+        <div className="conteudo-barra-lateral">
         <button className="marca" type="button" onClick={() => navegar("painel")} aria-label="Ir para visão geral">
           <MarcaPlataforma compacta />
         </button>
@@ -249,6 +250,7 @@ export function EstruturaAplicacao() {
         </nav>
         <div className="apoio-menu"><span><LifeBuoy aria-hidden="true" /></span><div><strong>Precisa de ajuda?</strong><small>Acesse o guia do sistema</small></div></div>
         <button className="usuario" type="button" onClick={sair} title="Sair do sistema"><span>AD</span><div><strong>Administrador</strong><small>admin@reciclabelo</small></div><LogOut aria-hidden="true" /></button>
+        </div>
       </aside>
 
       <section className="conteudo">

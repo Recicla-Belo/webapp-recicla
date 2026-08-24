@@ -125,6 +125,9 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(servidor, /exclusao_definitiva/);
   assert.match(servidor, /DELETE FROM movimentacoes_caixa_catador/);
   assert.match(estilos, /@media\(min-width:821px\)\{\.barra-lateral\{[^}]*overflow-y:auto/);
+  assert.match(estrutura, /className="conteudo-barra-lateral"/);
+  assert.match(estilos, /\.barra-lateral\{position:relative;top:auto;height:auto;min-height:100dvh;max-height:none;align-self:stretch/);
+  assert.match(estilos, /\.conteudo-barra-lateral\{position:sticky;top:0;[^}]*height:100dvh;[^}]*overflow-y:auto/);
   assert.match(estilos, /\.modal\.cadastro>\.formulario\{[^}]*overflow-y:auto/);
   assert.match(telaCooperativas, /<Paginacao/);
   assert.match(telaRelatorios, /CORREÇÃO AUDITÁVEL/);
