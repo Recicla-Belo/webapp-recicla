@@ -18,6 +18,20 @@ async function chamar(caminho, opcoes = {}, autenticado = true) {
 }
 
 async function executar() {
+  for (const caminho of ["/api/notificacoes", "/api/notificacoes/f58b2e08-145c-47d2-8842-228cd0a35df9"]) {
+    const preflightExclusao = await fetch(`${urlApi}${caminho}`, {
+      method: "OPTIONS",
+      headers: {
+        origin: "http://localhost:3001",
+        "access-control-request-method": "DELETE",
+      },
+    });
+    assert.equal(preflightExclusao.status, 204);
+    assert.equal(preflightExclusao.headers.get("access-control-allow-origin"), "http://localhost:3001");
+    assert.match(preflightExclusao.headers.get("access-control-allow-methods") ?? "", /(?:^|,\s*)DELETE(?:,|$)/);
+    assert.equal(preflightExclusao.headers.get("access-control-allow-credentials"), "true");
+  }
+
   const sessaoSemCookie = await chamar("/api/autenticacao/sessao", {}, false);
   assert.equal(sessaoSemCookie.resposta.status, 200);
   assert.equal(sessaoSemCookie.dados.autenticado, false);

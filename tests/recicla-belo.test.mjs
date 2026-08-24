@@ -80,6 +80,7 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(servidor, /sameSite: "strict"/);
   assert.match(servidor, /addHook\("onRequest"/);
   assert.match(servidor, /rateLimit/);
+  assert.match(servidor, /methods: \["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"\]/);
   assert.match(servidor, /rotasPublicas = new Set\(\["\/api\/autenticacao\/entrar", rotaConsultarSessao\]\)/);
   assert.match(servidor, /if \(!requisicao\.cookies\.reciclabelo_sessao\) return \{ autenticado: false \}/);
   assert.match(servidor, /ativo = TRUE AND administrador = TRUE/);

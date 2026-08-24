@@ -28,7 +28,9 @@ await aplicacao.register(cors, {
     if (!origem || ambiente.origensPermitidas.includes(origem)) return retorno(null, true);
     return retorno(new Error("Origem não permitida"), false);
   },
+  methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   credentials: true,
+  maxAge: 600,
 });
 await aplicacao.register(helmet, { global: true });
 await aplicacao.register(rateLimit, {
