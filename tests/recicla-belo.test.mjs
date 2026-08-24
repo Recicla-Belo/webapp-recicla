@@ -117,6 +117,15 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(telaCatadores, /PerfilCatador/);
   assert.match(telaCatadores, /caixa\/\$\{acao\}/);
   assert.match(telaCatadores, /<Paginacao/);
+  assert.match(telaCatadores, /formatarCpf/);
+  assert.match(telaCatadores, /placeholder="000\.000\.000-00"/);
+  assert.match(telaCatadores, /method: "PUT"/);
+  assert.match(telaCatadores, /Excluir todos os dados/);
+  assert.match(servidor, /aplicacao\.put\("\/api\/catadores\/:uuid"/);
+  assert.match(servidor, /exclusao_definitiva/);
+  assert.match(servidor, /DELETE FROM movimentacoes_caixa_catador/);
+  assert.match(estilos, /@media\(min-width:821px\)\{\.barra-lateral\{[^}]*overflow-y:auto/);
+  assert.match(estilos, /\.modal\.cadastro>\.formulario\{[^}]*overflow-y:auto/);
   assert.match(telaCooperativas, /<Paginacao/);
   assert.match(telaRelatorios, /CORREÇÃO AUDITÁVEL/);
   assert.match(telaRelatorios, /exclusao_logica/);

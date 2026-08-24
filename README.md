@@ -6,7 +6,7 @@ WebApp responsivo para gestão de cooperativas de reciclagem, catadores, produç
 
 - painel com catadores ativos, total coletado, valor a pagar, média por catador e coletas realizadas;
 - paginação inteligente e responsiva no painel, catadores, cooperativas, pesagem/produção e relatórios, com totais calculados diretamente no PostgreSQL;
-- cadastro de catadores em etapas, com nome como identificação mínima e os demais dados opcionais, múltiplos contatos, endereço assistido por CEP e foto opcional;
+- cadastro e edição de catadores em etapas, com CPF mascarado, nome como identificação mínima, demais dados opcionais, múltiplos contatos, endereço assistido por CEP e foto opcional;
 - pagamento opcional por Pix ou conta bancária; ao habilitá-lo, o sistema exige os dados necessários para o recebimento e, quando a conta é de terceiro, nome e CPF do titular;
 - cooperativas e associações com responsável e vínculo de catadores;
 - pesagem guiada com confirmação final em modal, código e nome do catador, ponto, material, peso, data e hora, status e cálculo proporcional do valor;
@@ -15,6 +15,7 @@ WebApp responsivo para gestão de cooperativas de reciclagem, catadores, produç
 - caixa diário independente por catador, com fechamento que bloqueia novos lançamentos, reabertura justificada e trilha de auditoria;
 - atividade recente identificada com foto, código, nome e dados do catador, totais do caixa, pesagens, correções e motivo de reabertura;
 - ficha completa do catador com contatos, endereço, meios de pagamento, histórico, ganhos por material, metas e caixas;
+- exclusão definitiva e confirmada do catador, removendo cadastro, contatos, endereço, pagamento, fotos, pesagens, metas, caixas e movimentações em uma única transação, com motivo mínimo preservado na auditoria;
 - relatório detalhado e filtrável das reciclagens, com edição justificada, exclusão lógica e histórico auditável;
 - central de notificações persistida no PostgreSQL, com abertura direcionada, leitura individual, exclusão, limpeza, contador global e rolagem infinita paginada por cursor;
 - tema claro/escuro, identidade visual configurável e layout responsivo para Android, iOS e desktop;

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, relative, resolve } from "node:path";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import cookie from "@fastify/cookie";
@@ -222,7 +222,8 @@ aplicacao.get("/api/painel", async (requisicao) => {
     GROUP BY dia ORDER BY dia`);
   const atividades = await banco.query(`SELECT a.uuid,a.acao,a.entidade,a.criado_em,a.dados,
       p.codigo,p.peso_total::float8,p.valor_total::float8,p.status,p.excluida_em,
-      c.uuid AS catador_uuid,c.codigo AS codigo_catador,c.nome_completo AS catador,
+      c.uuid AS catador_uuid,coalesce(c.codigo,a.dados->>'codigo') AS codigo_catador,
+      coalesce(c.nome_completo,CASE WHEN a.acao='exclusao_definitiva' THEN 'Cadastro de catador excluído' END) AS catador,
       EXISTS(SELECT 1 FROM arquivos_catador ar WHERE ar.catador_uuid=c.uuid AND ar.tipo='foto_rosto') AS tem_foto,
       (SELECT ct.valor FROM contatos_catador ct WHERE ct.catador_uuid=c.uuid ORDER BY ct.principal DESC,ct.criado_em LIMIT 1) AS contato_catador,
       concat_ws(', ',ec.logradouro,ec.numero,ec.bairro,ec.cidade,ec.estado) AS endereco_catador,
@@ -427,6 +428,44 @@ aplicacao.post("/api/catadores", async (requisicao, resposta) => {
   } finally { cliente.release(); }
 });
 
+aplicacao.put("/api/catadores/:uuid", async (requisicao, resposta) => {
+  const uuid = z.uuid().parse((requisicao.params as { uuid: string }).uuid);
+  const entrada = esquemaCatador.safeParse(requisicao.body);
+  if (!entrada.success) return resposta.code(400).send({ mensagem: "Revise os dados informados.", detalhes: z.treeifyError(entrada.error) });
+  const cliente = await banco.connect();
+  try {
+    await cliente.query("BEGIN");
+    const anterior = await cliente.query("SELECT uuid,codigo,nome_completo FROM catadores WHERE uuid=$1 FOR UPDATE", [uuid]);
+    if (!anterior.rows[0]) {
+      await cliente.query("ROLLBACK");
+      return resposta.code(404).send({ mensagem: "Catador não encontrado." });
+    }
+    const { nomeCompleto, apelido, cooperativaUuid, genero, racaCor, dataNascimento, cpf, contatos, endereco, contaFinanceira } = entrada.data;
+    await cliente.query(`UPDATE catadores SET cooperativa_uuid=$1,nome_completo=$2,apelido=$3,genero=$4,raca_cor=$5,data_nascimento=$6,cpf=$7,atualizado_em=now() WHERE uuid=$8`,
+      [cooperativaUuid ?? null, nomeCompleto, apelido ?? null, genero ?? null, racaCor ?? null, dataNascimento ?? null, cpf ?? null, uuid]);
+    await cliente.query("DELETE FROM contatos_catador WHERE catador_uuid=$1", [uuid]);
+    for (const contato of contatos) await cliente.query("INSERT INTO contatos_catador (catador_uuid,tipo,valor,principal) VALUES ($1,$2,$3,$4)", [uuid, contato.tipo, contato.valor, contato.principal]);
+    await cliente.query("DELETE FROM enderecos_catador WHERE catador_uuid=$1", [uuid]);
+    if (endereco) await cliente.query(`INSERT INTO enderecos_catador (catador_uuid,cep,logradouro,numero,complemento,bairro,cidade,estado) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [uuid, endereco.cep ?? null, endereco.logradouro ?? null, endereco.numero ?? null, endereco.complemento ?? null, endereco.bairro ?? null, endereco.cidade, endereco.estado]);
+    await cliente.query("DELETE FROM contas_financeiras_catador WHERE catador_uuid=$1", [uuid]);
+    if (contaFinanceira) await cliente.query(`INSERT INTO contas_financeiras_catador (catador_uuid,tipo,tipo_chave_pix,chave_pix,banco,agencia,numero_conta,tipo_conta,de_terceiro,nome_titular,cpf_titular,relacao_titular)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, [uuid, contaFinanceira.tipo, contaFinanceira.tipoChavePix ?? null, contaFinanceira.chavePix ?? null, contaFinanceira.banco ?? null, contaFinanceira.agencia ?? null, contaFinanceira.numeroConta ?? null, contaFinanceira.tipoConta ?? null, contaFinanceira.deTerceiro, contaFinanceira.nomeTitular ?? null, contaFinanceira.cpfTitular ?? null, contaFinanceira.relacaoTitular ?? null]);
+    const registroAnterior = anterior.rows[0] as { codigo: string; nome_completo: string };
+    await registrarAuditoria(cliente, requisicao.user.usuarioUuid, "alteracao", "catadores", uuid, {
+      codigo: registroAnterior.codigo,
+      nomeAnterior: registroAnterior.nome_completo,
+      nomeAtual: nomeCompleto,
+      camposAtualizados: Object.keys(entrada.data),
+    }, requisicao.ip);
+    await criarNotificacao(cliente, requisicao.user.usuarioUuid, "catador", "Catador atualizado", `${nomeCompleto} teve o cadastro atualizado.`, "catadores", uuid);
+    await cliente.query("COMMIT");
+    return resposta.code(204).send();
+  } catch (erro) {
+    await cliente.query("ROLLBACK");
+    throw erro;
+  } finally { cliente.release(); }
+});
+
 aplicacao.post("/api/catadores/:uuid/foto", async (requisicao, resposta) => {
   const catadorUuid = z.uuid().parse((requisicao.params as { uuid: string }).uuid);
   const arquivo = await requisicao.file();
@@ -445,12 +484,51 @@ aplicacao.post("/api/catadores/:uuid/foto", async (requisicao, resposta) => {
 
 aplicacao.delete("/api/catadores/:uuid", async (requisicao, resposta) => {
   const uuid = z.uuid().parse((requisicao.params as { uuid: string }).uuid);
-  const excluido = await banco.query<{ nome_completo: string }>("DELETE FROM catadores WHERE uuid=$1 RETURNING nome_completo", [uuid]);
-  if (!excluido.rowCount) return resposta.code(404).send({ mensagem: "Catador não encontrado." });
-  await banco.query(`DELETE FROM notificacoes n WHERE n.usuario_uuid=$1 AND (
-    (n.entidade='catadores' AND n.entidade_uuid=$2) OR
-    (n.entidade='caixas_catador' AND NOT EXISTS (SELECT 1 FROM caixas_catador cx WHERE cx.uuid=n.entidade_uuid)) OR
-    (n.entidade='pesagens' AND NOT EXISTS (SELECT 1 FROM pesagens p WHERE p.uuid=n.entidade_uuid)))`, [requisicao.user.usuarioUuid, uuid]);
+  const confirmacao = z.object({ confirmacao: z.literal(true), motivo: z.string().trim().min(3).max(500) }).safeParse(requisicao.body);
+  if (!confirmacao.success) return resposta.code(400).send({ mensagem: "Confirme a exclusão e informe o motivo." });
+  const cliente = await banco.connect();
+  let chavesArquivos: string[] = [];
+  try {
+    await cliente.query("BEGIN");
+    const catador = await cliente.query<{ codigo: string; nome_completo: string }>("SELECT codigo,nome_completo FROM catadores WHERE uuid=$1 FOR UPDATE", [uuid]);
+    if (!catador.rows[0]) {
+      await cliente.query("ROLLBACK");
+      return resposta.code(404).send({ mensagem: "Catador não encontrado." });
+    }
+    chavesArquivos = (await cliente.query<{ chave_armazenamento: string }>("SELECT chave_armazenamento FROM arquivos_catador WHERE catador_uuid=$1", [uuid])).rows.map((arquivo) => arquivo.chave_armazenamento);
+    const totais = await cliente.query<{ pesagens: number; caixas: number; contatos: number }>(`SELECT
+      (SELECT count(*)::int FROM pesagens WHERE catador_uuid=$1) AS pesagens,
+      (SELECT count(*)::int FROM caixas_catador WHERE catador_uuid=$1) AS caixas,
+      (SELECT count(*)::int FROM contatos_catador WHERE catador_uuid=$1) AS contatos`, [uuid]);
+    await cliente.query(`DELETE FROM notificacoes n WHERE
+      (n.entidade='catadores' AND n.entidade_uuid=$1) OR
+      (n.entidade='pesagens' AND n.entidade_uuid IN (SELECT p.uuid FROM pesagens p WHERE p.catador_uuid=$1)) OR
+      (n.entidade='caixas_catador' AND n.entidade_uuid IN (SELECT cx.uuid FROM caixas_catador cx WHERE cx.catador_uuid=$1))`, [uuid]);
+    await cliente.query(`DELETE FROM auditoria a WHERE
+      (a.entidade='catadores' AND a.entidade_uuid=$1) OR
+      (a.entidade='pesagens' AND a.entidade_uuid IN (SELECT p.uuid FROM pesagens p WHERE p.catador_uuid=$1)) OR
+      (a.entidade='caixas_catador' AND a.entidade_uuid IN (SELECT cx.uuid FROM caixas_catador cx WHERE cx.catador_uuid=$1))`, [uuid]);
+    await cliente.query("DELETE FROM movimentacoes_caixa_catador WHERE caixa_uuid IN (SELECT uuid FROM caixas_catador WHERE catador_uuid=$1) OR pesagem_uuid IN (SELECT uuid FROM pesagens WHERE catador_uuid=$1)", [uuid]);
+    await cliente.query("DELETE FROM pesagens WHERE catador_uuid=$1", [uuid]);
+    await cliente.query("DELETE FROM caixas_catador WHERE catador_uuid=$1", [uuid]);
+    await cliente.query("DELETE FROM catadores WHERE uuid=$1", [uuid]);
+    await registrarAuditoria(cliente, requisicao.user.usuarioUuid, "exclusao_definitiva", "catadores", uuid, {
+      codigo: catador.rows[0].codigo,
+      motivo: confirmacao.data.motivo,
+      registrosRemovidos: { ...totais.rows[0], arquivos: chavesArquivos.length },
+    }, requisicao.ip);
+    await cliente.query("COMMIT");
+  } catch (erro) {
+    await cliente.query("ROLLBACK");
+    throw erro;
+  } finally { cliente.release(); }
+  const raizArquivos = resolve(ambiente.PASTA_ARQUIVOS);
+  await Promise.all(chavesArquivos.map(async (chave) => {
+    const caminho = resolve(raizArquivos, chave);
+    const caminhoRelativo = relative(raizArquivos, caminho);
+    if (caminhoRelativo.startsWith("..") || isAbsolute(caminhoRelativo)) return;
+    await unlink(caminho).catch((erro) => aplicacao.log.warn({ erro, chave }, "Não foi possível remover um arquivo do catador excluído."));
+  }));
   return resposta.code(204).send();
 });
 

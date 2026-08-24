@@ -114,7 +114,7 @@ function resumirAlteracoes(dados: DadosAuditoria) {
 function rotuloAtividade(acao: string, entidade: string) {
   if (entidade === "caixas_catador") return acao === "fechamento" ? "Caixa individual fechado" : acao === "reabertura" ? "Caixa individual reaberto" : "Caixa individual aberto";
   if (entidade === "pesagens") return acao === "criacao" ? "Pesagem registrada" : acao === "alteracao" ? "Pesagem corrigida" : "Pesagem excluída";
-  if (entidade === "catadores") return "Catador cadastrado";
+  if (entidade === "catadores") return acao === "criacao" ? "Catador cadastrado" : acao === "alteracao" ? "Cadastro do catador atualizado" : acao === "exclusao_definitiva" ? "Catador e dados vinculados excluídos" : "Ação no cadastro do catador";
   if (entidade === "materiais") return acao === "criacao" ? "Material cadastrado" : "Material atualizado";
   if (entidade === "cooperativas") return acao === "criacao" ? "Cooperativa cadastrada" : "Cooperativa atualizada";
   return "Ação registrada";

@@ -57,6 +57,24 @@ async function executar() {
     catadorUuid = catador.uuid;
     entidadesCriadas.add(catadorUuid);
     assert.match(catador.codigo, /^CAT-\d{4,}$/);
+    await chamar(`/api/catadores/${catadorUuid}`, { method: "PUT", body: JSON.stringify({
+      nomeCompleto: `Catador Integração Editado ${sufixo}`,
+      apelido: "Integrado",
+      cooperativaUuid,
+      genero: "Outro",
+      racaCor: "Parda",
+      dataNascimento: "1990-05-20",
+      cpf: "12345678901",
+      contatos: [{ tipo: "celular", valor: "31999999999", principal: true }, { tipo: "recado", valor: "3133334444", principal: false }],
+      endereco: { cep: "30110000", logradouro: "Avenida Afonso Pena", numero: "100", bairro: "Centro", cidade: "Belo Horizonte", estado: "MG" },
+      contaFinanceira: { tipo: "conta_bancaria", banco: "Banco Teste Editado", agencia: "0002", numeroConta: "98765-4", tipoConta: "corrente", deTerceiro: true, nomeTitular: "Titular Editado", cpfTitular: "10987654321" },
+    }) });
+    const perfilEditado = (await chamar(`/api/catadores/${catadorUuid}/perfil`)).dados.catador;
+    assert.equal(perfilEditado.nome_completo, `Catador Integração Editado ${sufixo}`);
+    assert.equal(perfilEditado.cpf, "12345678901");
+    assert.equal(perfilEditado.contatos.length, 2);
+    assert.equal(perfilEditado.endereco.cep, "30110000");
+    assert.equal(perfilEditado.contas_financeiras[0].banco, "Banco Teste Editado");
     const paginaCatadores = (await chamar(`/api/catadores?busca=${encodeURIComponent(`Catador Integração ${sufixo}`)}&status=ativo&limite=5&deslocamento=0`)).dados;
     assert.equal(paginaCatadores.total, 1);
     assert.equal(paginaCatadores.dados[0]?.uuid, catadorUuid);
@@ -167,6 +185,23 @@ async function executar() {
     assert.equal(excluida.motivo_exclusao, "Registro temporário do teste integrado");
     assert.ok(excluida.historico.some((evento) => evento.acao === "exclusao_logica"));
     assert.equal(Number((await chamar("/api/painel")).dados.indicadores.coletas_realizadas), Number(painelAntes.coletas_realizadas));
+
+    const exclusaoSemConfirmar = await fetch(`${urlApi}/api/catadores/${catadorUuid}`, { method: "DELETE", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ motivo: "Teste sem confirmação" }) });
+    assert.equal(exclusaoSemConfirmar.status, 400);
+    await chamar(`/api/catadores/${catadorUuid}`, { method: "DELETE", body: JSON.stringify({ confirmacao: true, motivo: "Exclusão integral do cadastro temporário" }) });
+    assert.equal((await fetch(`${urlApi}/api/catadores/${catadorUuid}/perfil`, { headers: { cookie } })).status, 404);
+    const dependenciasRemanescentes = await bancoTeste.query(`SELECT
+      (SELECT count(*)::int FROM catadores WHERE uuid=$1) AS catadores,
+      (SELECT count(*)::int FROM pesagens WHERE catador_uuid=$1) AS pesagens,
+      (SELECT count(*)::int FROM caixas_catador WHERE catador_uuid=$1) AS caixas,
+      (SELECT count(*)::int FROM contatos_catador WHERE catador_uuid=$1) AS contatos,
+      (SELECT count(*)::int FROM enderecos_catador WHERE catador_uuid=$1) AS enderecos,
+      (SELECT count(*)::int FROM contas_financeiras_catador WHERE catador_uuid=$1) AS contas`, [catadorUuid]);
+    assert.deepEqual(dependenciasRemanescentes.rows[0], { catadores: 0, pesagens: 0, caixas: 0, contatos: 0, enderecos: 0, contas: 0 });
+    const auditoriaExclusao = await bancoTeste.query("SELECT dados FROM auditoria WHERE entidade='catadores' AND entidade_uuid=$1 AND acao='exclusao_definitiva'", [catadorUuid]);
+    assert.equal(auditoriaExclusao.rowCount, 1);
+    assert.equal(auditoriaExclusao.rows[0].dados.motivo, "Exclusão integral do cadastro temporário");
+    assert.equal(Number((await chamar("/api/painel")).dados.indicadores.catadores_ativos), Number(painelAntes.catadores_ativos));
   } finally {
     const cliente = await bancoTeste.connect();
     try {
@@ -193,4 +228,4 @@ async function executar() {
 }
 
 await executar();
-console.log("Integração concluída: sessão, pagamento, pesagem, auditoria, painel, relatório e central de notificações.");
+console.log("Integração concluída: sessão, edição e exclusão integral de catador, pesagem, auditoria, painel, relatório e notificações.");
