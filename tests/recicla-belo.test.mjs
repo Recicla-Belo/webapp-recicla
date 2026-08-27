@@ -24,7 +24,7 @@ test("renderiza a experiência do Recicla Belô", async () => {
 });
 
 test("mantém ambiente, banco e instalação documentados", async () => {
-  const [exemplo, estilos, migracao, migracaoNotificacoes, migracaoAuditoria, migracaoCaixas, migracaoLimpeza, migracaoNotificacoesOrfas, migracaoPagamentoMeta, migracaoMetaGeral, migracaoSessao, sqlCompleto, instalador, instaladorProducao, composeProducao, dockerfileProducao, supervisor, servidor, estrutura, api, painel, telaLogin, telaPesagem, telaCatadores, telaCooperativas, telaRelatorios, telaConfiguracoes, paginacao, leiaMe, pacote] = await Promise.all([
+  const [exemplo, estilos, migracao, migracaoNotificacoes, migracaoAuditoria, migracaoCaixas, migracaoLimpeza, migracaoNotificacoesOrfas, migracaoPagamentoMeta, migracaoMetaGeral, migracaoSessao, migracaoMateriaisMeta, sqlCompleto, instalador, instaladorProducao, composeProducao, dockerfileProducao, supervisor, servidor, estrutura, api, painel, telaLogin, telaPesagem, telaCatadores, telaCooperativas, telaRelatorios, telaConfiguracoes, paginacao, leiaMe, pacote] = await Promise.all([
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/001_estrutura_inicial.sql", import.meta.url), "utf8"),
@@ -36,6 +36,7 @@ test("mantém ambiente, banco e instalação documentados", async () => {
     readFile(new URL("../servidor/migracoes/011_pagamento_por_meta_e_responsaveis.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/012_meta_geral_catadores_e_busca_prefixada.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/013_seguranca_sessao_administrador.sql", import.meta.url), "utf8"),
+    readFile(new URL("../servidor/migracoes/014_materiais_validos_e_pesagens_fora_meta.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/sql/recicla-belo-completo.sql", import.meta.url), "utf8"),
     readFile(new URL("../scripts/instalar-e-iniciar.sh", import.meta.url), "utf8"),
     readFile(new URL("../scripts/instalar-producao.sh", import.meta.url), "utf8"),
@@ -74,6 +75,8 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(migracaoCaixas, /CREATE TABLE IF NOT EXISTS movimentacoes_caixa_catador/);
   assert.match(migracaoCaixas, /meta_diaria/);
   assert.match(migracaoSessao, /versao_sessao/);
+  assert.match(migracaoMateriaisMeta, /ALTER TABLE materiais[\s\S]*contabiliza_meta/);
+  assert.match(migracaoMateriaisMeta, /ALTER TABLE itens_pesagem[\s\S]*contabiliza_meta/);
   assert.match(sqlCompleto, /versao_sessao INTEGER/);
   assert.match(migracaoLimpeza, /NOT EXISTS/);
   assert.match(migracaoNotificacoesOrfas, /DELETE FROM notificacoes/);
@@ -136,12 +139,17 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(telaPesagem, /DetalhesPagamento/);
   assert.match(telaPesagem, /function iniciarProximaPesagem\(\)/);
   assert.match(telaPesagem, /setEtapa\(1\)/);
+  assert.match(telaPesagem, /Contabilizar esta entrega na meta/);
+  assert.match(telaPesagem, /contabilizarNaMeta: participaMeta/);
+  assert.match(telaPesagem, /Fora da meta · pagamento imediato/);
   assert.match(telaConfiguracoes, /Responsáveis pela pesagem/);
   assert.match(telaConfiguracoes, /\/api\/responsaveis-pesagem\?incluirInativos=true/);
   assert.match(telaConfiguracoes, /\/api\/configuracoes\/meta-geral/);
   assert.match(telaConfiguracoes, /Meta geral diária/);
   assert.match(telaConfiguracoes, /metaDiaria: ""/);
-  assert.match(telaConfiguracoes, /placeholder="Sem meta"/);
+  assert.match(telaConfiguracoes, /placeholder="Sem meta específica"/);
+  assert.match(telaConfiguracoes, /Material válido para metas/);
+  assert.match(telaConfiguracoes, /validoParaMeta/);
   assert.match(telaConfiguracoes, /Conta do administrador/);
   assert.match(telaConfiguracoes, /\/api\/administrador\/perfil/);
   assert.match(telaConfiguracoes, /\/api\/administrador\/senha/);
@@ -151,6 +159,9 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(servidor, /DELETE FROM responsaveis_pesagem WHERE uuid=\$1/);
   assert.match(servidor, /pesagensComHistoricoPreservado/);
   assert.match(servidor, /recalcularPagamentoMetaDiaria/);
+  assert.match(servidor, /ref\.contabiliza_meta && entrada\.data\.contabilizarNaMeta/);
+  assert.match(servidor, /valor_fora_meta_acumulado/);
+  assert.match(telaRelatorios, /Fora da meta · pagamento imediato/);
   assert.match(telaCatadores, /PerfilCatador/);
   assert.match(telaCatadores, /caixa\/\$\{acao\}/);
   assert.match(telaCatadores, /<Paginacao/);

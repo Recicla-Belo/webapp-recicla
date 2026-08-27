@@ -11,7 +11,7 @@ WebApp responsivo para gestão de cooperativas de reciclagem, catadores, produç
 - cooperativas e associações com responsável e vínculo de catadores;
 - pesagem guiada com confirmação final em modal, código e nome do catador, ponto, material, peso, data e hora, status e cálculo acumulado da meta diária;
 - materiais configuráveis por unidade, quantidade de referência, valor e situação ativa/inativa;
-- meta diária configurável por material e meta geral opcional que soma todos os materiais do caixa diário, com progresso individual, detalhamento financeiro por material e comemoração ao atingir o alvo;
+- meta diária configurável por material e meta geral opcional, com seleção dos materiais válidos, escolha auditável para registrar cada entrega dentro ou fora da meta, progresso individual, detalhamento financeiro por material e comemoração ao atingir o alvo;
 - ativação e inativação de catadores sem apagar seu cadastro ou histórico; catadores inativos não aparecem nem são aceitos em novas pesagens;
 - cadastro, edição, ativação e exclusão lógica dos responsáveis pela pesagem, preservando os nomes utilizados no histórico;
 - caixa diário independente por catador, com fechamento que bloqueia novos lançamentos, reabertura justificada e trilha de auditoria;
@@ -183,7 +183,7 @@ As tabelas e colunas usam nomes claros em português do Brasil. A estrutura cobr
 
 Notificações ligadas a registros removidos são eliminadas pelas rotas de exclusão e por uma migração de saneamento. A consulta também ignora referências órfãs, evitando que uma instalação sem catadores ou pesagens exiba avisos antigos.
 
-O pagamento é calculado exclusivamente pelo backend, dentro da mesma transação que registra a pesagem. Quando a meta geral está ativa, ela prevalece e soma todos os materiais entregues pelo catador naquele caixa diário; nenhum valor é exibido ou contabilizado antes do alvo. Ao atingir a meta, o sistema libera o total acumulado e o detalha por material. Sem meta geral, cada material usa sua própria meta. Uma meta por material igual a zero significa pagamento imediato. A regra aplicada é congelada na abertura do caixa para preservar a auditoria, e edições ou exclusões recalculam todas as movimentações afetadas.
+O pagamento é calculado exclusivamente pelo backend, dentro da mesma transação que registra a pesagem. Quando a meta geral está ativa, ela soma somente os materiais e entregas marcados para contabilização; nenhum valor dessas entregas é exibido ou contabilizado antes do alvo. Ao atingir a meta, o sistema libera o total acumulado e o detalha por material. Um material configurado como inválido para metas, ou uma entrega elegível que seja escolhida como fora da meta, não aumenta o progresso e recebe pagamento imediato pelo preço configurado. Sem meta geral, cada material válido usa sua própria meta. Uma meta por material igual a zero significa pagamento imediato. A configuração do material, a escolha da entrega e os preços aplicados ficam congelados no item da pesagem para preservar a auditoria, e edições ou exclusões recalculam todas as movimentações afetadas.
 
 O SQL único e completo está em `servidor/sql/recicla-belo-completo.sql`. Ele contém extensões, tipos, tabelas, chaves estrangeiras, restrições, índices de busca textual e dados iniciais. Para regenerá-lo após novas migrações, execute `npm run sql:gerar`.
 

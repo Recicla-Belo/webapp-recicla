@@ -38,7 +38,7 @@ export type CooperativaApi = {
 
 export type MaterialApi = {
   uuid: string; nome: string; tipo_material: string; unidade: string; quantidade_referencia: string | number;
-  valor_referencia: string | number; meta_diaria: string | number; status: "ativo" | "inativo";
+  valor_referencia: string | number; meta_diaria: string | number; contabiliza_meta: boolean; status: "ativo" | "inativo";
 };
 
 export type ProgressoMetaApi = {

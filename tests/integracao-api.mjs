@@ -76,6 +76,7 @@ async function executar() {
   let cooperativaUuid;
   let materialUuid;
   let materialSemMetaUuid;
+  let materialForaMetaUuid;
   let catadorUuid;
   let pesagemUuid;
   let primeiraPesagemUuid;
@@ -257,6 +258,8 @@ async function executar() {
 
     materialSemMetaUuid = (await chamar("/api/materiais", { method: "POST", body: JSON.stringify({ nome: `Sem meta ${sufixo}`, tipoMaterial: "Teste", unidade: "kg", quantidadeReferencia: 1, valorReferencia: 2, metaDiaria: 0, ativo: true }) })).dados.uuid;
     entidadesCriadas.add(materialSemMetaUuid);
+    materialForaMetaUuid = (await chamar("/api/materiais", { method: "POST", body: JSON.stringify({ nome: `Fora da meta ${sufixo}`, tipoMaterial: "Teste", unidade: "kg", quantidadeReferencia: 1, valorReferencia: 3, metaDiaria: 0, validoParaMeta: false, ativo: true }) })).dados.uuid;
+    entidadesCriadas.add(materialForaMetaUuid);
     const responsavelPadrao = responsaveis.find((item) => item.uuid !== responsavelUuid);
     assert.ok(responsavelPadrao);
     const pesagemSemMeta = (await chamar("/api/pesagens", { method: "POST", body: JSON.stringify({ catadorUuid, cooperativaUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsavelPadrao.uuid, materialUuid: materialSemMetaUuid, peso: 3, dataHora: new Date(new Date(dataHoraPesagem).getTime() + 2000).toISOString(), status: "concluida" }) })).dados;
@@ -270,12 +273,23 @@ async function executar() {
     assert.equal(Number(configuracaoMetaAtiva.meta_diaria), 10);
     catadorMetaGeralUuid = (await chamar("/api/catadores", { method: "POST", body: JSON.stringify({ nomeCompleto: `Meta Geral ${sufixo}`, cooperativaUuid, contatos: [], ativo: true }) })).dados.uuid;
     entidadesCriadas.add(catadorMetaGeralUuid);
-    const primeiraGeral = (await chamar("/api/pesagens", { method: "POST", body: JSON.stringify({ catadorUuid: catadorMetaGeralUuid, cooperativaUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsavelPadrao.uuid, materialUuid, peso: 4, dataHora: new Date(new Date(dataHoraPesagem).getTime() + 4000).toISOString(), status: "concluida" }) })).dados;
+    const materialConfiguradoFora = (await chamar("/api/pesagens", { method: "POST", body: JSON.stringify({ catadorUuid: catadorMetaGeralUuid, cooperativaUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsavelPadrao.uuid, materialUuid: materialForaMetaUuid, contabilizarNaMeta: true, peso: 5, dataHora: new Date(new Date(dataHoraPesagem).getTime() + 3000).toISOString(), status: "concluida" }) })).dados;
+    pesagensMetaGeral.push(materialConfiguradoFora.uuid); entidadesCriadas.add(materialConfiguradoFora.uuid);
+    assert.equal(materialConfiguradoFora.contabilizaMeta, false);
+    assert.equal(materialConfiguradoFora.valorTotal, 15);
+    assert.equal(materialConfiguradoFora.progressoMetaGeral.peso, 0);
+    assert.equal(materialConfiguradoFora.progressoMetaGeral.falta, 10);
+    const escolhaForaMeta = (await chamar("/api/pesagens", { method: "POST", body: JSON.stringify({ catadorUuid: catadorMetaGeralUuid, cooperativaUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsavelPadrao.uuid, materialUuid, contabilizarNaMeta: false, peso: 4, dataHora: new Date(new Date(dataHoraPesagem).getTime() + 4000).toISOString(), status: "concluida" }) })).dados;
+    pesagensMetaGeral.push(escolhaForaMeta.uuid); entidadesCriadas.add(escolhaForaMeta.uuid);
+    assert.equal(escolhaForaMeta.contabilizaMeta, false);
+    assert.equal(escolhaForaMeta.valorTotal, 2);
+    assert.equal(escolhaForaMeta.progressoMetaGeral.peso, 0);
+    const primeiraGeral = (await chamar("/api/pesagens", { method: "POST", body: JSON.stringify({ catadorUuid: catadorMetaGeralUuid, cooperativaUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsavelPadrao.uuid, materialUuid, contabilizarNaMeta: true, peso: 4, dataHora: new Date(new Date(dataHoraPesagem).getTime() + 5000).toISOString(), status: "concluida" }) })).dados;
     pesagensMetaGeral.push(primeiraGeral.uuid); entidadesCriadas.add(primeiraGeral.uuid);
     assert.equal(primeiraGeral.valorTotal, 0);
     assert.equal(primeiraGeral.progressoMetaGeral.ativa, true);
     assert.equal(primeiraGeral.progressoMetaGeral.falta, 6);
-    const segundaGeral = (await chamar("/api/pesagens", { method: "POST", body: JSON.stringify({ catadorUuid: catadorMetaGeralUuid, cooperativaUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsavelPadrao.uuid, materialUuid: materialSemMetaUuid, peso: 6, dataHora: new Date(new Date(dataHoraPesagem).getTime() + 5000).toISOString(), status: "concluida" }) })).dados;
+    const segundaGeral = (await chamar("/api/pesagens", { method: "POST", body: JSON.stringify({ catadorUuid: catadorMetaGeralUuid, cooperativaUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsavelPadrao.uuid, materialUuid: materialSemMetaUuid, contabilizarNaMeta: true, peso: 6, dataHora: new Date(new Date(dataHoraPesagem).getTime() + 6000).toISOString(), status: "concluida" }) })).dados;
     pesagensMetaGeral.push(segundaGeral.uuid); entidadesCriadas.add(segundaGeral.uuid);
     assert.equal(segundaGeral.metaAtingidaAgora, true);
     assert.equal(segundaGeral.valorTotal, 14);
@@ -286,11 +300,13 @@ async function executar() {
     assert.equal(Number(segundaGeral.progressoMetaGeral.detalhes.find((item) => item.material_uuid === materialSemMetaUuid).valor_liberado), 12);
     const perfilMetaGeral = (await chamar(`/api/catadores/${catadorMetaGeralUuid}/perfil`)).dados;
     assert.ok(perfilMetaGeral.metas.some((item) => item.nome === "Meta geral" && item.atingida && Number(item.ganho) === 14));
-    assert.equal(Number(perfilMetaGeral.materiais.find((item) => item.uuid === materialUuid).ganho_total), 2);
+    assert.equal(Number(perfilMetaGeral.materiais.find((item) => item.uuid === materialUuid).ganho_total), 4);
     assert.equal(Number(perfilMetaGeral.materiais.find((item) => item.uuid === materialSemMetaUuid).ganho_total), 12);
+    assert.equal(Number(perfilMetaGeral.materiais.find((item) => item.uuid === materialForaMetaUuid).ganho_total), 15);
     const relatorioGeral = (await chamar(`/api/relatorios/pesagens?catadorUuid=${catadorMetaGeralUuid}&busca=${encodeURIComponent("Meta Ger")}&limite=10&deslocamento=0`)).dados;
-    assert.equal(relatorioGeral.total, 2);
-    assert.ok(relatorioGeral.dados.every((item) => item.tipo_meta === "geral" && Number(item.percentual_meta) === 100));
+    assert.equal(relatorioGeral.total, 4);
+    assert.equal(relatorioGeral.dados.filter((item) => item.tipo_meta === "fora_meta").length, 2);
+    assert.ok(relatorioGeral.dados.filter((item) => item.tipo_meta === "geral").every((item) => Number(item.percentual_meta) === 100));
     for (const pesagemGeralUuid of pesagensMetaGeral) await chamar(`/api/pesagens/${pesagemGeralUuid}`, { method: "DELETE", body: JSON.stringify({ motivo: "Limpeza do cenário de meta geral" }) });
     await chamar(`/api/catadores/${catadorMetaGeralUuid}`, { method: "DELETE", body: JSON.stringify({ confirmacao: true, motivo: "Limpeza do cenário de meta geral" }) });
     catadorMetaGeralUuid = undefined;
@@ -336,6 +352,7 @@ async function executar() {
       }
       if (materialUuid) await cliente.query("DELETE FROM materiais WHERE uuid=$1", [materialUuid]);
       if (materialSemMetaUuid) await cliente.query("DELETE FROM materiais WHERE uuid=$1", [materialSemMetaUuid]);
+      if (materialForaMetaUuid) await cliente.query("DELETE FROM materiais WHERE uuid=$1", [materialForaMetaUuid]);
       if (cooperativaUuid) await cliente.query("DELETE FROM cooperativas WHERE uuid=$1", [cooperativaUuid]);
       if (responsavelUuid) await cliente.query("DELETE FROM responsaveis_pesagem WHERE uuid=$1", [responsavelUuid]);
       await cliente.query("UPDATE configuracoes_meta_geral SET ativa=$1,meta_diaria=$2,unidade=$3,atualizado_em=now() WHERE chave='principal'", [configuracaoMetaOriginal.ativa, configuracaoMetaOriginal.meta_diaria, configuracaoMetaOriginal.unidade]);

@@ -13,7 +13,7 @@ type AtividadeApi = {
   codigo: string | null; peso_total: number | null; valor_total: number | null; status: string | null;
   catador_uuid: string | null; codigo_catador: string | null; catador: string | null; tem_foto: boolean;
   contato_catador: string | null; endereco_catador: string | null; cooperativa_catador: string | null;
-  material: string | null; meta_diaria: number | null; cooperativa: string | null; ponto_apoio: string | null;
+  material: string | null; meta_diaria: number | null; contabiliza_meta: boolean | null; cooperativa: string | null; ponto_apoio: string | null;
   responsavel: string | null; data_caixa: string | null; peso_caixa: number; valor_caixa: number;
   movimentacoes_caixa: number; motivo: string | null;
 };
@@ -90,7 +90,7 @@ function AtividadeRecente({ atividade }: { atividade: AtividadeApi }) {
       ].filter(Boolean).join(" · ")}</small> : <small>{[
         atividade.codigo, atividade.material, atividade.peso_total != null ? `${Number(atividade.peso_total).toLocaleString("pt-BR")} kg` : null,
         atividade.valor_total != null ? dinheiro(atividade.valor_total) : null,
-        atividade.meta_diaria != null ? `meta ${Number(atividade.meta_diaria).toLocaleString("pt-BR")} kg` : null,
+        atividade.contabiliza_meta === false ? "fora da meta · pagamento imediato" : atividade.meta_diaria != null ? `meta ${Number(atividade.meta_diaria).toLocaleString("pt-BR")} kg` : null,
         atividade.cooperativa, atividade.ponto_apoio, atividade.responsavel ? `por ${atividade.responsavel}` : null,
       ].filter(Boolean).join(" · ") || "Ação administrativa registrada"}</small>}
       {alteracoes.length > 0 && <ul className="alteracoes-atividade">{alteracoes.map((item) => <li key={item}>{item}</li>)}</ul>}
@@ -108,7 +108,7 @@ function resumirAlteracoes(dados: DadosAuditoria) {
   const depois = dados.depois ?? {};
   const pares: Array<[string, unknown, unknown, string?]> = [
     ["Peso", antes.item_peso, depois.peso, " kg"], ["Valor", antes.valor_total, depois.valorTotal],
-    ["Status", antes.status, depois.status], ["Data", antes.data_hora, depois.dataHora], ["Observação", antes.observacao, depois.observacao],
+    ["Regra da meta", antes.contabiliza_meta, depois.contabilizarNaMeta], ["Status", antes.status, depois.status], ["Data", antes.data_hora, depois.dataHora], ["Observação", antes.observacao, depois.observacao],
   ];
   return pares.filter(([, anterior, novo]) => novo !== undefined && String(anterior ?? "") !== String(novo ?? "")).map(([rotulo, anterior, novo, sufixo]) => {
     const formatar = (valor: unknown) => rotulo === "Valor" ? dinheiro(Number(valor ?? 0)) : rotulo === "Data" && valor ? new Date(String(valor)).toLocaleString("pt-BR") : `${String(valor ?? "não informado")}${sufixo ?? ""}`;
