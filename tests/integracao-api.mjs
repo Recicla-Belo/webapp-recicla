@@ -49,9 +49,12 @@ async function executar() {
   const sufixo = `${Date.now()}-${process.pid}`;
   let cooperativaUuid;
   let materialUuid;
+  let materialSemMetaUuid;
   let catadorUuid;
   let pesagemUuid;
+  let primeiraPesagemUuid;
   let caixaUuid;
+  let responsavelUuid;
 
   try {
     cooperativaUuid = (await chamar("/api/cooperativas", { method: "POST", body: JSON.stringify({ nome: `Integração ${sufixo}`, nomeResponsavel: "Teste automatizado", ativa: true }) })).dados.uuid;
@@ -97,15 +100,24 @@ async function executar() {
     assert.equal(paginaCooperativas.dados[0]?.uuid, cooperativaUuid);
 
     const pontos = (await chamar("/api/pontos-apoio")).dados.dados;
+    responsavelUuid = (await chamar("/api/responsaveis-pesagem", { method: "POST", body: JSON.stringify({ nome: `Responsável ${sufixo}`, ativo: true }) })).dados.uuid;
+    await chamar(`/api/responsaveis-pesagem/${responsavelUuid}`, { method: "PUT", body: JSON.stringify({ nome: `Responsável Editado ${sufixo}`, ativo: true }) });
     const responsaveis = (await chamar("/api/responsaveis-pesagem")).dados.dados;
-    assert.ok(pontos.length > 0 && responsaveis.length > 0);
+    assert.ok(pontos.length > 0 && responsaveis.some((item) => item.uuid === responsavelUuid && item.nome === `Responsável Editado ${sufixo}`));
 
     const dataHoraPesagem = new Date().toISOString();
     const dataCaixa = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bahia" }).format(new Date(dataHoraPesagem));
-    const pesagem = (await chamar("/api/pesagens", { method: "POST", body: JSON.stringify({ catadorUuid, cooperativaUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsaveis[0].uuid, materialUuid, peso: 30, observacao: "Teste integrado removível", dataHora: dataHoraPesagem, status: "concluida" }) })).dados;
+    const primeiraPesagem = (await chamar("/api/pesagens", { method: "POST", body: JSON.stringify({ catadorUuid, cooperativaUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsavelUuid, materialUuid, peso: 5, observacao: "Abaixo da meta", dataHora: dataHoraPesagem, status: "concluida" }) })).dados;
+    primeiraPesagemUuid = primeiraPesagem.uuid;
+    entidadesCriadas.add(primeiraPesagemUuid);
+    assert.equal(primeiraPesagem.valorTotal, 0);
+    assert.equal(primeiraPesagem.progressoMeta.peso, 5);
+    assert.equal(primeiraPesagem.progressoMeta.falta, 15);
+    assert.equal(primeiraPesagem.metaAtingidaAgora, false);
+    const pesagem = (await chamar("/api/pesagens", { method: "POST", body: JSON.stringify({ catadorUuid, cooperativaUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsavelUuid, materialUuid, peso: 15, observacao: "Completa a meta acumulada", dataHora: new Date(new Date(dataHoraPesagem).getTime() + 1000).toISOString(), status: "concluida" }) })).dados;
     pesagemUuid = pesagem.uuid;
     entidadesCriadas.add(pesagemUuid);
-    assert.equal(pesagem.valorTotal, 15);
+    assert.equal(pesagem.valorTotal, 10);
     assert.equal(pesagem.status, "concluida");
     assert.equal(pesagem.metaAtingidaAgora, true);
     assert.equal(pesagem.progressoMeta.percentual, 100);
@@ -117,12 +129,13 @@ async function executar() {
 
     const caixaFechado = (await chamar(`/api/catadores/${catadorUuid}/caixa/fechar`, { method: "POST", body: JSON.stringify({ data: dataCaixa }) })).dados;
     assert.equal(caixaFechado.status, "fechado");
-    const edicaoBloqueada = await fetch(`${urlApi}/api/pesagens/${pesagemUuid}`, { method: "PUT", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ catadorUuid, cooperativaUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsaveis[0].uuid, materialUuid, peso: 31, dataHora: dataHoraPesagem, status: "concluida", motivoAlteracao: "Deve ser bloqueada" }) });
+    const edicaoBloqueada = await fetch(`${urlApi}/api/pesagens/${pesagemUuid}`, { method: "PUT", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ catadorUuid, cooperativaUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsavelUuid, materialUuid, peso: 31, dataHora: dataHoraPesagem, status: "concluida", motivoAlteracao: "Deve ser bloqueada" }) });
     assert.equal(edicaoBloqueada.status, 409);
     const caixaReaberto = (await chamar(`/api/catadores/${catadorUuid}/caixa/reabrir`, { method: "POST", body: JSON.stringify({ data: dataCaixa, motivo: "Correção controlada do teste" }) })).dados;
     assert.equal(caixaReaberto.status, "aberto");
 
     const painelDepois = (await chamar("/api/painel")).dados;
+    assert.ok(painelDepois.producaoSemanal.every((item) => /^\d{4}-\d{2}-\d{2}$/.test(item.data)));
     assert.equal(painelDepois.paginacaoAtividades.pagina, 1);
     assert.equal(painelDepois.paginacaoAtividades.limite, 5);
     assert.ok(painelDepois.paginacaoAtividades.total >= painelDepois.atividades.length);
@@ -130,25 +143,26 @@ async function executar() {
     assert.equal(segundaPaginaAtividades.paginacaoAtividades.pagina, 2);
     assert.ok(segundaPaginaAtividades.atividades.length <= 5);
     assert.equal(Number(painelDepois.indicadores.catadores_ativos), Number(painelAntes.catadores_ativos) + 1);
-    assert.equal(Number(painelDepois.indicadores.coletas_realizadas), Number(painelAntes.coletas_realizadas) + 1);
-    assert.equal(Number(painelDepois.indicadores.total_coletado), Number(painelAntes.total_coletado) + 30);
+    assert.equal(Number(painelDepois.indicadores.coletas_realizadas), Number(painelAntes.coletas_realizadas) + 2);
+    assert.equal(Number(painelDepois.indicadores.total_coletado), Number(painelAntes.total_coletado) + 20);
+    assert.equal(Number(painelDepois.indicadores.valor_total_pagar), Number(painelAntes.valor_total_pagar) + 10);
     assert.ok(painelDepois.atividades.some((item) => item.codigo === pesagem.codigo && item.entidade === "pesagens" && item.catador_uuid === catadorUuid));
     const atividadeCaixa = painelDepois.atividades.find((item) => item.entidade === "caixas_catador" && item.catador_uuid === catadorUuid && item.acao === "reabertura");
     assert.equal(atividadeCaixa.codigo_catador, catador.codigo);
     assert.equal(atividadeCaixa.motivo, "Correção controlada do teste");
-    assert.equal(Number(atividadeCaixa.valor_caixa), 15);
+    assert.equal(Number(atividadeCaixa.valor_caixa), 10);
 
-    const alterada = (await chamar(`/api/pesagens/${pesagemUuid}`, { method: "PUT", body: JSON.stringify({ catadorUuid, cooperativaUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsaveis[0].uuid, materialUuid, peso: 40, observacao: "Peso corrigido", dataHora: dataHoraPesagem, status: "agendada", motivoAlteracao: "Correção automatizada do peso e status" }) })).dados;
-    assert.equal(alterada.valorTotal, 20);
+    const alterada = (await chamar(`/api/pesagens/${pesagemUuid}`, { method: "PUT", body: JSON.stringify({ catadorUuid, cooperativaUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsavelUuid, materialUuid, peso: 40, observacao: "Peso corrigido", dataHora: dataHoraPesagem, status: "agendada", motivoAlteracao: "Correção automatizada do peso e status" }) })).dados;
+    assert.equal(alterada.valorTotal, 0);
     assert.equal(alterada.status, "agendada");
-    assert.equal(Number((await chamar("/api/painel")).dados.indicadores.coletas_realizadas), Number(painelAntes.coletas_realizadas));
+    assert.equal(Number((await chamar("/api/painel")).dados.indicadores.coletas_realizadas), Number(painelAntes.coletas_realizadas) + 1);
 
     const respostaRelatorio = (await chamar(`/api/relatorios/pesagens?catadorUuid=${catadorUuid}&limite=5&deslocamento=0`)).dados;
-    assert.equal(respostaRelatorio.total, 1);
-    assert.equal(Number(respostaRelatorio.totais.peso), 0);
+    assert.equal(respostaRelatorio.total, 2);
+    assert.equal(Number(respostaRelatorio.totais.peso), 5);
     assert.equal(Number(respostaRelatorio.totais.valor), 0);
     let relatorio = respostaRelatorio.dados;
-    assert.ok(relatorio.some((item) => item.uuid === pesagemUuid && item.status === "agendada" && Number(item.valor_total) === 20 && item.historico.some((evento) => evento.acao === "alteracao")));
+    assert.ok(relatorio.some((item) => item.uuid === pesagemUuid && item.status === "agendada" && Number(item.valor_total) === 0 && item.historico.some((evento) => evento.acao === "alteracao")));
     const perfil = (await chamar(`/api/catadores/${catadorUuid}/perfil`)).dados;
     assert.equal(perfil.catador.uuid, catadorUuid);
     assert.ok(perfil.caixas.some((item) => String(item.data_caixa).slice(0, 10) === dataCaixa && item.reaberto_em));
@@ -198,7 +212,20 @@ async function executar() {
     assert.ok(excluida.excluida_em);
     assert.equal(excluida.motivo_exclusao, "Registro temporário do teste integrado");
     assert.ok(excluida.historico.some((evento) => evento.acao === "exclusao_logica"));
-    assert.equal(Number((await chamar("/api/painel")).dados.indicadores.coletas_realizadas), Number(painelAntes.coletas_realizadas));
+    assert.equal(Number((await chamar("/api/painel")).dados.indicadores.coletas_realizadas), Number(painelAntes.coletas_realizadas) + 1);
+
+    await chamar(`/api/responsaveis-pesagem/${responsavelUuid}`, { method: "DELETE" });
+    assert.equal((await chamar("/api/responsaveis-pesagem")).dados.dados.some((item) => item.uuid === responsavelUuid), false);
+    assert.equal((await chamar("/api/responsaveis-pesagem?incluirInativos=true")).dados.dados.find((item) => item.uuid === responsavelUuid)?.status, "inativo");
+
+    materialSemMetaUuid = (await chamar("/api/materiais", { method: "POST", body: JSON.stringify({ nome: `Sem meta ${sufixo}`, tipoMaterial: "Teste", unidade: "kg", quantidadeReferencia: 1, valorReferencia: 2, metaDiaria: 0, ativo: true }) })).dados.uuid;
+    entidadesCriadas.add(materialSemMetaUuid);
+    const responsavelPadrao = responsaveis.find((item) => item.uuid !== responsavelUuid);
+    assert.ok(responsavelPadrao);
+    const pesagemSemMeta = (await chamar("/api/pesagens", { method: "POST", body: JSON.stringify({ catadorUuid, cooperativaUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsavelPadrao.uuid, materialUuid: materialSemMetaUuid, peso: 3, dataHora: new Date(new Date(dataHoraPesagem).getTime() + 2000).toISOString(), status: "concluida" }) })).dados;
+    assert.equal(pesagemSemMeta.valorTotal, 6);
+    assert.equal(pesagemSemMeta.progressoMeta.semMeta, true);
+    await chamar(`/api/pesagens/${pesagemSemMeta.uuid}`, { method: "DELETE", body: JSON.stringify({ motivo: "Validação temporária de material sem meta" }) });
 
     const exclusaoSemConfirmar = await fetch(`${urlApi}/api/catadores/${catadorUuid}`, { method: "DELETE", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ motivo: "Teste sem confirmação" }) });
     assert.equal(exclusaoSemConfirmar.status, 400);
@@ -230,7 +257,9 @@ async function executar() {
       if (catadorUuid) await cliente.query("DELETE FROM caixas_catador WHERE catador_uuid=$1", [catadorUuid]);
       if (catadorUuid) await cliente.query("DELETE FROM catadores WHERE uuid=$1", [catadorUuid]);
       if (materialUuid) await cliente.query("DELETE FROM materiais WHERE uuid=$1", [materialUuid]);
+      if (materialSemMetaUuid) await cliente.query("DELETE FROM materiais WHERE uuid=$1", [materialSemMetaUuid]);
       if (cooperativaUuid) await cliente.query("DELETE FROM cooperativas WHERE uuid=$1", [cooperativaUuid]);
+      if (responsavelUuid) await cliente.query("DELETE FROM responsaveis_pesagem WHERE uuid=$1", [responsavelUuid]);
       await cliente.query("COMMIT");
     } catch (falha) {
       await cliente.query("ROLLBACK");
@@ -242,4 +271,4 @@ async function executar() {
 }
 
 await executar();
-console.log("Integração concluída: sessão, edição e exclusão integral de catador, pesagem, auditoria, painel, relatório e notificações.");
+console.log("Integração concluída: meta acumulada, pagamento condicionado, material sem meta, responsáveis, sessão, auditoria, painel, relatório e notificações.");

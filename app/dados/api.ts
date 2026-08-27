@@ -43,7 +43,11 @@ export type MaterialApi = {
 
 export type ProgressoMetaApi = {
   material_uuid: string; nome: string; unidade: string; meta: number; peso: number; ganho: number;
-  percentual: number; falta: number; atingida: boolean;
+  percentual: number; falta: number; atingida: boolean; sem_meta?: boolean;
+};
+
+export type ResponsavelPesagemApi = {
+  uuid: string; nome: string; status: "ativo" | "inativo"; criado_em: string; atualizado_em: string;
 };
 
 export type NotificacaoApi = {

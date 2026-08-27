@@ -26,6 +26,11 @@ type DadosPainel = {
 
 const estadoVazio: DadosPainel = { indicadores: { catadores_ativos: 0, catadores_meta_atingida: 0, total_coletado: 0, valor_total_pagar: 0, coletas_realizadas: 0, media_por_catador: 0 }, producaoSemanal: [], atividades: [], paginacaoAtividades: { pagina: 1, limite: 5, total: 0 } };
 const dinheiro = (valor: number) => Number(valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+function rotuloDia(valor: string) {
+  const dataIso = String(valor).slice(0, 10);
+  const data = new Date(`${dataIso}T12:00:00`);
+  return Number.isNaN(data.getTime()) ? "—" : data.toLocaleDateString("pt-BR", { weekday: "short" }).replace(".", "");
+}
 
 export function PainelPrincipal({ onNovaPesagem }: { onNovaPesagem: () => void }) {
   const [dados, setDados] = useState<DadosPainel>(estadoVazio);
@@ -61,7 +66,7 @@ export function PainelPrincipal({ onNovaPesagem }: { onNovaPesagem: () => void }
       <div className="grade-indicadores">{indicadores.map((item, indice) => <article className="cartao-indicador" key={item.rotulo}><div className={`icone-indicador cor-${indice}`}><item.icone /></div><p>{item.rotulo}</p><strong>{item.valor}</strong></article>)}</div>
     </section>
     <div className="grade-inferior">
-      <section className="painel"><div className="titulo-secao"><div><h2>Produção dos últimos 7 dias</h2><p>Volume confirmado no banco de dados</p></div></div><div className="grafico" aria-label="Gráfico de produção dos últimos sete dias">{dados.producaoSemanal.map((item) => <div className="barra-grupo" key={item.data}><div className="barra" title={`${Number(item.peso).toLocaleString("pt-BR")} kg`} style={{ height: `${Math.max((Number(item.peso) / maiorPeso) * 100, Number(item.peso) > 0 ? 6 : 1)}%` }} /><span>{new Date(`${item.data}T12:00:00`).toLocaleDateString("pt-BR", { weekday: "short" }).replace(".", "")}</span></div>)}</div></section>
+      <section className="painel"><div className="titulo-secao"><div><h2>Produção dos últimos 7 dias</h2><p>Volume confirmado no banco de dados</p></div></div><div className="grafico" aria-label="Gráfico de produção dos últimos sete dias">{dados.producaoSemanal.map((item) => <div className="barra-grupo" key={item.data}><div className="barra" title={`${Number(item.peso).toLocaleString("pt-BR")} kg`} style={{ height: `${Math.max((Number(item.peso) / maiorPeso) * 100, Number(item.peso) > 0 ? 6 : 1)}%` }} /><span>{rotuloDia(item.data)}</span></div>)}</div></section>
       <section className="painel atividade">
         <div className="titulo-secao"><div><h2>Atividade recente</h2><p>Todas as ações auditadas, organizadas em páginas</p></div><button type="button" onClick={onNovaPesagem}>Registrar nova</button></div>
         {dados.atividades.length === 0 ? <p className="estado-vazio">Nenhuma movimentação registrada.</p> : dados.atividades.map((atividade) => <AtividadeRecente atividade={atividade} key={atividade.uuid} />)}

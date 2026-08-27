@@ -24,7 +24,7 @@ test("renderiza a experiência do Recicla Belô", async () => {
 });
 
 test("mantém ambiente, banco e instalação documentados", async () => {
-  const [exemplo, estilos, migracao, migracaoNotificacoes, migracaoAuditoria, migracaoCaixas, migracaoLimpeza, migracaoNotificacoesOrfas, sqlCompleto, instalador, supervisor, servidor, estrutura, api, painel, telaLogin, telaPesagem, telaCatadores, telaCooperativas, telaRelatorios, paginacao, leiaMe, pacote] = await Promise.all([
+  const [exemplo, estilos, migracao, migracaoNotificacoes, migracaoAuditoria, migracaoCaixas, migracaoLimpeza, migracaoNotificacoesOrfas, migracaoPagamentoMeta, sqlCompleto, instalador, supervisor, servidor, estrutura, api, painel, telaLogin, telaPesagem, telaCatadores, telaCooperativas, telaRelatorios, telaConfiguracoes, paginacao, leiaMe, pacote] = await Promise.all([
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/001_estrutura_inicial.sql", import.meta.url), "utf8"),
@@ -33,6 +33,7 @@ test("mantém ambiente, banco e instalação documentados", async () => {
     readFile(new URL("../servidor/migracoes/008_metas_e_caixas_catadores.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/009_limpa_auditorias_caixa_orfas.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/010_limpa_notificacoes_orfas.sql", import.meta.url), "utf8"),
+    readFile(new URL("../servidor/migracoes/011_pagamento_por_meta_e_responsaveis.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/sql/recicla-belo-completo.sql", import.meta.url), "utf8"),
     readFile(new URL("../scripts/instalar-e-iniciar.sh", import.meta.url), "utf8"),
     readFile(new URL("../scripts/desenvolver.mjs", import.meta.url), "utf8"),
@@ -45,6 +46,7 @@ test("mantém ambiente, banco e instalação documentados", async () => {
     readFile(new URL("../app/componentes/tela-catadores.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/componentes/tela-cooperativas.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/componentes/tela-relatorios.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/componentes/tela-configuracoes.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/componentes/paginacao.tsx", import.meta.url), "utf8"),
     readFile(new URL("../README.md", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
@@ -68,6 +70,8 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(migracaoLimpeza, /NOT EXISTS/);
   assert.match(migracaoNotificacoesOrfas, /DELETE FROM notificacoes/);
   assert.match(migracaoNotificacoesOrfas, /caixas_catador/);
+  assert.match(migracaoPagamentoMeta, /materiais_meta_diaria_nao_negativa/);
+  assert.match(migracaoPagamentoMeta, /valor_bruto_acumulado/);
   assert.match(sqlCompleto, /ALTER TYPE status_pesagem ADD VALUE IF NOT EXISTS 'agendada'/);
   assert.match(instalador, /docker compose up -d banco/);
   assert.match(instalador, /exec npm run dev/);
@@ -105,6 +109,7 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(painel, /Motivo:/);
   assert.match(painel, /paginacaoAtividades/);
   assert.match(painel, /<Paginacao/);
+  assert.match(painel, /function rotuloDia/);
   assert.match(telaLogin, /useState\(""\)/);
   assert.match(telaLogin, /placeholder="Digite seu e-mail"/);
   assert.match(telaLogin, /Lembrar meu acesso/);
@@ -115,6 +120,12 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(telaPesagem, /metaAtingidaAgora/);
   assert.match(telaPesagem, /Cooperativa \/ associação/);
   assert.match(telaPesagem, /<Paginacao/);
+  assert.match(telaPesagem, /valor ainda não liberado/);
+  assert.match(telaPesagem, /Math\.max\(ganhoDiaDepois - Number\(metaAtual\?\.ganho/);
+  assert.match(telaConfiguracoes, /Responsáveis pela pesagem/);
+  assert.match(telaConfiguracoes, /\/api\/responsaveis-pesagem\?incluirInativos=true/);
+  assert.match(servidor, /aplicacao\.post\("\/api\/responsaveis-pesagem"/);
+  assert.match(servidor, /recalcularPagamentoMetaDiaria/);
   assert.match(telaCatadores, /PerfilCatador/);
   assert.match(telaCatadores, /caixa\/\$\{acao\}/);
   assert.match(telaCatadores, /<Paginacao/);

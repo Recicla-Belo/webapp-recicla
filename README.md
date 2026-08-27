@@ -9,9 +9,10 @@ WebApp responsivo para gestão de cooperativas de reciclagem, catadores, produç
 - cadastro e edição de catadores em etapas, com CPF mascarado, nome como identificação mínima, demais dados opcionais, múltiplos contatos, endereço assistido por CEP e foto opcional;
 - pagamento opcional por Pix ou conta bancária; ao habilitá-lo, o sistema exige os dados necessários para o recebimento e, quando a conta é de terceiro, nome e CPF do titular;
 - cooperativas e associações com responsável e vínculo de catadores;
-- pesagem guiada com confirmação final em modal, código e nome do catador, ponto, material, peso, data e hora, status e cálculo proporcional do valor;
+- pesagem guiada com confirmação final em modal, código e nome do catador, ponto, material, peso, data e hora, status e cálculo acumulado da meta diária;
 - materiais configuráveis por unidade, quantidade de referência, valor e situação ativa/inativa;
-- meta diária configurável por material, progresso individual por catador e comemoração ao atingir a meta;
+- meta diária configurável por material, progresso individual acumulado por catador e comemoração ao atingir a meta;
+- cadastro, edição, ativação e exclusão lógica dos responsáveis pela pesagem, preservando os nomes utilizados no histórico;
 - caixa diário independente por catador, com fechamento que bloqueia novos lançamentos, reabertura justificada e trilha de auditoria;
 - atividade recente identificada com foto, código, nome e dados do catador, totais do caixa, pesagens, correções e motivo de reabertura;
 - ficha completa do catador com contatos, endereço, meios de pagamento, histórico, ganhos por material, metas e caixas;
@@ -133,7 +134,7 @@ As tabelas e colunas usam nomes claros em português do Brasil. A estrutura cobr
 
 Notificações ligadas a registros removidos são eliminadas pelas rotas de exclusão e por uma migração de saneamento. A consulta também ignora referências órfãs, evitando que uma instalação sem catadores ou pesagens exiba avisos antigos.
 
-O pagamento é calculado exclusivamente pelo backend com o preço e a quantidade de referência vigentes no material. A meta não retira o pagamento do peso anterior: ela acompanha o objetivo diário e, depois de atingida, cada novo lançamento continua sendo pago normalmente conforme o material. O valor e a meta são gravados como fotografia histórica na pesagem para que mudanças futuras de configuração não alterem lançamentos já realizados.
+O pagamento é calculado exclusivamente pelo backend, dentro da mesma transação que registra a pesagem. Quando existe meta, lançamentos abaixo dela ficam com valor zero; ao atingir a meta acumulada do dia e material, o sistema libera o valor proporcional de todo o peso acumulado. Depois disso, cada novo lançamento continua sendo pago. Uma meta igual a zero significa pagamento imediato, sem meta. O valor e a configuração usada ficam preservados na pesagem e no livro-caixa auditável.
 
 O SQL único e completo está em `servidor/sql/recicla-belo-completo.sql`. Ele contém extensões, tipos, tabelas, chaves estrangeiras, restrições, índices de busca textual e dados iniciais. Para regenerá-lo após novas migrações, execute `npm run sql:gerar`.
 
