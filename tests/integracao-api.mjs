@@ -42,6 +42,27 @@ async function executar() {
   cookie = (login.resposta.headers.get("set-cookie") ?? "").split(";", 1)[0];
   assert.ok(cookie.startsWith("reciclabelo_sessao="));
   assert.equal((await chamar("/api/autenticacao/sessao")).dados.autenticado, true);
+  const perfilAdministrador = (await chamar("/api/administrador/perfil")).dados;
+  assert.equal(perfilAdministrador.email, process.env.ADMIN_EMAIL);
+  const perfilConfirmado = (await chamar("/api/administrador/perfil", { method: "PATCH", body: JSON.stringify({ nome: perfilAdministrador.nome, email: perfilAdministrador.email, senhaAtual: process.env.ADMIN_SENHA }) })).dados;
+  assert.equal(perfilConfirmado.uuid, perfilAdministrador.uuid);
+  const senhaTemporariaAdministrador = `Temporaria!${Date.now()}Aa`;
+  let senhaTemporariaAtiva = false;
+  try {
+    const alteracaoSenha = await chamar("/api/administrador/senha", { method: "PATCH", body: JSON.stringify({ senhaAtual: process.env.ADMIN_SENHA, novaSenha: senhaTemporariaAdministrador }) });
+    cookie = (alteracaoSenha.resposta.headers.get("set-cookie") ?? "").split(";", 1)[0];
+    senhaTemporariaAtiva = true;
+    assert.equal(alteracaoSenha.dados.alterada, true);
+    assert.equal((await chamar("/api/autenticacao/sessao")).dados.autenticado, true);
+    const restauracaoSenha = await chamar("/api/administrador/senha", { method: "PATCH", body: JSON.stringify({ senhaAtual: senhaTemporariaAdministrador, novaSenha: process.env.ADMIN_SENHA }) });
+    cookie = (restauracaoSenha.resposta.headers.get("set-cookie") ?? "").split(";", 1)[0];
+    senhaTemporariaAtiva = false;
+  } finally {
+    if (senhaTemporariaAtiva) {
+      const restauracao = await chamar("/api/administrador/senha", { method: "PATCH", body: JSON.stringify({ senhaAtual: senhaTemporariaAdministrador, novaSenha: process.env.ADMIN_SENHA }) });
+      cookie = (restauracao.resposta.headers.get("set-cookie") ?? "").split(";", 1)[0];
+    }
+  }
 
   const enderecoCep = (await chamar("/api/enderecos/cep/30110000")).dados;
   assert.equal(enderecoCep.cidade, "Belo Horizonte");
@@ -317,6 +338,8 @@ async function executar() {
       if (responsavelUuid) await cliente.query("DELETE FROM responsaveis_pesagem WHERE uuid=$1", [responsavelUuid]);
       await cliente.query("UPDATE configuracoes_meta_geral SET ativa=$1,meta_diaria=$2,unidade=$3,atualizado_em=now() WHERE chave='principal'", [configuracaoMetaOriginal.ativa, configuracaoMetaOriginal.meta_diaria, configuracaoMetaOriginal.unidade]);
       await cliente.query("DELETE FROM auditoria WHERE entidade='configuracoes_meta_geral' AND criado_em >= $1", [inicioTeste]);
+      await cliente.query("DELETE FROM notificacoes WHERE entidade='usuarios' AND entidade_uuid=$1 AND criado_em >= $2", [perfilAdministrador.uuid, inicioTeste]);
+      await cliente.query("DELETE FROM auditoria WHERE entidade='usuarios' AND entidade_uuid=$1 AND criado_em >= $2", [perfilAdministrador.uuid, inicioTeste]);
       await cliente.query("COMMIT");
     } catch (falha) {
       await cliente.query("ROLLBACK");
@@ -328,4 +351,4 @@ async function executar() {
 }
 
 await executar();
-console.log("Integração concluída: meta geral e por material, detalhamento financeiro, buscas parciais, status de catadores, caixa, auditoria, relatórios e notificações.");
+console.log("Integração concluída: conta administrativa, revogação de sessões, metas, buscas, status, caixa, auditoria, relatórios e notificações.");

@@ -3,13 +3,13 @@
 /* eslint-disable jsx-a11y/label-has-associated-control, @next/next/no-img-element -- controles compostos usam associação explícita e as imagens configuráveis podem ser data URLs locais */
 
 import { useCallback, useEffect, useState, type ChangeEvent } from "react";
-import { Pencil, Plus, Trash2 } from "lucide-react";
-import { requisitarApi, type ConfiguracaoMetaGeralApi, type MaterialApi, type ResponsavelPesagemApi } from "@/app/dados/api";
+import { KeyRound, Pencil, Plus, ShieldCheck, Trash2, UserRound, X } from "lucide-react";
+import { requisitarApi, type AdministradorApi, type ConfiguracaoMetaGeralApi, type MaterialApi, type ResponsavelPesagemApi } from "@/app/dados/api";
 import { useIdentidadeVisual, type IdentidadeVisual } from "@/app/configuracao/identidade-visual";
 import { ModalConfirmacao } from "@/app/componentes/modal-confirmacao";
 import { Paginacao } from "@/app/componentes/paginacao";
 
-type AbaConfiguracao = "materiais" | "responsaveis" | "identidade";
+type AbaConfiguracao = "materiais" | "responsaveis" | "identidade" | "conta";
 
 async function lerImagem(evento: ChangeEvent<HTMLInputElement>) {
   const arquivo = evento.target.files?.[0];
@@ -24,7 +24,7 @@ async function lerImagem(evento: ChangeEvent<HTMLInputElement>) {
   });
 }
 
-export function TelaConfiguracoes() {
+export function TelaConfiguracoes({ administrador, onAdministradorAtualizado }: { administrador: AdministradorApi; onAdministradorAtualizado: (administrador: AdministradorApi) => void }) {
   const [aba, setAba] = useState<AbaConfiguracao>("materiais");
   const [materiais, setMateriais] = useState<MaterialApi[]>([]);
   const [modal, setModal] = useState(false);
@@ -42,6 +42,10 @@ export function TelaConfiguracoes() {
   const [confirmacaoExclusao, setConfirmacaoExclusao] = useState<{ tipo: "material" | "responsavel"; item: MaterialApi | ResponsavelPesagemApi } | null>(null);
   const [paginaMateriais, setPaginaMateriais] = useState(1);
   const [paginaResponsaveis, setPaginaResponsaveis] = useState(1);
+  const [modoConta, setModoConta] = useState<"nenhum" | "dados" | "senha">("nenhum");
+  const [dadosConta, setDadosConta] = useState({ nome: administrador.nome, email: administrador.email, senhaAtual: "" });
+  const [dadosSenha, setDadosSenha] = useState({ senhaAtual: "", novaSenha: "", confirmarSenha: "" });
+  const [salvandoConta, setSalvandoConta] = useState(false);
   const itensPorPagina = 6;
   const carregarMateriais = useCallback(async () => { try { const dados = await requisitarApi<{ dados: MaterialApi[] }>("/api/materiais"); setMateriais(dados.dados); } catch (erro) { setMensagem(erro instanceof Error ? erro.message : "Não foi possível carregar os materiais."); } }, []);
   const carregarResponsaveis = useCallback(async () => { try { const dados = await requisitarApi<{ dados: ResponsavelPesagemApi[] }>("/api/responsaveis-pesagem?incluirInativos=true"); setResponsaveis(dados.dados); } catch (erro) { setMensagem(erro instanceof Error ? erro.message : "Não foi possível carregar os responsáveis."); } }, []);
@@ -136,6 +140,41 @@ export function TelaConfiguracoes() {
     window.location.reload();
   }
 
+  function cancelarConta() {
+    setModoConta("nenhum");
+    setDadosConta({ nome: administrador.nome, email: administrador.email, senhaAtual: "" });
+    setDadosSenha({ senhaAtual: "", novaSenha: "", confirmarSenha: "" });
+    setMensagem("");
+  }
+
+  async function salvarDadosConta() {
+    setMensagem("");
+    if (dadosConta.nome.trim().length < 2 || !dadosConta.email.includes("@") || !dadosConta.senhaAtual) { setMensagem("Preencha nome, e-mail e confirme com a senha atual."); return; }
+    setSalvandoConta(true);
+    try {
+      const perfil = await requisitarApi<AdministradorApi>("/api/administrador/perfil", { method: "PATCH", body: JSON.stringify(dadosConta) });
+      onAdministradorAtualizado(perfil);
+      setModoConta("nenhum");
+      setDadosConta({ nome: perfil.nome, email: perfil.email, senhaAtual: "" });
+      setMensagem("Dados da conta administrativa atualizados com segurança.");
+    } catch (erro) { setMensagem(erro instanceof Error ? erro.message : "Não foi possível atualizar a conta."); }
+    finally { setSalvandoConta(false); }
+  }
+
+  async function salvarSenhaConta() {
+    setMensagem("");
+    if (dadosSenha.novaSenha.length < 12) { setMensagem("A nova senha deve ter pelo menos 12 caracteres."); return; }
+    if (dadosSenha.novaSenha !== dadosSenha.confirmarSenha) { setMensagem("A confirmação não corresponde à nova senha."); return; }
+    setSalvandoConta(true);
+    try {
+      await requisitarApi("/api/administrador/senha", { method: "PATCH", body: JSON.stringify({ senhaAtual: dadosSenha.senhaAtual, novaSenha: dadosSenha.novaSenha }) });
+      setModoConta("nenhum");
+      setDadosSenha({ senhaAtual: "", novaSenha: "", confirmarSenha: "" });
+      setMensagem("Senha alterada. As outras sessões da conta foram revogadas.");
+    } catch (erro) { setMensagem(erro instanceof Error ? erro.message : "Não foi possível alterar a senha."); }
+    finally { setSalvandoConta(false); }
+  }
+
   const materiaisPaginados = materiais.slice((paginaMateriais - 1) * itensPorPagina, paginaMateriais * itensPorPagina);
   const responsaveisPaginados = responsaveis.slice((paginaResponsaveis - 1) * itensPorPagina, paginaResponsaveis * itensPorPagina);
 
@@ -144,10 +183,20 @@ export function TelaConfiguracoes() {
       <button className={aba === "materiais" ? "ativo" : ""} onClick={() => setAba("materiais")} role="tab" aria-selected={aba === "materiais"}>Materiais</button>
       <button className={aba === "responsaveis" ? "ativo" : ""} onClick={() => setAba("responsaveis")} role="tab" aria-selected={aba === "responsaveis"}>Responsáveis pela pesagem</button>
       <button className={aba === "identidade" ? "ativo" : ""} onClick={() => setAba("identidade")} role="tab" aria-selected={aba === "identidade"}>Identidade visual</button>
+      <button className={aba === "conta" ? "ativo" : ""} onClick={() => { setAba("conta"); cancelarConta(); }} role="tab" aria-selected={aba === "conta"}>Conta do administrador</button>
       <button disabled title="Disponível em uma próxima etapa">Pontos de apoio</button>
     </div>
 
-    {aba === "identidade" ? <div className="painel-identidade">
+    {aba === "conta" ? <section className="painel conta-administrador">
+      <header className="cabecalho-conta"><span><ShieldCheck /></span><div><small>CONTA PROTEGIDA</small><h2>Administrador da plataforma</h2><p>Os campos permanecem bloqueados até você escolher o que deseja alterar.</p></div></header>
+      <div className="resumo-conta"><div><small>Nome</small><strong>{administrador.nome}</strong></div><div><small>E-mail de acesso</small><strong>{administrador.email}</strong></div><div><small>Nível de acesso</small><strong>Administrador único</strong></div></div>
+      {modoConta === "nenhum" ? <div className="acoes-conta"><button type="button" className="botao-secundario" onClick={() => { setModoConta("dados"); setMensagem(""); }}><UserRound /> Alterar nome ou e-mail</button><button type="button" className="botao-secundario" onClick={() => { setModoConta("senha"); setMensagem(""); }}><KeyRound /> Alterar senha</button></div> : <form className="formulario-conta" onSubmit={(evento) => evento.preventDefault()}>
+        <header><div><small>{modoConta === "dados" ? "DADOS DE ACESSO" : "SEGURANÇA"}</small><h3>{modoConta === "dados" ? "Alterar nome ou e-mail" : "Definir uma nova senha"}</h3></div><button type="button" onClick={cancelarConta} aria-label="Cancelar alteração"><X /></button></header>
+        {modoConta === "dados" ? <div className="grade-formulario"><label className="campo">Nome do administrador<input value={dadosConta.nome} maxLength={160} onChange={(evento) => setDadosConta((atual) => ({ ...atual, nome: evento.target.value }))} /></label><label className="campo">E-mail de acesso<input type="email" autoComplete="username" value={dadosConta.email} maxLength={254} onChange={(evento) => setDadosConta((atual) => ({ ...atual, email: evento.target.value }))} /></label><label className="campo campo-largo">Confirme com a senha atual<input type="password" autoComplete="current-password" value={dadosConta.senhaAtual} onChange={(evento) => setDadosConta((atual) => ({ ...atual, senhaAtual: evento.target.value }))} /></label></div> : <div className="grade-formulario"><label className="campo campo-largo">Senha atual<input type="password" autoComplete="current-password" value={dadosSenha.senhaAtual} onChange={(evento) => setDadosSenha((atual) => ({ ...atual, senhaAtual: evento.target.value }))} /></label><label className="campo">Nova senha<input type="password" autoComplete="new-password" minLength={12} maxLength={128} value={dadosSenha.novaSenha} onChange={(evento) => setDadosSenha((atual) => ({ ...atual, novaSenha: evento.target.value }))} /><small className="dica">Use pelo menos 12 caracteres.</small></label><label className="campo">Confirmar nova senha<input type="password" autoComplete="new-password" minLength={12} maxLength={128} value={dadosSenha.confirmarSenha} onChange={(evento) => setDadosSenha((atual) => ({ ...atual, confirmarSenha: evento.target.value }))} /></label></div>}
+        <footer><button type="button" className="botao-secundario" onClick={cancelarConta}>Cancelar</button><button type="button" className="botao-primario" disabled={salvandoConta} onClick={() => void (modoConta === "dados" ? salvarDadosConta() : salvarSenhaConta())}>{salvandoConta ? "Salvando..." : "Confirmar alteração"}</button></footer>
+      </form>}
+      {mensagem && <p className="mensagem-configuracao" role="status">{mensagem}</p>}
+    </section> : aba === "identidade" ? <div className="painel-identidade">
       <div className="resumo-pagina"><div><h2>Identidade da plataforma</h2><p>Altere nome, ícones e cores. A prévia é atualizada ao salvar.</p></div></div>
       <div className="grade-identidade">
         <form className="formulario-identidade" onSubmit={(evento) => evento.preventDefault()}>

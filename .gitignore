@@ -35,6 +35,7 @@ yarn-error.log*
 # dados locais e arquivos enviados
 /servidor/arquivos/
 /servidor/node_modules/
+/servidor/dist/
 
 # vercel
 .vercel

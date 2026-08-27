@@ -6,6 +6,7 @@ config({ path: new URL("../../../.env", import.meta.url).pathname.replace(/^\/(.
 const esquemaAmbiente = z.object({
   AMBIENTE: z.enum(["desenvolvimento", "teste", "producao"]).default("desenvolvimento"),
   CONFIAR_PROXY: z.enum(["true", "false"]).default("false"),
+  HOST_API: z.string().trim().min(1).max(255).regex(/^[a-zA-Z0-9.:_-]+$/).default("127.0.0.1"),
   PORTA_API: z.coerce.number().int().positive().default(3333),
   ORIGEM_FRONTEND: z.string().default("http://localhost:3000"),
   SEGREDO_JWT: z.string().min(32),

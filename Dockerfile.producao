@@ -1,0 +1,55 @@
+# syntax=docker/dockerfile:1.7
+FROM node:24-bookworm-slim AS dependencias
+WORKDIR /aplicacao
+COPY package.json package-lock.json ./
+COPY servidor/package.json servidor/package-lock.json ./servidor/
+RUN npm ci && npm --prefix servidor ci
+
+FROM dependencias AS construcao
+WORKDIR /aplicacao
+COPY . .
+ARG NEXT_PUBLIC_NOME_APLICACAO="Recicla Belô"
+ARG NEXT_PUBLIC_DESCRICAO_APLICACAO="Gestão que transforma"
+ARG NEXT_PUBLIC_ICONE_APLICACAO="/favicon.svg"
+ARG NEXT_PUBLIC_FAVICON="/favicon.svg"
+ARG NEXT_PUBLIC_COR_PRIMARIA="#167347"
+ARG NEXT_PUBLIC_COR_PRIMARIA_ESCURA="#075c37"
+ARG NEXT_PUBLIC_COR_FUNDO="#f5f7f6"
+ARG NEXT_PUBLIC_URL_API=""
+ENV NEXT_PUBLIC_NOME_APLICACAO=$NEXT_PUBLIC_NOME_APLICACAO \
+    NEXT_PUBLIC_DESCRICAO_APLICACAO=$NEXT_PUBLIC_DESCRICAO_APLICACAO \
+    NEXT_PUBLIC_ICONE_APLICACAO=$NEXT_PUBLIC_ICONE_APLICACAO \
+    NEXT_PUBLIC_FAVICON=$NEXT_PUBLIC_FAVICON \
+    NEXT_PUBLIC_COR_PRIMARIA=$NEXT_PUBLIC_COR_PRIMARIA \
+    NEXT_PUBLIC_COR_PRIMARIA_ESCURA=$NEXT_PUBLIC_COR_PRIMARIA_ESCURA \
+    NEXT_PUBLIC_COR_FUNDO=$NEXT_PUBLIC_COR_FUNDO \
+    NEXT_PUBLIC_URL_API=$NEXT_PUBLIC_URL_API
+RUN npm --prefix servidor run verificar \
+    && npm run lint \
+    && npm test \
+    && npm --prefix servidor run compilar
+
+FROM node:24-bookworm-slim AS frontend
+ENV NODE_ENV=production PORT=3000
+WORKDIR /aplicacao
+COPY --from=construcao /aplicacao/package.json /aplicacao/package-lock.json ./
+COPY --from=construcao /aplicacao/node_modules ./node_modules
+COPY --from=construcao /aplicacao/dist ./dist
+COPY --from=construcao /aplicacao/vite.config.ts ./vite.config.ts
+COPY --from=construcao /aplicacao/.openai ./.openai
+USER node
+EXPOSE 3000
+CMD ["npm", "run", "start", "--", "--hostname", "0.0.0.0", "--port", "3000"]
+
+FROM node:24-bookworm-slim AS api
+ENV NODE_ENV=production
+WORKDIR /aplicacao/servidor
+COPY --from=construcao /aplicacao/servidor/package.json /aplicacao/servidor/package-lock.json ./
+COPY --from=construcao /aplicacao/servidor/node_modules ./node_modules
+COPY --from=construcao /aplicacao/servidor/dist ./dist
+COPY --from=construcao /aplicacao/servidor/migracoes ./migracoes
+RUN mkdir -p /dados/arquivos && chown -R node:node /dados
+USER node
+EXPOSE 3333
+CMD ["npm", "run", "iniciar:producao"]
+

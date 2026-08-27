@@ -59,6 +59,10 @@ export type ConfiguracaoMetaGeralApi = {
   uuid: string; ativa: boolean; meta_diaria: number; unidade: string; atualizado_em: string;
 };
 
+export type AdministradorApi = {
+  uuid: string; nome: string; email: string; administrador: boolean;
+};
+
 export type ResponsavelPesagemApi = {
   uuid: string; nome: string; status: "ativo" | "inativo"; criado_em: string; atualizado_em: string;
 };

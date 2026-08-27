@@ -10,7 +10,7 @@ services:
       POSTGRES_USER: ${BANCO_USUARIO}
       POSTGRES_PASSWORD: ${BANCO_SENHA}
     ports:
-      - "${BANCO_PORTA:-5432}:5432"
+      - "127.0.0.1:${BANCO_PORTA:-5432}:5432"
     volumes:
       - dados_postgres:/var/lib/postgresql
       - ./servidor/migracoes:/docker-entrypoint-initdb.d:ro

@@ -23,6 +23,7 @@ WebApp responsivo para gestão de cooperativas de reciclagem, catadores, produç
 - tema claro/escuro, identidade visual configurável e layout responsivo para Android, iOS e desktop;
 - menu móvel com rolagem própria, áreas seguras do iPhone e proteção contra estouro horizontal da página;
 - API autenticada, PostgreSQL com UUID, auditoria, índices e pesquisa textual em português.
+- conta administrativa editável sob demanda: nome/e-mail e senha ficam ocultos até a ação escolhida, exigem a senha atual, geram auditoria e a troca de senha revoga as sessões anteriores.
 
 ## Arquitetura
 
@@ -110,12 +111,59 @@ npm run dev
 
 O comando encerra automaticamente um frontend anterior deste mesmo projeto que tenha ficado órfão, inicia o PostgreSQL, aguarda o banco ficar saudável, aplica migrações e seed, valida a API e só então inicia o novo frontend. Por padrão, o frontend abre em `http://localhost:3001` e a API em `http://localhost:3333`; a porta do frontend pode ser alterada por `PORTA_FRONTEND` no `.env`. Conflitos externos continuam sendo informados sem trocar a porta silenciosamente. `Ctrl+C` encerra frontend, backend e banco na ordem segura.
 
+## Instalação de produção em VPS
+
+Depois de clonar o repositório em uma VPS com Ubuntu, Debian, Fedora, Rocky Linux ou AlmaLinux, execute um único comando:
+
+```bash
+sudo bash scripts/instalar-producao.sh
+```
+
+O instalador solicita o domínio, o e-mail do certificado e, na primeira instalação, os dados administrativos. Também pode funcionar sem perguntas:
+
+```bash
+sudo bash scripts/instalar-producao.sh \
+  --dominio reciclabelo.vupi.us \
+  --email-certificado administrador@vupi.us \
+  --nao-interativo
+```
+
+O processo é idempotente e pode ser executado novamente após atualizações. Ele:
+
+1. instala ou repara Docker Compose, NGINX, Certbot e utilitários suportados;
+2. valida o domínio e gera segredos ausentes sem substituir credenciais existentes;
+3. escolhe portas locais livres na primeira instalação;
+4. constrói imagens isoladas, executando TypeScript, lint, build e testes antes de substituir os containers;
+5. mantém PostgreSQL e arquivos de catadores em volumes persistentes;
+6. não publica a porta do banco e vincula frontend/API somente ao endereço local da VPS;
+7. aplica somente migrações pendentes e cria o administrador somente quando ainda não existe;
+8. testa a saúde dos serviços, reinicia uma vez quando necessário e apresenta diagnóstico automático se continuar falhando;
+9. cria exclusivamente o virtual host do domínio informado, valida o NGINX e restaura a configuração anterior se ela for inválida;
+10. solicita e renova HTTPS pelo Let's Encrypt quando o DNS estiver disponível.
+
+O script não altera regras de firewall nem virtual hosts de outras aplicações. Se o DNS ainda não estiver propagado, mantém a aplicação em HTTP e pode ser executado novamente para concluir o certificado.
+
+Para atualizar uma instalação existente:
+
+```bash
+git pull --ff-only
+sudo bash scripts/instalar-producao.sh
+```
+
+Para diagnosticar manualmente:
+
+```bash
+docker compose -f docker-compose.producao.yml ps
+docker compose -f docker-compose.producao.yml logs --tail 100 api frontend banco
+sudo nginx -t
+```
+
 ## Acesso administrativo inicial
 
 - usuário: `admin@reciclabelo`
 - senha inicial: valor local de `ADMIN_SENHA` no arquivo `.env`
 
-Não existe tela pública de cadastro. A senha solicitada para o ambiente local fica somente no `.env` ignorado pelo Git. Troque `ADMIN_SENHA`, `SEGREDO_JWT` e as credenciais do banco antes de qualquer publicação. Execute novamente `npm --prefix servidor run seed` para atualizar a senha do administrador.
+Não existe tela pública de cadastro. A senha solicitada para o ambiente local fica somente no `.env` ignorado pelo Git. Em Configurações → Conta do administrador, o usuário autenticado pode alterar nome, e-mail ou senha confirmando a senha atual. Não execute o seed para trocar uma senha de produção: o seed é destinado apenas à preparação inicial e substituiria a senha pelo valor do `.env`.
 
 ## Variáveis de ambiente
 
@@ -152,6 +200,7 @@ As buscas de catadores, cooperativas, pesagens e relatórios usam `to_tsvector`,
 
 - senhas armazenadas apenas como hash bcrypt;
 - sessão JWT em cookie `HttpOnly`, `SameSite=Strict`, com emissor, público e algoritmo verificados;
+- versão de sessão conferida no banco, permitindo revogar todas as sessões anteriores após a troca da senha;
 - proteção automática de toda rota sob `/api/`, inclusive rotas adicionadas futuramente;
 - autorização administrativa conferida no banco em cada requisição autenticada;
 - limite global de requisições e limite reforçado contra força bruta no login;

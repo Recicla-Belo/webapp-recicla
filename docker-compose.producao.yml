@@ -1,0 +1,87 @@
+name: recicla-belo-producao
+
+services:
+  banco:
+    image: postgres:18.6-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${BANCO_NOME}
+      POSTGRES_USER: ${BANCO_USUARIO}
+      POSTGRES_PASSWORD: ${BANCO_SENHA}
+    volumes:
+      - dados_postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${BANCO_USUARIO} -d ${BANCO_NOME}"]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+      start_period: 10s
+    shm_size: 128mb
+    networks: [interna]
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.producao
+      target: api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      AMBIENTE: producao
+      CONFIAR_PROXY: "true"
+      HOST_API: 0.0.0.0
+      PORTA_API: 3333
+      URL_BANCO: postgresql://${BANCO_USUARIO}:${BANCO_SENHA}@banco:5432/${BANCO_NOME}
+      BANCO_SSL: "false"
+      PASTA_ARQUIVOS: /dados/arquivos
+    ports:
+      - "127.0.0.1:${PORTA_API:-3333}:3333"
+    volumes:
+      - arquivos_catadores:/dados/arquivos
+    depends_on:
+      banco:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3333/saude').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    networks: [interna]
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.producao
+      target: frontend
+      args:
+        NEXT_PUBLIC_NOME_APLICACAO: "${NEXT_PUBLIC_NOME_APLICACAO:-Recicla Belô}"
+        NEXT_PUBLIC_DESCRICAO_APLICACAO: "${NEXT_PUBLIC_DESCRICAO_APLICACAO:-Gestão que transforma}"
+        NEXT_PUBLIC_ICONE_APLICACAO: "${NEXT_PUBLIC_ICONE_APLICACAO:-/favicon.svg}"
+        NEXT_PUBLIC_FAVICON: "${NEXT_PUBLIC_FAVICON:-/favicon.svg}"
+        NEXT_PUBLIC_COR_PRIMARIA: "${NEXT_PUBLIC_COR_PRIMARIA:-#167347}"
+        NEXT_PUBLIC_COR_PRIMARIA_ESCURA: "${NEXT_PUBLIC_COR_PRIMARIA_ESCURA:-#075c37}"
+        NEXT_PUBLIC_COR_FUNDO: "${NEXT_PUBLIC_COR_FUNDO:-#f5f7f6}"
+        NEXT_PUBLIC_URL_API: ""
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${PORTA_FRONTEND:-3101}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    networks: [interna]
+
+volumes:
+  dados_postgres:
+  arquivos_catadores:
+
+networks:
+  interna:
+    name: recicla_belo_interna
+    driver: bridge

@@ -9,6 +9,8 @@
   "scripts": {
     "desenvolver": "tsx src/principal.ts",
     "iniciar": "tsx src/principal.ts",
+    "iniciar:producao": "node dist/principal.js",
+    "compilar": "tsc -p tsconfig.producao.json",
     "verificar": "tsc --noEmit",
     "migrar": "tsx src/banco/migrar.ts",
     "seed": "tsx src/banco/seed.ts"

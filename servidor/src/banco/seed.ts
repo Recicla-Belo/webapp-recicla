@@ -12,6 +12,7 @@ async function executarSeed() {
        senha_hash = EXCLUDED.senha_hash,
        administrador = TRUE,
        ativo = TRUE,
+       versao_sessao = usuarios.versao_sessao + 1,
        atualizado_em = now()`,
     [ambiente.ADMIN_NOME, ambiente.ADMIN_EMAIL, senhaHash],
   );

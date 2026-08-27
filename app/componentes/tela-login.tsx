@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useIdentidadeVisual } from "@/app/configuracao/identidade-visual";
 import { MarcaPlataforma } from "./marca-plataforma";
+import type { AdministradorApi } from "@/app/dados/api";
 
 const CHAVE_EMAIL_LEMBRADO = "recicla-belo:email-lembrado";
 
@@ -20,7 +21,7 @@ function IconeOlho({ visivel }: { visivel: boolean }) {
   </svg>;
 }
 
-export function TelaLogin({ onAutenticado }: { onAutenticado: () => void }) {
+export function TelaLogin({ onAutenticado }: { onAutenticado: (usuario: AdministradorApi) => void }) {
   const { identidade } = useIdentidadeVisual();
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
@@ -57,11 +58,11 @@ export function TelaLogin({ onAutenticado }: { onAutenticado: () => void }) {
         credentials: "include",
         body: JSON.stringify({ email, senha }),
       });
-      const dados = await resposta.json() as { autenticado?: boolean; mensagem?: string };
-      if (!resposta.ok || !dados.autenticado) throw new Error(dados.mensagem ?? "Não foi possível entrar.");
+      const dados = await resposta.json() as { autenticado?: boolean; usuario?: AdministradorApi; mensagem?: string };
+      if (!resposta.ok || !dados.autenticado || !dados.usuario) throw new Error(dados.mensagem ?? "Não foi possível entrar.");
       if (lembrarAcesso) window.localStorage.setItem(CHAVE_EMAIL_LEMBRADO, email.trim().toLowerCase());
       else window.localStorage.removeItem(CHAVE_EMAIL_LEMBRADO);
-      onAutenticado();
+      onAutenticado(dados.usuario);
     } catch (falha) {
       setErro(falha instanceof Error ? falha.message : "Não foi possível entrar. Verifique a inicialização da aplicação.");
     } finally {

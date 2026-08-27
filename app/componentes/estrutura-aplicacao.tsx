@@ -31,7 +31,7 @@ import { TelaRelatorios } from "./tela-relatorios";
 import { TelaConfiguracoes } from "./tela-configuracoes";
 import { TelaLogin } from "./tela-login";
 import { MarcaPlataforma } from "./marca-plataforma";
-import { requisitarApi, type NotificacaoApi } from "@/app/dados/api";
+import { requisitarApi, type AdministradorApi, type NotificacaoApi } from "@/app/dados/api";
 
 const itens: Array<{ pagina: Pagina; rotulo: string; icone: LucideIcon }> = [
   { pagina: "painel", rotulo: "Visão geral", icone: LayoutDashboard },
@@ -75,6 +75,7 @@ export function EstruturaAplicacao() {
   const [pagina, setPagina] = useState<Pagina>("painel");
   const [escuro, setEscuro] = useState(false);
   const [autenticado, setAutenticado] = useState<boolean | null>(null);
+  const [administrador, setAdministrador] = useState<AdministradorApi | null>(null);
   const [notificacoesAbertas, setNotificacoesAbertas] = useState(false);
   const [notificacoes, setNotificacoes] = useState<NotificacaoApi[]>([]);
   const [erroNotificacoes, setErroNotificacoes] = useState("");
@@ -125,10 +126,10 @@ export function EstruturaAplicacao() {
   useEffect(() => {
     const temaSalvo = window.localStorage.getItem("reciclabelo-tema");
     setEscuro(temaSalvo === "escuro");
-    void requisitarApi<{ autenticado: boolean }>("/api/autenticacao/sessao")
-      .then((dados) => setAutenticado(dados.autenticado === true))
-      .catch(() => setAutenticado(false));
-    const expirar = () => setAutenticado(false);
+    void requisitarApi<{ autenticado: boolean; usuario?: AdministradorApi }>("/api/autenticacao/sessao")
+      .then((dados) => { setAutenticado(dados.autenticado === true); setAdministrador(dados.usuario ?? null); })
+      .catch(() => { setAutenticado(false); setAdministrador(null); });
+    const expirar = () => { setAutenticado(false); setAdministrador(null); };
     window.addEventListener("reciclabelo:sessao-expirada", expirar);
     return () => window.removeEventListener("reciclabelo:sessao-expirada", expirar);
   }, []);
@@ -156,7 +157,8 @@ export function EstruturaAplicacao() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function autenticar() {
+  function autenticar(usuario: AdministradorApi) {
+    setAdministrador(usuario);
     setAutenticado(true);
   }
 
@@ -220,6 +222,7 @@ export function EstruturaAplicacao() {
 
   async function sair() {
     await requisitarApi<void>("/api/autenticacao/sair", { method: "POST", body: "{}" }).catch(() => undefined);
+    setAdministrador(null);
     setAutenticado(false);
   }
 
@@ -249,7 +252,7 @@ export function EstruturaAplicacao() {
           ))}
         </nav>
         <div className="apoio-menu"><span><LifeBuoy aria-hidden="true" /></span><div><strong>Precisa de ajuda?</strong><small>Acesse o guia do sistema</small></div></div>
-        <button className="usuario" type="button" onClick={sair} title="Sair do sistema"><span>AD</span><div><strong>Administrador</strong><small>admin@reciclabelo</small></div><LogOut aria-hidden="true" /></button>
+        <button className="usuario" type="button" onClick={sair} title="Sair do sistema"><span>{(administrador?.nome ?? "Administrador").split(/\s+/).slice(0, 2).map((parte) => parte[0]).join("").toUpperCase()}</span><div><strong>{administrador?.nome ?? "Administrador"}</strong><small>{administrador?.email ?? "Conta administrativa"}</small></div><LogOut aria-hidden="true" /></button>
         </div>
       </aside>
 
@@ -280,7 +283,7 @@ export function EstruturaAplicacao() {
         {pagina === "cooperativas" && <TelaCooperativas />}
         {pagina === "pesagem" && <TelaPesagem />}
         {pagina === "relatorios" && <TelaRelatorios />}
-        {pagina === "configuracoes" && <TelaConfiguracoes />}
+        {pagina === "configuracoes" && administrador && <TelaConfiguracoes administrador={administrador} onAdministradorAtualizado={setAdministrador} />}
       </section>
     </main>
   );

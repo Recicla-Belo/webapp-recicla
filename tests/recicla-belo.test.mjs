@@ -24,7 +24,7 @@ test("renderiza a experiência do Recicla Belô", async () => {
 });
 
 test("mantém ambiente, banco e instalação documentados", async () => {
-  const [exemplo, estilos, migracao, migracaoNotificacoes, migracaoAuditoria, migracaoCaixas, migracaoLimpeza, migracaoNotificacoesOrfas, migracaoPagamentoMeta, migracaoMetaGeral, sqlCompleto, instalador, supervisor, servidor, estrutura, api, painel, telaLogin, telaPesagem, telaCatadores, telaCooperativas, telaRelatorios, telaConfiguracoes, paginacao, leiaMe, pacote] = await Promise.all([
+  const [exemplo, estilos, migracao, migracaoNotificacoes, migracaoAuditoria, migracaoCaixas, migracaoLimpeza, migracaoNotificacoesOrfas, migracaoPagamentoMeta, migracaoMetaGeral, migracaoSessao, sqlCompleto, instalador, instaladorProducao, composeProducao, dockerfileProducao, supervisor, servidor, estrutura, api, painel, telaLogin, telaPesagem, telaCatadores, telaCooperativas, telaRelatorios, telaConfiguracoes, paginacao, leiaMe, pacote] = await Promise.all([
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/001_estrutura_inicial.sql", import.meta.url), "utf8"),
@@ -35,8 +35,12 @@ test("mantém ambiente, banco e instalação documentados", async () => {
     readFile(new URL("../servidor/migracoes/010_limpa_notificacoes_orfas.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/011_pagamento_por_meta_e_responsaveis.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/012_meta_geral_catadores_e_busca_prefixada.sql", import.meta.url), "utf8"),
+    readFile(new URL("../servidor/migracoes/013_seguranca_sessao_administrador.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/sql/recicla-belo-completo.sql", import.meta.url), "utf8"),
     readFile(new URL("../scripts/instalar-e-iniciar.sh", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/instalar-producao.sh", import.meta.url), "utf8"),
+    readFile(new URL("../docker-compose.producao.yml", import.meta.url), "utf8"),
+    readFile(new URL("../Dockerfile.producao", import.meta.url), "utf8"),
     readFile(new URL("../scripts/desenvolver.mjs", import.meta.url), "utf8"),
     readFile(new URL("../servidor/src/principal.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/componentes/estrutura-aplicacao.tsx", import.meta.url), "utf8"),
@@ -55,6 +59,7 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(exemplo, /NEXT_PUBLIC_COR_PRIMARIA/);
   assert.match(exemplo, /ADMIN_EMAIL/);
   assert.match(exemplo, /PORTA_FRONTEND/);
+  assert.match(exemplo, /HOST_API="127\.0\.0\.1"/);
   assert.match(estilos, /\.pagina-login\{width:100%;grid-template-columns:minmax\(0,1fr\);justify-items:center;align-items:center\}/);
   assert.match(exemplo, /NEXT_PUBLIC_ICONE_APLICACAO="\/favicon\.svg"/);
   assert.match(migracao, /gen_random_uuid\(\)/);
@@ -68,6 +73,8 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(migracaoCaixas, /CREATE TABLE IF NOT EXISTS caixas_catador/);
   assert.match(migracaoCaixas, /CREATE TABLE IF NOT EXISTS movimentacoes_caixa_catador/);
   assert.match(migracaoCaixas, /meta_diaria/);
+  assert.match(migracaoSessao, /versao_sessao/);
+  assert.match(sqlCompleto, /versao_sessao INTEGER/);
   assert.match(migracaoLimpeza, /NOT EXISTS/);
   assert.match(migracaoNotificacoesOrfas, /DELETE FROM notificacoes/);
   assert.match(migracaoNotificacoesOrfas, /caixas_catador/);
@@ -131,6 +138,11 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(telaConfiguracoes, /\/api\/responsaveis-pesagem\?incluirInativos=true/);
   assert.match(telaConfiguracoes, /\/api\/configuracoes\/meta-geral/);
   assert.match(telaConfiguracoes, /Meta geral diária/);
+  assert.match(telaConfiguracoes, /Conta do administrador/);
+  assert.match(telaConfiguracoes, /\/api\/administrador\/perfil/);
+  assert.match(telaConfiguracoes, /\/api\/administrador\/senha/);
+  assert.match(servidor, /alteracao_senha/);
+  assert.match(servidor, /versaoSessao/);
   assert.match(servidor, /aplicacao\.post\("\/api\/responsaveis-pesagem"/);
   assert.match(servidor, /recalcularPagamentoMetaDiaria/);
   assert.match(telaCatadores, /PerfilCatador/);
@@ -170,6 +182,13 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(servidor, /proximoCursor/);
   assert.equal(JSON.parse(pacote).dependencies["lucide-react"], "^1.33.0");
   assert.equal(JSON.parse(pacote).scripts.dev, "node scripts/desenvolver.mjs");
+  assert.match(instaladorProducao, /--dominio/);
+  assert.match(instaladorProducao, /nginx -t/);
+  assert.match(instaladorProducao, /Conta administrativa existente preservada/);
+  assert.match(composeProducao, /127\.0\.0\.1:\$\{PORTA_API/);
+  assert.doesNotMatch(composeProducao, /BANCO_PORTA[^\n]*:5432/);
+  assert.match(dockerfileProducao, /npm run lint/);
+  assert.match(dockerfileProducao, /npm test/);
   assert.match(leiaMe, /PostgreSQL 18\.6/);
   await access(new URL("../public/og.png", import.meta.url));
   await assert.rejects(access(new URL("../app/dados/demonstracao.ts", import.meta.url)));
