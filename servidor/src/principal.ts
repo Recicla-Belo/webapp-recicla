@@ -845,10 +845,33 @@ aplicacao.put("/api/responsaveis-pesagem/:uuid", async (requisicao, resposta) =>
 
 aplicacao.delete("/api/responsaveis-pesagem/:uuid", async (requisicao, resposta) => {
   const uuid = z.uuid().parse((requisicao.params as { uuid: string }).uuid);
-  const removido = await banco.query<{ nome: string }>("UPDATE responsaveis_pesagem SET status='inativo',atualizado_em=now() WHERE uuid=$1 AND status<>'inativo' RETURNING nome", [uuid]);
-  if (!removido.rows[0]) return resposta.code(404).send({ mensagem: "Responsável não encontrado ou já excluído." });
-  await registrarAuditoria(banco, requisicao.user.usuarioUuid, "exclusao_logica", "responsaveis_pesagem", uuid, { nome: removido.rows[0].nome }, requisicao.ip);
-  return resposta.code(204).send();
+  const cliente = await banco.connect();
+  try {
+    await cliente.query("BEGIN");
+    const responsavel = await cliente.query<{ nome: string }>("SELECT nome FROM responsaveis_pesagem WHERE uuid=$1 FOR UPDATE", [uuid]);
+    if (!responsavel.rows[0]) {
+      await cliente.query("ROLLBACK");
+      return resposta.code(404).send({ mensagem: "Responsável não encontrado." });
+    }
+    const pesagensPreservadas = await cliente.query(
+      `UPDATE pesagens
+       SET responsavel_outro=coalesce(nullif(responsavel_outro,''),$1),responsavel_pesagem_uuid=NULL,atualizado_em=now()
+       WHERE responsavel_pesagem_uuid=$2`,
+      [responsavel.rows[0].nome, uuid],
+    );
+    await cliente.query("DELETE FROM responsaveis_pesagem WHERE uuid=$1", [uuid]);
+    await registrarAuditoria(cliente, requisicao.user.usuarioUuid, "exclusao_definitiva", "responsaveis_pesagem", uuid, {
+      nome: responsavel.rows[0].nome,
+      pesagensComHistoricoPreservado: pesagensPreservadas.rowCount ?? 0,
+    }, requisicao.ip);
+    await cliente.query("COMMIT");
+    return resposta.code(204).send();
+  } catch (erro) {
+    await cliente.query("ROLLBACK");
+    throw erro;
+  } finally {
+    cliente.release();
+  }
 });
 
 aplicacao.get("/api/enderecos/cep/:cep", async (requisicao, resposta) => {

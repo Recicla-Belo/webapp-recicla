@@ -141,3 +141,15 @@ html,body{max-width:100%;overflow-x:hidden}.aplicacao,.conteudo,.pagina-interna,
 @media(min-width:821px){.aplicacao{align-items:stretch}.barra-lateral{position:relative;top:auto;height:auto;min-height:100dvh;max-height:none;align-self:stretch;padding:0;overflow:clip}.conteudo-barra-lateral{position:sticky;top:0;display:flex;flex-direction:column;width:100%;height:100dvh;padding:28px 22px 24px;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.38) transparent}.conteudo-barra-lateral::-webkit-scrollbar{width:7px}.conteudo-barra-lateral::-webkit-scrollbar-thumb{background:rgba(255,255,255,.38);border-radius:99px}}
 @media(min-width:821px) and (max-width:1400px){.conteudo-barra-lateral{padding-inline:18px}}
 @media(max-width:820px){.conteudo-barra-lateral{display:block;width:100%;height:100%;padding:0;overflow:visible}}
+
+/* Ações dos materiais permanecem visíveis e tocáveis em qualquer largura. */
+.lista-materiais article{grid-template-columns:58px minmax(140px,1.2fr) minmax(180px,1.4fr) auto auto}
+.acoes-material{display:flex!important;align-items:center;justify-content:flex-end;gap:7px;min-width:max-content}
+.acoes-material .menu-acoes{width:44px;height:44px;border:1px solid var(--borda);background:var(--cartao);display:grid;place-items:center}
+.acoes-material .menu-acoes.editar{color:var(--verde)}.acoes-material .menu-acoes.perigoso{color:#b43d35}
+.acoes-material .menu-acoes svg{width:20px;height:20px}
+@media(max-width:1000px) and (min-width:821px){.lista-materiais article{grid-template-columns:52px minmax(0,1fr) minmax(170px,1fr) auto}.lista-materiais article>.status{display:none}.acoes-material{grid-column:4;grid-row:1}}
+@media(max-width:820px){.lista-materiais article{grid-template-columns:52px minmax(0,1fr) auto!important}.lista-materiais article>div:nth-child(3),.lista-materiais article>.status{grid-column:2}.acoes-material{grid-column:3!important;grid-row:1/-1!important;align-self:center;display:grid!important}.acoes-material .menu-acoes{grid-column:auto!important;grid-row:auto!important}}
+
+/* Em celulares estreitos, o título usa uma linha própria e nunca é abreviado. */
+@media(max-width:620px){.cabecalho{display:grid;grid-template-columns:minmax(0,1fr);align-content:center;align-items:center;gap:12px;min-height:0;padding-block:16px;margin-bottom:18px}.titulo-cabecalho{width:100%}.titulo-cabecalho h1{max-width:none;white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}.acoes-cabecalho{width:100%;justify-content:flex-end}.acoes-cabecalho .botao-icone{width:46px;height:46px}.botao-nova-pesagem{width:48px;min-width:48px}}

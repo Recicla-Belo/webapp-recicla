@@ -251,7 +251,9 @@ async function executar() {
 
     await chamar(`/api/responsaveis-pesagem/${responsavelUuid}`, { method: "DELETE" });
     assert.equal((await chamar("/api/responsaveis-pesagem")).dados.dados.some((item) => item.uuid === responsavelUuid), false);
-    assert.equal((await chamar("/api/responsaveis-pesagem?incluirInativos=true")).dados.dados.find((item) => item.uuid === responsavelUuid)?.status, "inativo");
+    assert.equal((await chamar("/api/responsaveis-pesagem?incluirInativos=true")).dados.dados.some((item) => item.uuid === responsavelUuid), false);
+    const historicoComResponsavelExcluido = (await chamar(`/api/relatorios/pesagens?catadorUuid=${catadorUuid}`)).dados.dados;
+    assert.ok(historicoComResponsavelExcluido.some((item) => item.responsavel === `Responsável Editado ${sufixo}`));
 
     materialSemMetaUuid = (await chamar("/api/materiais", { method: "POST", body: JSON.stringify({ nome: `Sem meta ${sufixo}`, tipoMaterial: "Teste", unidade: "kg", quantidadeReferencia: 1, valorReferencia: 2, metaDiaria: 0, ativo: true }) })).dados.uuid;
     entidadesCriadas.add(materialSemMetaUuid);

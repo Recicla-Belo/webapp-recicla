@@ -123,8 +123,8 @@ export function TelaPesagem() {
     finally { setSalvando(false); }
   }
 
-  function reiniciar() {
-    setEtapa(0); setCatadorUuid(""); setCatadorSelecionado(null); setBuscaCatador(""); setMaterialUuid(""); setMetas([]); setMetaGeral(null); setCaixa(null);
+  function iniciarProximaPesagem() {
+    setEtapa(1); setCatadorUuid(""); setCatadorSelecionado(null); setBuscaCatador(""); setMaterialUuid(""); setMetas([]); setMetaGeral(null); setCaixa(null);
     setPeso(""); setObservacao(""); setDataHora(dataHoraLocalAtual()); setStatus("concluida"); setRegistro(null);
   }
 
@@ -134,7 +134,7 @@ export function TelaPesagem() {
     <h2>{registro.metaAtingidaAgora ? `${catador?.nome_completo} bateu a meta!` : "Pesagem registrada com sucesso!"}</h2>
     <p>Registro <strong>{registro.codigo}</strong> salvo como <strong>{rotulosStatus[status]}</strong>.</p>
     {registro.progressoMetaGeral?.ativa ? <div className="placar-meta"><strong>{registro.progressoMetaGeral.peso.toLocaleString("pt-BR")} {registro.progressoMetaGeral.unidade} de {registro.progressoMetaGeral.meta.toLocaleString("pt-BR")} {registro.progressoMetaGeral.unidade} na meta geral</strong>{registro.progressoMetaGeral.atingida ? <><span>Total liberado: {dinheiro(registro.progressoMetaGeral.valorLiberado)}</span><DetalhesPagamento detalhes={registro.progressoMetaGeral.detalhes} /></> : <span>Valores sujeitos ao atingimento da meta geral.</span>}</div> : registro.progressoMeta && <div className="placar-meta"><strong>{registro.progressoMeta.peso.toLocaleString("pt-BR")} kg de {registro.progressoMeta.metaDiaria.toLocaleString("pt-BR")} kg</strong>{registro.progressoMeta.atingida ? <span>Total liberado neste material: {dinheiro(registro.progressoMeta.ganho)}</span> : <span>Valores sujeitos ao atingimento da meta.</span>}</div>}
-    <button type="button" className="botao-secundario" onClick={reiniciar}>Registrar outra pesagem</button>
+    <button type="button" className="botao-secundario" onClick={iniciarProximaPesagem}>Registrar outra pesagem</button>
   </div>;
 
   const podeContinuar = !((etapa === 0 && (!cooperativaUuid || !pontoUuid || !responsavelValido)) || (etapa === 1 && !catador) || (etapa === 2 && (!material || pesoNumero <= 0 || !dataHoraValida || caixaBloqueado)));
