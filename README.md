@@ -5,13 +5,14 @@ WebApp responsivo para gestão de cooperativas de reciclagem, catadores, produç
 ## Recursos disponíveis
 
 - painel com catadores ativos, total coletado, valor a pagar, média por catador e coletas realizadas;
-- paginação inteligente e responsiva no painel, catadores, cooperativas, pesagem/produção e relatórios, com totais calculados diretamente no PostgreSQL;
+- paginação inteligente e responsiva no painel, catadores, cooperativas, pesagem/produção, configurações, ficha do catador e relatórios, com totais calculados diretamente no PostgreSQL;
 - cadastro e edição de catadores em etapas, com CPF mascarado, nome como identificação mínima, demais dados opcionais, múltiplos contatos, endereço assistido por CEP e foto opcional;
 - pagamento opcional por Pix ou conta bancária; ao habilitá-lo, o sistema exige os dados necessários para o recebimento e, quando a conta é de terceiro, nome e CPF do titular;
 - cooperativas e associações com responsável e vínculo de catadores;
 - pesagem guiada com confirmação final em modal, código e nome do catador, ponto, material, peso, data e hora, status e cálculo acumulado da meta diária;
 - materiais configuráveis por unidade, quantidade de referência, valor e situação ativa/inativa;
-- meta diária configurável por material, progresso individual acumulado por catador e comemoração ao atingir a meta;
+- meta diária configurável por material e meta geral opcional que soma todos os materiais do caixa diário, com progresso individual, detalhamento financeiro por material e comemoração ao atingir o alvo;
+- ativação e inativação de catadores sem apagar seu cadastro ou histórico; catadores inativos não aparecem nem são aceitos em novas pesagens;
 - cadastro, edição, ativação e exclusão lógica dos responsáveis pela pesagem, preservando os nomes utilizados no histórico;
 - caixa diário independente por catador, com fechamento que bloqueia novos lançamentos, reabertura justificada e trilha de auditoria;
 - atividade recente identificada com foto, código, nome e dados do catador, totais do caixa, pesagens, correções e motivo de reabertura;
@@ -134,7 +135,7 @@ As tabelas e colunas usam nomes claros em português do Brasil. A estrutura cobr
 
 Notificações ligadas a registros removidos são eliminadas pelas rotas de exclusão e por uma migração de saneamento. A consulta também ignora referências órfãs, evitando que uma instalação sem catadores ou pesagens exiba avisos antigos.
 
-O pagamento é calculado exclusivamente pelo backend, dentro da mesma transação que registra a pesagem. Quando existe meta, lançamentos abaixo dela ficam com valor zero; ao atingir a meta acumulada do dia e material, o sistema libera o valor proporcional de todo o peso acumulado. Depois disso, cada novo lançamento continua sendo pago. Uma meta igual a zero significa pagamento imediato, sem meta. O valor e a configuração usada ficam preservados na pesagem e no livro-caixa auditável.
+O pagamento é calculado exclusivamente pelo backend, dentro da mesma transação que registra a pesagem. Quando a meta geral está ativa, ela prevalece e soma todos os materiais entregues pelo catador naquele caixa diário; nenhum valor é exibido ou contabilizado antes do alvo. Ao atingir a meta, o sistema libera o total acumulado e o detalha por material. Sem meta geral, cada material usa sua própria meta. Uma meta por material igual a zero significa pagamento imediato. A regra aplicada é congelada na abertura do caixa para preservar a auditoria, e edições ou exclusões recalculam todas as movimentações afetadas.
 
 O SQL único e completo está em `servidor/sql/recicla-belo-completo.sql`. Ele contém extensões, tipos, tabelas, chaves estrangeiras, restrições, índices de busca textual e dados iniciais. Para regenerá-lo após novas migrações, execute `npm run sql:gerar`.
 
@@ -145,7 +146,7 @@ npm --prefix servidor run migrar
 npm --prefix servidor run seed
 ```
 
-As buscas de catadores e cooperativas usam `to_tsvector`, `websearch_to_tsquery` e índices GIN. `LIKE` e `ILIKE` não são usados nas pesquisas principais.
+As buscas de catadores, cooperativas, pesagens e relatórios usam `to_tsvector`, consulta full-text por prefixos e índices GIN. Os resultados começam a aparecer durante a digitação, sem exigir o termo completo e sem usar `LIKE` ou `ILIKE` nas pesquisas principais.
 
 ## Segurança e privacidade
 

@@ -46,6 +46,19 @@ export type ProgressoMetaApi = {
   percentual: number; falta: number; atingida: boolean; sem_meta?: boolean;
 };
 
+export type DetalheMetaGeralApi = {
+  material_uuid: string; nome: string; unidade: string; peso: number; valor_bruto: number; valor_liberado: number;
+};
+
+export type MetaGeralApi = {
+  ativa: boolean; meta: number; unidade: string; peso: number; percentual: number; falta: number; atingida: boolean;
+  valorBruto: number; valorLiberado: number; detalhes: DetalheMetaGeralApi[];
+};
+
+export type ConfiguracaoMetaGeralApi = {
+  uuid: string; ativa: boolean; meta_diaria: number; unidade: string; atualizado_em: string;
+};
+
 export type ResponsavelPesagemApi = {
   uuid: string; nome: string; status: "ativo" | "inativo"; criado_em: string; atualizado_em: string;
 };

@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { requisitarApi, type CooperativaApi } from "@/app/dados/api";
 import { Paginacao } from "@/app/componentes/paginacao";
+import { ModalConfirmacao } from "@/app/componentes/modal-confirmacao";
+import { useTermoBusca } from "@/app/utilitarios/use-termo-busca";
 
 const formularioVazio = { nome: "", nomeResponsavel: "", telefone: "", observacao: "", ativa: true };
 
@@ -17,17 +19,19 @@ export function TelaCooperativas() {
   const [pagina, setPagina] = useState(1);
   const [itensPorPagina, setItensPorPagina] = useState(8);
   const [total, setTotal] = useState(0);
+  const [excluindo, setExcluindo] = useState<CooperativaApi | null>(null);
+  const termoBusca = useTermoBusca(busca);
 
   const carregar = useCallback(async () => {
     try {
-      const dados = await requisitarApi<{ dados: CooperativaApi[]; total: number }>(`/api/cooperativas?busca=${encodeURIComponent(busca)}&limite=${itensPorPagina}&deslocamento=${(pagina - 1) * itensPorPagina}`);
+      const dados = await requisitarApi<{ dados: CooperativaApi[]; total: number }>(`/api/cooperativas?busca=${encodeURIComponent(termoBusca)}&limite=${itensPorPagina}&deslocamento=${(pagina - 1) * itensPorPagina}`);
       setCooperativas(dados.dados);
       setTotal(dados.total);
       setErro("");
     } catch (falha) {
       setErro(falha instanceof Error ? falha.message : "Não foi possível carregar as cooperativas.");
     }
-  }, [busca, itensPorPagina, pagina]);
+  }, [itensPorPagina, pagina, termoBusca]);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void carregar(); }, [carregar]);
@@ -58,9 +62,9 @@ export function TelaCooperativas() {
   }
 
   async function excluir(item: CooperativaApi) {
-    if (!window.confirm(`Excluir ${item.nome}? Os catadores vinculados ficarão sem cooperativa.`)) return;
     try {
       await requisitarApi(`/api/cooperativas/${item.uuid}`, { method: "DELETE" });
+      setExcluindo(null);
       await carregar();
     } catch (falha) {
       setErro(falha instanceof Error ? falha.message : "Não foi possível excluir.");
@@ -80,7 +84,7 @@ export function TelaCooperativas() {
           <article className="cartao-cooperativa" key={item.uuid}>
             <header><span>{item.nome.slice(0, 2).toUpperCase()}</span><div className="acoes-cartao">
               <button type="button" className="menu-acoes" onClick={() => abrir(item)} aria-label={`Editar ${item.nome}`}><Pencil /></button>
-              <button type="button" className="menu-acoes perigoso" onClick={() => void excluir(item)} aria-label={`Excluir ${item.nome}`}><Trash2 /></button>
+              <button type="button" className="menu-acoes perigoso" onClick={() => setExcluindo(item)} aria-label={`Excluir ${item.nome}`}><Trash2 /></button>
             </div></header>
             <h3>{item.nome}</h3><p>Responsável</p><strong>{item.nome_responsavel}</strong>
             <div><span><b>{item.catadores_ativos}</b> catadores ativos</span><span>{item.telefone ?? "Sem telefone"}</span></div>
@@ -101,6 +105,7 @@ export function TelaCooperativas() {
         </form>
         <footer className="rodape-modal"><button type="button" className="botao-secundario" onClick={() => setModal(false)}>Cancelar</button><button type="button" className="botao-primario" onClick={() => void salvar()}>Salvar cooperativa</button></footer>
       </div></div>}
+      <ModalConfirmacao aberto={Boolean(excluindo)} titulo={`Excluir ${excluindo?.nome ?? "cooperativa"}?`} descricao="Os catadores vinculados ficarão sem cooperativa. Esta ação não poderá ser desfeita." textoConfirmar="Excluir cooperativa" perigoso aoFechar={() => setExcluindo(null)} aoConfirmar={() => excluindo && void excluir(excluindo)} />
     </section>
   );
 }

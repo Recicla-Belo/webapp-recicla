@@ -4,8 +4,10 @@
 
 import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 import { Pencil, Plus, Trash2 } from "lucide-react";
-import { requisitarApi, type MaterialApi, type ResponsavelPesagemApi } from "@/app/dados/api";
+import { requisitarApi, type ConfiguracaoMetaGeralApi, type MaterialApi, type ResponsavelPesagemApi } from "@/app/dados/api";
 import { useIdentidadeVisual, type IdentidadeVisual } from "@/app/configuracao/identidade-visual";
+import { ModalConfirmacao } from "@/app/componentes/modal-confirmacao";
+import { Paginacao } from "@/app/componentes/paginacao";
 
 type AbaConfiguracao = "materiais" | "responsaveis" | "identidade";
 
@@ -35,10 +37,17 @@ export function TelaConfiguracoes() {
   const { identidade, salvarIdentidade, restaurarIdentidade } = useIdentidadeVisual();
   const [edicao, setEdicao] = useState<IdentidadeVisual>(identidade);
   const [mensagem, setMensagem] = useState("");
+  const [metaGeral, setMetaGeral] = useState({ ativa: false, metaDiaria: "0", unidade: "kg" });
+  const [salvandoMetaGeral, setSalvandoMetaGeral] = useState(false);
+  const [confirmacaoExclusao, setConfirmacaoExclusao] = useState<{ tipo: "material" | "responsavel"; item: MaterialApi | ResponsavelPesagemApi } | null>(null);
+  const [paginaMateriais, setPaginaMateriais] = useState(1);
+  const [paginaResponsaveis, setPaginaResponsaveis] = useState(1);
+  const itensPorPagina = 6;
   const carregarMateriais = useCallback(async () => { try { const dados = await requisitarApi<{ dados: MaterialApi[] }>("/api/materiais"); setMateriais(dados.dados); } catch (erro) { setMensagem(erro instanceof Error ? erro.message : "Não foi possível carregar os materiais."); } }, []);
   const carregarResponsaveis = useCallback(async () => { try { const dados = await requisitarApi<{ dados: ResponsavelPesagemApi[] }>("/api/responsaveis-pesagem?incluirInativos=true"); setResponsaveis(dados.dados); } catch (erro) { setMensagem(erro instanceof Error ? erro.message : "Não foi possível carregar os responsáveis."); } }, []);
+  const carregarMetaGeral = useCallback(async () => { try { const dados = await requisitarApi<ConfiguracaoMetaGeralApi>("/api/configuracoes/meta-geral"); setMetaGeral({ ativa: dados.ativa, metaDiaria: String(dados.meta_diaria), unidade: dados.unidade }); } catch (erro) { setMensagem(erro instanceof Error ? erro.message : "Não foi possível carregar a meta geral."); } }, []);
   // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { void Promise.all([carregarMateriais(), carregarResponsaveis()]); }, [carregarMateriais, carregarResponsaveis]);
+  useEffect(() => { void Promise.all([carregarMateriais(), carregarResponsaveis(), carregarMetaGeral()]); }, [carregarMateriais, carregarMetaGeral, carregarResponsaveis]);
 
   function abrirMaterial(material?: MaterialApi) {
     setMaterialEdicao(material ?? null);
@@ -54,7 +63,6 @@ export function TelaConfiguracoes() {
   }
 
   async function excluirMaterial(material: MaterialApi) {
-    if (!window.confirm(`Excluir ${material.nome}?`)) return;
     try { await requisitarApi(`/api/materiais/${material.uuid}`, { method: "DELETE" }); await carregarMateriais(); }
     catch (erro) { setMensagem(erro instanceof Error ? erro.message : "Não foi possível excluir o material."); }
   }
@@ -73,9 +81,28 @@ export function TelaConfiguracoes() {
   }
 
   async function excluirResponsavel(responsavel: ResponsavelPesagemApi) {
-    if (!window.confirm(`Remover ${responsavel.nome} das novas pesagens? O histórico será preservado.`)) return;
     try { await requisitarApi(`/api/responsaveis-pesagem/${responsavel.uuid}`, { method: "DELETE" }); await carregarResponsaveis(); setMensagem("Responsável removido das novas pesagens."); }
     catch (erro) { setMensagem(erro instanceof Error ? erro.message : "Não foi possível excluir o responsável."); }
+  }
+
+  async function confirmarExclusao() {
+    if (!confirmacaoExclusao) return;
+    const { tipo, item } = confirmacaoExclusao;
+    setConfirmacaoExclusao(null);
+    if (tipo === "material") await excluirMaterial(item as MaterialApi);
+    else await excluirResponsavel(item as ResponsavelPesagemApi);
+  }
+
+  async function salvarMetaGeral() {
+    const valor = Number(metaGeral.metaDiaria.replace(",", "."));
+    if (!Number.isFinite(valor) || valor < 0 || (metaGeral.ativa && valor <= 0)) { setMensagem("Informe uma meta geral maior que zero para ativá-la."); return; }
+    setSalvandoMetaGeral(true); setMensagem("");
+    try {
+      await requisitarApi("/api/configuracoes/meta-geral", { method: "PUT", body: JSON.stringify({ ativa: metaGeral.ativa, metaDiaria: valor, unidade: metaGeral.unidade }) });
+      setMensagem("Meta geral atualizada. A alteração valerá para os próximos caixas diários abertos.");
+      await carregarMetaGeral();
+    } catch (erro) { setMensagem(erro instanceof Error ? erro.message : "Não foi possível salvar a meta geral."); }
+    finally { setSalvandoMetaGeral(false); }
   }
 
   function atualizar<K extends keyof IdentidadeVisual>(campo: K, valor: IdentidadeVisual[K]) {
@@ -108,6 +135,9 @@ export function TelaConfiguracoes() {
     restaurarIdentidade();
     window.location.reload();
   }
+
+  const materiaisPaginados = materiais.slice((paginaMateriais - 1) * itensPorPagina, paginaMateriais * itensPorPagina);
+  const responsaveisPaginados = responsaveis.slice((paginaResponsaveis - 1) * itensPorPagina, paginaResponsaveis * itensPorPagina);
 
   return <section className="pagina-interna configuracoes">
     <div className="abas-configuracao" role="tablist" aria-label="Configurações">
@@ -153,15 +183,19 @@ export function TelaConfiguracoes() {
     </div> : aba === "responsaveis" ? <div className="painel-responsaveis">
       <div className="resumo-pagina"><div><h2>Responsáveis pela pesagem</h2><p>Cadastre quem pode ser selecionado nas novas pesagens. Registros antigos permanecem preservados.</p></div><button className="botao-primario" onClick={() => abrirResponsavel()}><Plus /> Novo responsável</button></div>
       {mensagem && <p className="mensagem-configuracao" role="status">{mensagem}</p>}
-      <div className="lista-responsaveis">{responsaveis.length === 0 ? <p className="estado-vazio">Nenhum responsável cadastrado.</p> : responsaveis.map((responsavel) => <article key={responsavel.uuid}><span>{responsavel.nome.split(/\s+/).slice(0, 2).map((parte) => parte[0]).join("").toUpperCase()}</span><div><strong>{responsavel.nome}</strong><small>{responsavel.status === "ativo" ? "Disponível para novas pesagens" : "Removido das novas pesagens"}</small></div><em className={responsavel.status === "ativo" ? "status ativo" : "status"}>● {responsavel.status}</em><button className="botao-secundario" onClick={() => abrirResponsavel(responsavel)}><Pencil /> Editar</button><button className="menu-acoes perigoso" onClick={() => void excluirResponsavel(responsavel)} disabled={responsavel.status === "inativo"} aria-label={`Excluir ${responsavel.nome}`}><Trash2 /></button></article>)}</div>
+      <div className="lista-responsaveis">{responsaveis.length === 0 ? <p className="estado-vazio">Nenhum responsável cadastrado.</p> : responsaveisPaginados.map((responsavel) => <article key={responsavel.uuid}><span>{responsavel.nome.split(/\s+/).slice(0, 2).map((parte) => parte[0]).join("").toUpperCase()}</span><div><strong>{responsavel.nome}</strong><small>{responsavel.status === "ativo" ? "Disponível para novas pesagens" : "Removido das novas pesagens"}</small></div><em className={responsavel.status === "ativo" ? "status ativo" : "status"}>● {responsavel.status}</em><button className="botao-secundario" onClick={() => abrirResponsavel(responsavel)}><Pencil /> Editar</button><button className="menu-acoes perigoso" onClick={() => setConfirmacaoExclusao({ tipo: "responsavel", item: responsavel })} disabled={responsavel.status === "inativo"} aria-label={`Excluir ${responsavel.nome}`}><Trash2 /></button></article>)}</div>
+      <Paginacao pagina={paginaResponsaveis} total={responsaveis.length} itensPorPagina={itensPorPagina} aoMudarPagina={setPaginaResponsaveis} rotulo="responsáveis" />
     </div> : <>
       <div className="resumo-pagina"><div><h2>Materiais e valores</h2><p>Configurações armazenadas no PostgreSQL.</p></div><button className="botao-primario" onClick={() => abrirMaterial()}><Plus /> Novo material</button></div>
       {mensagem && <p className="mensagem-configuracao" role="status">{mensagem}</p>}
-      <div className="lista-materiais">{materiais.map((material) => <article key={material.uuid}><span className="amostra-material">{material.tipo_material.slice(0, 2).toUpperCase()}</span><div className="nome-material"><strong>{material.nome}</strong><small>{material.tipo_material} · {material.unidade.toUpperCase()}</small></div><div><small>Pagamento e meta diária</small><strong>{Number(material.valor_referencia).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} / {Number(material.quantidade_referencia)} {material.unidade} · {Number(material.meta_diaria) > 0 ? `Meta ${Number(material.meta_diaria)} ${material.unidade}` : "Sem meta"}</strong></div><span className={material.status === "ativo" ? "status ativo" : "status"}>● {material.status}</span><button className="botao-secundario" onClick={() => abrirMaterial(material)}><Pencil /> Editar</button><button className="menu-acoes perigoso" onClick={() => void excluirMaterial(material)} aria-label={`Excluir ${material.nome}`}><Trash2 /></button></article>)}</div>
-      <div className="nota-configuracao"><span>i</span><p><strong>Como o valor é calculado?</strong><br />Com meta, o valor fica zerado até o peso acumulado do dia atingir a meta; nesse momento, o total proporcional é liberado. Use meta 0 para pagamento imediato, sem meta.</p></div>
+      <section className="painel configuracao-meta-geral"><header><div><span>META FINANCEIRA PRINCIPAL</span><h3>Meta geral diária</h3><p>Quando ativa, soma todos os materiais do catador e prevalece sobre as metas específicas para liberar o pagamento.</p></div><label className="interruptor compacto"><input type="checkbox" checked={metaGeral.ativa} onChange={(evento) => setMetaGeral((atual) => ({ ...atual, ativa: evento.target.checked }))} /><span /><div><strong>{metaGeral.ativa ? "Meta geral ativa" : "Meta geral desativada"}</strong></div></label></header><div className="grade-formulario"><label className="campo">Quantidade diária<input inputMode="decimal" value={metaGeral.metaDiaria} onChange={(evento) => setMetaGeral((atual) => ({ ...atual, metaDiaria: evento.target.value }))} /></label><label className="campo">Unidade<select value={metaGeral.unidade} onChange={(evento) => setMetaGeral((atual) => ({ ...atual, unidade: evento.target.value }))}><option value="kg">kg</option></select></label><button type="button" className="botao-primario" onClick={() => void salvarMetaGeral()} disabled={salvandoMetaGeral}>{salvandoMetaGeral ? "Salvando..." : "Salvar meta geral"}</button></div><small>A configuração é congelada na abertura de cada caixa diário para preservar a auditoria. Caixas já abertos mantêm a regra original.</small></section>
+      <div className="lista-materiais">{materiaisPaginados.map((material) => <article key={material.uuid}><span className="amostra-material">{material.tipo_material.slice(0, 2).toUpperCase()}</span><div className="nome-material"><strong>{material.nome}</strong><small>{material.tipo_material} · {material.unidade.toUpperCase()}</small></div><div><small>Pagamento e meta diária</small><strong>{Number(material.valor_referencia).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} / {Number(material.quantidade_referencia)} {material.unidade} · {Number(material.meta_diaria) > 0 ? `Meta ${Number(material.meta_diaria)} ${material.unidade}` : "Sem meta"}</strong></div><span className={material.status === "ativo" ? "status ativo" : "status"}>● {material.status}</span><button className="botao-secundario" onClick={() => abrirMaterial(material)}><Pencil /> Editar</button><button className="menu-acoes perigoso" onClick={() => setConfirmacaoExclusao({ tipo: "material", item: material })} aria-label={`Excluir ${material.nome}`}><Trash2 /></button></article>)}</div>
+      <Paginacao pagina={paginaMateriais} total={materiais.length} itensPorPagina={itensPorPagina} aoMudarPagina={setPaginaMateriais} rotulo="materiais" />
+      <div className="nota-configuracao"><span>i</span><p><strong>Como o valor é calculado?</strong><br />A meta geral, quando ativa, bloqueia todos os valores até a soma diária de materiais atingir o alvo. Sem meta geral, cada material usa sua própria meta. Sem nenhuma meta aplicável, o pagamento é imediato.</p></div>
     </>}
 
     {modal && <div className="sobreposicao" role="dialog" aria-modal="true" aria-labelledby="titulo-material"><div className="modal pequeno"><header className="cabecalho-modal"><div><span>CONFIGURAÇÃO</span><h2 id="titulo-material">{materialEdicao ? "Editar material" : "Novo material"}</h2><p>Pagamento e meta serão preservados em cada pesagem.</p></div><button onClick={() => setModal(false)} aria-label="Fechar">×</button></header><form className="formulario" onSubmit={(e) => e.preventDefault()}><div className="grade-formulario"><label className="campo campo-largo">Nome do material<input value={formMaterial.nome} onChange={(e) => setFormMaterial((f) => ({ ...f, nome: e.target.value }))} /></label><label className="campo">Tipo<select value={formMaterial.tipoMaterial} onChange={(e) => setFormMaterial((f) => ({ ...f, tipoMaterial: e.target.value }))}><option>Plástico</option><option>Metal</option><option>Papel</option><option>Vidro</option><option>Misto</option><option>Outro</option></select></label><label className="campo">Unidade<select value={formMaterial.unidade} onChange={(e) => setFormMaterial((f) => ({ ...f, unidade: e.target.value }))}><option>kg</option><option>unidade</option><option>fardo</option><option>litro</option></select></label><label className="campo">Quantidade de referência<input value={formMaterial.quantidadeReferencia} inputMode="decimal" onChange={(e) => setFormMaterial((f) => ({ ...f, quantidadeReferencia: e.target.value }))} /></label><label className="campo">Valor pago na referência<input value={formMaterial.valorReferencia} inputMode="decimal" onChange={(e) => setFormMaterial((f) => ({ ...f, valorReferencia: e.target.value }))} /></label><label className="campo campo-largo">Meta diária por catador<input value={formMaterial.metaDiaria} inputMode="decimal" onChange={(e) => setFormMaterial((f) => ({ ...f, metaDiaria: e.target.value }))} /><small className="dica">Ex.: 20 kg. Informe 0 para não exigir meta e pagar imediatamente.</small></label></div><label className="interruptor compacto"><input type="checkbox" checked={formMaterial.ativo} onChange={(e) => setFormMaterial((f) => ({ ...f, ativo: e.target.checked }))} /><span /><div><strong>Material ativo para novas pesagens</strong></div></label></form><footer className="rodape-modal"><button className="botao-secundario" onClick={() => setModal(false)}>Cancelar</button><button className="botao-primario" onClick={() => void salvarMaterial()}>Salvar material</button></footer></div></div>}
     {modalResponsavel && <div className="sobreposicao" role="dialog" aria-modal="true" aria-labelledby="titulo-responsavel"><div className="modal pequeno"><header className="cabecalho-modal"><div><span>EQUIPE DE PESAGEM</span><h2 id="titulo-responsavel">{responsavelEdicao ? "Editar responsável" : "Novo responsável"}</h2><p>O nome ativo aparecerá no formulário de pesagem e produção.</p></div><button onClick={() => setModalResponsavel(false)} aria-label="Fechar">×</button></header><form className="formulario" onSubmit={(e) => e.preventDefault()}><label className="campo">Nome completo<input value={formResponsavel.nome} onChange={(e) => setFormResponsavel((atual) => ({ ...atual, nome: e.target.value }))} /></label><label className="interruptor compacto"><input type="checkbox" checked={formResponsavel.ativo} onChange={(e) => setFormResponsavel((atual) => ({ ...atual, ativo: e.target.checked }))} /><span /><div><strong>Disponível para novas pesagens</strong></div></label>{mensagem && <p className="mensagem-configuracao" role="status">{mensagem}</p>}</form><footer className="rodape-modal"><button className="botao-secundario" onClick={() => setModalResponsavel(false)}>Cancelar</button><button className="botao-primario" onClick={() => void salvarResponsavel()} disabled={formResponsavel.nome.trim().length < 2}>Salvar responsável</button></footer></div></div>}
+    <ModalConfirmacao aberto={Boolean(confirmacaoExclusao)} titulo={confirmacaoExclusao?.tipo === "material" ? `Excluir ${(confirmacaoExclusao.item as MaterialApi | undefined)?.nome}?` : `Remover ${(confirmacaoExclusao?.item as ResponsavelPesagemApi | undefined)?.nome}?`} descricao={confirmacaoExclusao?.tipo === "material" ? "A exclusão só será permitida quando o material não possuir pesagens vinculadas." : "O responsável deixará de aparecer em novas pesagens, mas o histórico será preservado."} textoConfirmar="Confirmar exclusão" perigoso aoFechar={() => setConfirmacaoExclusao(null)} aoConfirmar={() => void confirmarExclusao()} />
   </section>;
 }

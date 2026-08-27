@@ -18,6 +18,7 @@ async function chamar(caminho, opcoes = {}, autenticado = true) {
 }
 
 async function executar() {
+  const inicioTeste = new Date();
   for (const caminho of ["/api/notificacoes", "/api/notificacoes/f58b2e08-145c-47d2-8842-228cd0a35df9"]) {
     const preflightExclusao = await fetch(`${urlApi}${caminho}`, {
       method: "OPTIONS",
@@ -46,7 +47,11 @@ async function executar() {
   assert.equal(enderecoCep.cidade, "Belo Horizonte");
   assert.equal(enderecoCep.estado, "MG");
   const painelAntes = (await chamar("/api/painel")).dados.indicadores;
+  const configuracaoMetaOriginal = (await chamar("/api/configuracoes/meta-geral")).dados;
+  await chamar("/api/configuracoes/meta-geral", { method: "PUT", body: JSON.stringify({ ativa: false, metaDiaria: 0, unidade: "kg" }) });
   const sufixo = `${Date.now()}-${process.pid}`;
+  const cpfCatador = String(Date.now()).slice(-11).padStart(11, "7");
+  const cpfTitular = String(Date.now() + 1).slice(-11).padStart(11, "8");
   let cooperativaUuid;
   let materialUuid;
   let materialSemMetaUuid;
@@ -55,6 +60,8 @@ async function executar() {
   let primeiraPesagemUuid;
   let caixaUuid;
   let responsavelUuid;
+  let catadorMetaGeralUuid;
+  const pesagensMetaGeral = [];
 
   try {
     cooperativaUuid = (await chamar("/api/cooperativas", { method: "POST", body: JSON.stringify({ nome: `Integração ${sufixo}`, nomeResponsavel: "Teste automatizado", ativa: true }) })).dados.uuid;
@@ -69,7 +76,7 @@ async function executar() {
       nomeCompleto: `Catador Integração ${sufixo}`,
       cooperativaUuid,
       contatos: [],
-      contaFinanceira: { tipo: "conta_bancaria", banco: "Banco Teste", agencia: "0001", numeroConta: "12345-6", tipoConta: "corrente", deTerceiro: true, nomeTitular: "Titular Teste", cpfTitular: "12345678901" },
+      contaFinanceira: { tipo: "conta_bancaria", banco: "Banco Teste", agencia: "0001", numeroConta: "12345-6", tipoConta: "corrente", deTerceiro: true, nomeTitular: "Titular Teste", cpfTitular },
     }) })).dados;
     catadorUuid = catador.uuid;
     entidadesCriadas.add(catadorUuid);
@@ -81,23 +88,30 @@ async function executar() {
       genero: "Outro",
       racaCor: "Parda",
       dataNascimento: "1990-05-20",
-      cpf: "12345678901",
+      cpf: cpfCatador,
       contatos: [{ tipo: "celular", valor: "31999999999", principal: true }, { tipo: "recado", valor: "3133334444", principal: false }],
       endereco: { cep: "30110000", logradouro: "Avenida Afonso Pena", numero: "100", bairro: "Centro", cidade: "Belo Horizonte", estado: "MG" },
-      contaFinanceira: { tipo: "conta_bancaria", banco: "Banco Teste Editado", agencia: "0002", numeroConta: "98765-4", tipoConta: "corrente", deTerceiro: true, nomeTitular: "Titular Editado", cpfTitular: "10987654321" },
+      contaFinanceira: { tipo: "conta_bancaria", banco: "Banco Teste Editado", agencia: "0002", numeroConta: "98765-4", tipoConta: "corrente", deTerceiro: true, nomeTitular: "Titular Editado", cpfTitular },
     }) });
     const perfilEditado = (await chamar(`/api/catadores/${catadorUuid}/perfil`)).dados.catador;
     assert.equal(perfilEditado.nome_completo, `Catador Integração Editado ${sufixo}`);
-    assert.equal(perfilEditado.cpf, "12345678901");
+    assert.equal(perfilEditado.cpf, cpfCatador);
     assert.equal(perfilEditado.contatos.length, 2);
     assert.equal(perfilEditado.endereco.cep, "30110000");
     assert.equal(perfilEditado.contas_financeiras[0].banco, "Banco Teste Editado");
     const paginaCatadores = (await chamar(`/api/catadores?busca=${encodeURIComponent(`Catador Integração ${sufixo}`)}&status=ativo&limite=5&deslocamento=0`)).dados;
     assert.equal(paginaCatadores.total, 1);
     assert.equal(paginaCatadores.dados[0]?.uuid, catadorUuid);
+    const buscaParcialCatador = (await chamar(`/api/catadores?busca=${encodeURIComponent("Catador Int")}&status=ativo&limite=5&deslocamento=0`)).dados;
+    assert.ok(buscaParcialCatador.dados.some((item) => item.uuid === catadorUuid));
     const paginaCooperativas = (await chamar(`/api/cooperativas?busca=${encodeURIComponent(`Integração ${sufixo}`)}&limite=4&deslocamento=0`)).dados;
     assert.equal(paginaCooperativas.total, 1);
     assert.equal(paginaCooperativas.dados[0]?.uuid, cooperativaUuid);
+    const buscaParcialCooperativa = (await chamar(`/api/cooperativas?busca=${encodeURIComponent("Integra")}&limite=4&deslocamento=0`)).dados;
+    assert.ok(buscaParcialCooperativa.dados.some((item) => item.uuid === cooperativaUuid));
+    await chamar(`/api/catadores/${catadorUuid}/status`, { method: "PATCH", body: JSON.stringify({ ativo: false }) });
+    assert.equal((await chamar(`/api/catadores?busca=${encodeURIComponent(catador.codigo)}&status=ativo`)).dados.total, 0);
+    await chamar(`/api/catadores/${catadorUuid}/status`, { method: "PATCH", body: JSON.stringify({ ativo: true }) });
 
     const pontos = (await chamar("/api/pontos-apoio")).dados.dados;
     responsavelUuid = (await chamar("/api/responsaveis-pesagem", { method: "POST", body: JSON.stringify({ nome: `Responsável ${sufixo}`, ativo: true }) })).dados.uuid;
@@ -227,6 +241,37 @@ async function executar() {
     assert.equal(pesagemSemMeta.progressoMeta.semMeta, true);
     await chamar(`/api/pesagens/${pesagemSemMeta.uuid}`, { method: "DELETE", body: JSON.stringify({ motivo: "Validação temporária de material sem meta" }) });
 
+    await chamar("/api/configuracoes/meta-geral", { method: "PUT", body: JSON.stringify({ ativa: true, metaDiaria: 10, unidade: "kg" }) });
+    const configuracaoMetaAtiva = (await chamar("/api/configuracoes/meta-geral")).dados;
+    assert.equal(configuracaoMetaAtiva.ativa, true);
+    assert.equal(Number(configuracaoMetaAtiva.meta_diaria), 10);
+    catadorMetaGeralUuid = (await chamar("/api/catadores", { method: "POST", body: JSON.stringify({ nomeCompleto: `Meta Geral ${sufixo}`, cooperativaUuid, contatos: [], ativo: true }) })).dados.uuid;
+    entidadesCriadas.add(catadorMetaGeralUuid);
+    const primeiraGeral = (await chamar("/api/pesagens", { method: "POST", body: JSON.stringify({ catadorUuid: catadorMetaGeralUuid, cooperativaUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsavelPadrao.uuid, materialUuid, peso: 4, dataHora: new Date(new Date(dataHoraPesagem).getTime() + 4000).toISOString(), status: "concluida" }) })).dados;
+    pesagensMetaGeral.push(primeiraGeral.uuid); entidadesCriadas.add(primeiraGeral.uuid);
+    assert.equal(primeiraGeral.valorTotal, 0);
+    assert.equal(primeiraGeral.progressoMetaGeral.ativa, true);
+    assert.equal(primeiraGeral.progressoMetaGeral.falta, 6);
+    const segundaGeral = (await chamar("/api/pesagens", { method: "POST", body: JSON.stringify({ catadorUuid: catadorMetaGeralUuid, cooperativaUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsavelPadrao.uuid, materialUuid: materialSemMetaUuid, peso: 6, dataHora: new Date(new Date(dataHoraPesagem).getTime() + 5000).toISOString(), status: "concluida" }) })).dados;
+    pesagensMetaGeral.push(segundaGeral.uuid); entidadesCriadas.add(segundaGeral.uuid);
+    assert.equal(segundaGeral.metaAtingidaAgora, true);
+    assert.equal(segundaGeral.valorTotal, 14);
+    assert.equal(segundaGeral.progressoMetaGeral.valorLiberado, 14);
+    assert.equal(segundaGeral.progressoMetaGeral.detalhes.length, 2);
+    assert.equal(segundaGeral.progressoMetaGeral.detalhes.reduce((total, item) => total + Number(item.valor_liberado), 0), 14);
+    assert.equal(Number(segundaGeral.progressoMetaGeral.detalhes.find((item) => item.material_uuid === materialUuid).valor_liberado), 2);
+    assert.equal(Number(segundaGeral.progressoMetaGeral.detalhes.find((item) => item.material_uuid === materialSemMetaUuid).valor_liberado), 12);
+    const perfilMetaGeral = (await chamar(`/api/catadores/${catadorMetaGeralUuid}/perfil`)).dados;
+    assert.ok(perfilMetaGeral.metas.some((item) => item.nome === "Meta geral" && item.atingida && Number(item.ganho) === 14));
+    assert.equal(Number(perfilMetaGeral.materiais.find((item) => item.uuid === materialUuid).ganho_total), 2);
+    assert.equal(Number(perfilMetaGeral.materiais.find((item) => item.uuid === materialSemMetaUuid).ganho_total), 12);
+    const relatorioGeral = (await chamar(`/api/relatorios/pesagens?catadorUuid=${catadorMetaGeralUuid}&busca=${encodeURIComponent("Meta Ger")}&limite=10&deslocamento=0`)).dados;
+    assert.equal(relatorioGeral.total, 2);
+    assert.ok(relatorioGeral.dados.every((item) => item.tipo_meta === "geral" && Number(item.percentual_meta) === 100));
+    for (const pesagemGeralUuid of pesagensMetaGeral) await chamar(`/api/pesagens/${pesagemGeralUuid}`, { method: "DELETE", body: JSON.stringify({ motivo: "Limpeza do cenário de meta geral" }) });
+    await chamar(`/api/catadores/${catadorMetaGeralUuid}`, { method: "DELETE", body: JSON.stringify({ confirmacao: true, motivo: "Limpeza do cenário de meta geral" }) });
+    catadorMetaGeralUuid = undefined;
+
     const exclusaoSemConfirmar = await fetch(`${urlApi}/api/catadores/${catadorUuid}`, { method: "DELETE", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ motivo: "Teste sem confirmação" }) });
     assert.equal(exclusaoSemConfirmar.status, 400);
     await chamar(`/api/catadores/${catadorUuid}`, { method: "DELETE", body: JSON.stringify({ confirmacao: true, motivo: "Exclusão integral do cadastro temporário" }) });
@@ -254,12 +299,24 @@ async function executar() {
       }
       if (pesagemUuid) await cliente.query("DELETE FROM movimentacoes_caixa_catador WHERE pesagem_uuid=$1", [pesagemUuid]);
       if (pesagemUuid) await cliente.query("DELETE FROM pesagens WHERE uuid=$1", [pesagemUuid]);
-      if (catadorUuid) await cliente.query("DELETE FROM caixas_catador WHERE catador_uuid=$1", [catadorUuid]);
-      if (catadorUuid) await cliente.query("DELETE FROM catadores WHERE uuid=$1", [catadorUuid]);
+      if (catadorMetaGeralUuid) {
+        await cliente.query("DELETE FROM movimentacoes_caixa_catador WHERE caixa_uuid IN (SELECT uuid FROM caixas_catador WHERE catador_uuid=$1)", [catadorMetaGeralUuid]);
+        await cliente.query("DELETE FROM pesagens WHERE catador_uuid=$1", [catadorMetaGeralUuid]);
+        await cliente.query("DELETE FROM caixas_catador WHERE catador_uuid=$1", [catadorMetaGeralUuid]);
+        await cliente.query("DELETE FROM catadores WHERE uuid=$1", [catadorMetaGeralUuid]);
+      }
+      if (catadorUuid) {
+        await cliente.query("DELETE FROM movimentacoes_caixa_catador WHERE caixa_uuid IN (SELECT uuid FROM caixas_catador WHERE catador_uuid=$1) OR pesagem_uuid IN (SELECT uuid FROM pesagens WHERE catador_uuid=$1)", [catadorUuid]);
+        await cliente.query("DELETE FROM pesagens WHERE catador_uuid=$1", [catadorUuid]);
+        await cliente.query("DELETE FROM caixas_catador WHERE catador_uuid=$1", [catadorUuid]);
+        await cliente.query("DELETE FROM catadores WHERE uuid=$1", [catadorUuid]);
+      }
       if (materialUuid) await cliente.query("DELETE FROM materiais WHERE uuid=$1", [materialUuid]);
       if (materialSemMetaUuid) await cliente.query("DELETE FROM materiais WHERE uuid=$1", [materialSemMetaUuid]);
       if (cooperativaUuid) await cliente.query("DELETE FROM cooperativas WHERE uuid=$1", [cooperativaUuid]);
       if (responsavelUuid) await cliente.query("DELETE FROM responsaveis_pesagem WHERE uuid=$1", [responsavelUuid]);
+      await cliente.query("UPDATE configuracoes_meta_geral SET ativa=$1,meta_diaria=$2,unidade=$3,atualizado_em=now() WHERE chave='principal'", [configuracaoMetaOriginal.ativa, configuracaoMetaOriginal.meta_diaria, configuracaoMetaOriginal.unidade]);
+      await cliente.query("DELETE FROM auditoria WHERE entidade='configuracoes_meta_geral' AND criado_em >= $1", [inicioTeste]);
       await cliente.query("COMMIT");
     } catch (falha) {
       await cliente.query("ROLLBACK");
@@ -271,4 +328,4 @@ async function executar() {
 }
 
 await executar();
-console.log("Integração concluída: meta acumulada, pagamento condicionado, material sem meta, responsáveis, sessão, auditoria, painel, relatório e notificações.");
+console.log("Integração concluída: meta geral e por material, detalhamento financeiro, buscas parciais, status de catadores, caixa, auditoria, relatórios e notificações.");

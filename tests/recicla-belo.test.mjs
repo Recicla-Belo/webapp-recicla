@@ -24,7 +24,7 @@ test("renderiza a experiência do Recicla Belô", async () => {
 });
 
 test("mantém ambiente, banco e instalação documentados", async () => {
-  const [exemplo, estilos, migracao, migracaoNotificacoes, migracaoAuditoria, migracaoCaixas, migracaoLimpeza, migracaoNotificacoesOrfas, migracaoPagamentoMeta, sqlCompleto, instalador, supervisor, servidor, estrutura, api, painel, telaLogin, telaPesagem, telaCatadores, telaCooperativas, telaRelatorios, telaConfiguracoes, paginacao, leiaMe, pacote] = await Promise.all([
+  const [exemplo, estilos, migracao, migracaoNotificacoes, migracaoAuditoria, migracaoCaixas, migracaoLimpeza, migracaoNotificacoesOrfas, migracaoPagamentoMeta, migracaoMetaGeral, sqlCompleto, instalador, supervisor, servidor, estrutura, api, painel, telaLogin, telaPesagem, telaCatadores, telaCooperativas, telaRelatorios, telaConfiguracoes, paginacao, leiaMe, pacote] = await Promise.all([
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/001_estrutura_inicial.sql", import.meta.url), "utf8"),
@@ -34,6 +34,7 @@ test("mantém ambiente, banco e instalação documentados", async () => {
     readFile(new URL("../servidor/migracoes/009_limpa_auditorias_caixa_orfas.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/010_limpa_notificacoes_orfas.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/011_pagamento_por_meta_e_responsaveis.sql", import.meta.url), "utf8"),
+    readFile(new URL("../servidor/migracoes/012_meta_geral_catadores_e_busca_prefixada.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/sql/recicla-belo-completo.sql", import.meta.url), "utf8"),
     readFile(new URL("../scripts/instalar-e-iniciar.sh", import.meta.url), "utf8"),
     readFile(new URL("../scripts/desenvolver.mjs", import.meta.url), "utf8"),
@@ -72,6 +73,9 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(migracaoNotificacoesOrfas, /caixas_catador/);
   assert.match(migracaoPagamentoMeta, /materiais_meta_diaria_nao_negativa/);
   assert.match(migracaoPagamentoMeta, /valor_bruto_acumulado/);
+  assert.match(migracaoMetaGeral, /CREATE TABLE IF NOT EXISTS configuracoes_meta_geral/);
+  assert.match(migracaoMetaGeral, /consulta_busca_prefixada/);
+  assert.match(migracaoMetaGeral, /meta_geral_ativa/);
   assert.match(sqlCompleto, /ALTER TYPE status_pesagem ADD VALUE IF NOT EXISTS 'agendada'/);
   assert.match(instalador, /docker compose up -d banco/);
   assert.match(instalador, /exec npm run dev/);
@@ -120,10 +124,13 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(telaPesagem, /metaAtingidaAgora/);
   assert.match(telaPesagem, /Cooperativa \/ associação/);
   assert.match(telaPesagem, /<Paginacao/);
-  assert.match(telaPesagem, /valor ainda não liberado/);
-  assert.match(telaPesagem, /Math\.max\(ganhoDiaDepois - Number\(metaAtual\?\.ganho/);
+  assert.match(telaPesagem, /Valores sujeitos ao atingimento da meta/);
+  assert.match(telaPesagem, /progressoMetaGeral/);
+  assert.match(telaPesagem, /DetalhesPagamento/);
   assert.match(telaConfiguracoes, /Responsáveis pela pesagem/);
   assert.match(telaConfiguracoes, /\/api\/responsaveis-pesagem\?incluirInativos=true/);
+  assert.match(telaConfiguracoes, /\/api\/configuracoes\/meta-geral/);
+  assert.match(telaConfiguracoes, /Meta geral diária/);
   assert.match(servidor, /aplicacao\.post\("\/api\/responsaveis-pesagem"/);
   assert.match(servidor, /recalcularPagamentoMetaDiaria/);
   assert.match(telaCatadores, /PerfilCatador/);
@@ -132,6 +139,8 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(telaCatadores, /formatarCpf/);
   assert.match(telaCatadores, /placeholder="000\.000\.000-00"/);
   assert.match(telaCatadores, /method: "PUT"/);
+  assert.match(telaCatadores, /method: "PATCH"/);
+  assert.match(telaCatadores, /ModalConfirmacao/);
   assert.match(telaCatadores, /Excluir todos os dados/);
   assert.match(servidor, /aplicacao\.put\("\/api\/catadores\/:uuid"/);
   assert.match(servidor, /exclusao_definitiva/);
@@ -142,6 +151,7 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(estilos, /\.conteudo-barra-lateral\{position:sticky;top:0;[^}]*height:100dvh;[^}]*overflow-y:auto/);
   assert.match(estilos, /\.modal\.cadastro>\.formulario\{[^}]*overflow-y:auto/);
   assert.match(telaCooperativas, /<Paginacao/);
+  assert.match(telaCooperativas, /ModalConfirmacao/);
   assert.match(telaRelatorios, /CORREÇÃO AUDITÁVEL/);
   assert.match(telaRelatorios, /exclusao_logica/);
   assert.match(telaRelatorios, /<Paginacao/);
