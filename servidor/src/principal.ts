@@ -898,11 +898,25 @@ aplicacao.put("/api/configuracoes/meta-geral", async (requisicao, resposta) => {
     .refine((dados) => !dados.ativa || dados.valorPremio > 0, { message: "Informe o prêmio fixo para ativar a meta geral.", path: ["valorPremio"] })
     .safeParse(requisicao.body);
   if (!entrada.success) return resposta.code(400).send({ mensagem: "Revise a configuração da meta geral.", detalhes: z.treeifyError(entrada.error) });
-  const anterior = await banco.query("SELECT * FROM configuracoes_meta_geral WHERE chave='principal'");
-  const atualizada = await banco.query<{ uuid: string }>(`UPDATE configuracoes_meta_geral SET ativa=$1,meta_diaria=$2,valor_premio=$3,unidade=$4,atualizado_por_uuid=$5,atualizado_em=now()
-    WHERE chave='principal' RETURNING uuid`, [entrada.data.ativa, entrada.data.metaDiaria, entrada.data.valorPremio, entrada.data.unidade, requisicao.user.usuarioUuid]);
-  await registrarAuditoria(banco, requisicao.user.usuarioUuid, "alteracao", "configuracoes_meta_geral", atualizada.rows[0]!.uuid, { antes: anterior.rows[0], depois: entrada.data }, requisicao.ip);
-  return resposta.code(204).send();
+  const cliente = await banco.connect();
+  try {
+    await cliente.query("BEGIN");
+    const anterior = await cliente.query("SELECT * FROM configuracoes_meta_geral WHERE chave='principal' FOR UPDATE");
+    const atualizada = await cliente.query<{ uuid: string }>(`UPDATE configuracoes_meta_geral SET ativa=$1,meta_diaria=$2,valor_premio=$3,unidade=$4,atualizado_por_uuid=$5,atualizado_em=now()
+      WHERE chave='principal' RETURNING uuid`, [entrada.data.ativa, entrada.data.metaDiaria, entrada.data.valorPremio, entrada.data.unidade, requisicao.user.usuarioUuid]);
+    const caixasAbertos = entrada.data.ativa ? await cliente.query<{ catador_uuid: string }>(`UPDATE caixas_catador SET valor_premio_meta_geral=$1,atualizado_em=now()
+      WHERE status='aberto' AND meta_geral_ativa AND data_caixa=(now() AT TIME ZONE 'America/Bahia')::date
+      RETURNING catador_uuid`, [entrada.data.valorPremio]) : { rows: [] as Array<{ catador_uuid: string }> };
+    for (const catadorUuid of new Set(caixasAbertos.rows.map((caixa) => caixa.catador_uuid))) await recalcularMetasGeraisCatador(cliente, catadorUuid);
+    await registrarAuditoria(cliente, requisicao.user.usuarioUuid, "alteracao", "configuracoes_meta_geral", atualizada.rows[0]!.uuid, { antes: anterior.rows[0], depois: entrada.data, caixasAbertosRecalculados: caixasAbertos.rows.length }, requisicao.ip);
+    await cliente.query("COMMIT");
+    return resposta.code(204).send();
+  } catch (erro) {
+    await cliente.query("ROLLBACK");
+    throw erro;
+  } finally {
+    cliente.release();
+  }
 });
 
 aplicacao.get("/api/pontos-apoio", async () => {
