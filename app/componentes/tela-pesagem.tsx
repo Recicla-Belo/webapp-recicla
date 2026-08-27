@@ -11,7 +11,7 @@ import { useTermoBusca } from "@/app/utilitarios/use-termo-busca";
 type Referencia = { uuid: string; nome: string };
 type StatusPesagem = "concluida" | "agendada" | "cancelada";
 type CaixaDia = { status: "aberto" | "fechado"; data_caixa: string; peso: number; valor: number };
-type RespostaPesagem = { codigo: string; valorTotal: number; contabilizaMeta: boolean; metaAtingidaAgora: boolean; progressoMeta: { peso: number; ganho: number; metaDiaria: number; percentual: number; falta: number; atingida: boolean } | null; progressoMetaGeral: MetaGeralApi | null };
+type RespostaPesagem = { codigo: string; valorTotal: number; contabilizaMeta: boolean; guardarExcedenteMeta: boolean; metaAtingidaAgora: boolean; progressoMeta: { peso: number; ganho: number; metaDiaria: number; percentual: number; falta: number; atingida: boolean } | null; progressoMetaGeral: MetaGeralApi | null };
 
 function dataHoraLocalAtual() {
   const agora = new Date();
@@ -40,6 +40,7 @@ export function TelaPesagem() {
   const [catadorSelecionado, setCatadorSelecionado] = useState<CatadorApi | null>(null);
   const [materialUuid, setMaterialUuid] = useState("");
   const [contabilizarNaMeta, setContabilizarNaMeta] = useState(true);
+  const [guardarExcedenteMeta, setGuardarExcedenteMeta] = useState(false);
   const [metas, setMetas] = useState<ProgressoMetaApi[]>([]);
   const [metaGeral, setMetaGeral] = useState<MetaGeralApi | null>(null);
   const [caixa, setCaixa] = useState<CaixaDia | null>(null);
@@ -92,22 +93,28 @@ export function TelaPesagem() {
   const usaMetaGeral = Boolean(metaGeral?.ativa);
   const participaMeta = Boolean(material?.contabiliza_meta && contabilizarNaMeta);
   const foraDaMeta = Boolean(material && !participaMeta);
-  const pesoDiaDepois = Number(usaMetaGeral ? metaGeral?.peso : metaAtual?.peso ?? 0) + (status === "concluida" && participaMeta ? Math.max(pesoNumero, 0) : 0);
   const metaDiaria = Number(usaMetaGeral ? metaGeral?.meta : metaAtual?.meta ?? material?.meta_diaria ?? 0);
   const semMeta = metaDiaria <= 0;
+  const pesoAntes = Number(usaMetaGeral ? metaGeral?.peso : metaAtual?.peso ?? 0);
+  const pesoNovoValido = status === "concluida" && participaMeta ? Math.max(pesoNumero, 0) : 0;
+  const pesoAplicadoMeta = usaMetaGeral ? Math.min(pesoNovoValido, Math.max(metaDiaria - pesoAntes, 0)) : pesoNovoValido;
+  const pesoExcedente = usaMetaGeral ? Math.max(pesoNovoValido - pesoAplicadoMeta, 0) : 0;
+  const pesoDiaDepois = usaMetaGeral ? Math.min(pesoAntes + pesoAplicadoMeta, metaDiaria) : pesoAntes + pesoNovoValido;
   const percentualDepois = semMeta ? 100 : Math.min((pesoDiaDepois / metaDiaria) * 100, 100);
   const faltaDepois = semMeta ? 0 : Math.max(metaDiaria - pesoDiaDepois, 0);
   const valorBrutoNovaPesagem = material ? Math.round((Math.max(pesoNumero, 0) / Number(material.quantidade_referencia) * Number(material.valor_referencia)) * 100) / 100 : 0;
-  const valorBrutoAcumulado = usaMetaGeral ? Number(metaGeral?.valorBruto ?? 0) + (status === "concluida" && participaMeta ? valorBrutoNovaPesagem : 0) : material ? pesoDiaDepois / Number(material.quantidade_referencia) * Number(material.valor_referencia) : 0;
   const ganhoAtual = Number(usaMetaGeral ? metaGeral?.valorLiberado : metaAtual?.ganho ?? 0);
-  const ganhoDiaDepois = status === "concluida" && (semMeta || pesoDiaDepois >= metaDiaria) ? valorBrutoAcumulado : ganhoAtual;
-  const valor = status === "concluida" ? foraDaMeta ? valorBrutoNovaPesagem : Math.max(ganhoDiaDepois - ganhoAtual, 0) : 0;
   const metaAtingidaDepois = semMeta || pesoDiaDepois >= metaDiaria;
-  const detalhesMetaGeralDepois = atualizarDetalhesMetaGeral(metaGeral?.detalhes ?? [], material, status === "concluida" && participaMeta ? Math.max(pesoNumero, 0) : 0, status === "concluida" && participaMeta ? valorBrutoNovaPesagem : 0, metaAtingidaDepois);
+  const premioNovo = usaMetaGeral && pesoAntes < metaDiaria && metaAtingidaDepois ? Number(metaGeral?.valorPremio ?? 0) : 0;
+  const valorExcedenteNovo = material && usaMetaGeral && !guardarExcedenteMeta ? Math.round((pesoExcedente / Number(material.quantidade_referencia) * Number(material.valor_referencia)) * 100) / 100 : 0;
+  const valor = status === "concluida" ? foraDaMeta ? valorBrutoNovaPesagem : usaMetaGeral ? premioNovo + valorExcedenteNovo : (semMeta || metaAtingidaDepois ? Math.max((material ? pesoDiaDepois / Number(material.quantidade_referencia) * Number(material.valor_referencia) : 0) - ganhoAtual, 0) : 0) : 0;
+  const ganhoDiaDepois = ganhoAtual + valor;
+  const detalhesMetaGeralDepois = atualizarDetalhesMetaGeral(metaGeral?.detalhes ?? [], material, pesoNovoValido, pesoAplicadoMeta, pesoExcedente, guardarExcedenteMeta, premioNovo, valorExcedenteNovo);
 
   function selecionarMaterial(item: MaterialApi) {
     setMaterialUuid(item.uuid);
     setContabilizarNaMeta(item.contabiliza_meta);
+    setGuardarExcedenteMeta(false);
   }
   const responsavelValido = responsavelUuid === "outro" ? responsavelOutro.trim().length >= 2 : Boolean(responsavelUuid);
   const dataHoraValida = Boolean(dataHora) && !Number.isNaN(new Date(dataHora).getTime());
@@ -123,7 +130,7 @@ export function TelaPesagem() {
         catadorUuid, cooperativaUuid, pontoApoioUuid: pontoUuid,
         responsavelPesagemUuid: responsavelUuid === "outro" ? undefined : responsavelUuid,
         responsavelOutro: responsavelUuid === "outro" ? responsavelOutro.trim() : undefined,
-        materialUuid, contabilizarNaMeta: participaMeta, peso: pesoNumero, observacao: observacao.trim() || undefined,
+        materialUuid, contabilizarNaMeta: participaMeta, guardarExcedenteMeta: participaMeta && guardarExcedenteMeta, peso: pesoNumero, observacao: observacao.trim() || undefined,
         dataHora: new Date(dataHora).toISOString(), status,
       }) });
       setConfirmacaoAberta(false); setRegistro(resposta);
@@ -132,7 +139,7 @@ export function TelaPesagem() {
   }
 
   function iniciarProximaPesagem() {
-    setEtapa(1); setCatadorUuid(""); setCatadorSelecionado(null); setBuscaCatador(""); setMaterialUuid(""); setContabilizarNaMeta(true); setMetas([]); setMetaGeral(null); setCaixa(null);
+    setEtapa(1); setCatadorUuid(""); setCatadorSelecionado(null); setBuscaCatador(""); setMaterialUuid(""); setContabilizarNaMeta(true); setGuardarExcedenteMeta(false); setMetas([]); setMetaGeral(null); setCaixa(null);
     setPeso(""); setObservacao(""); setDataHora(dataHoraLocalAtual()); setStatus("concluida"); setRegistro(null);
   }
 
@@ -153,6 +160,7 @@ export function TelaPesagem() {
       {etapa === 0 && <div className="animar-etapa"><span className="sobrelinha">ETAPA 1 DE 4</span><h2>Dados da operação</h2><p>Identifique a cooperativa, o local e quem realizou a pesagem.</p><div className="grade-formulario espacada"><label className="campo">Cooperativa / associação<select value={cooperativaUuid} onChange={(e) => setCooperativaUuid(e.target.value)}><option value="">Selecionar</option>{cooperativas.map((item) => <option value={item.uuid} key={item.uuid}>{item.nome}</option>)}</select></label><label className="campo">Central / ponto de apoio<select value={pontoUuid} onChange={(e) => setPontoUuid(e.target.value)}><option value="">Selecionar</option>{pontos.map((item) => <option value={item.uuid} key={item.uuid}>{item.nome}</option>)}</select></label><label className="campo">Responsável pela pesagem<select value={responsavelUuid} onChange={(e) => setResponsavelUuid(e.target.value)}><option value="">Selecionar</option>{responsaveis.map((item) => <option value={item.uuid} key={item.uuid}>{item.nome}</option>)}<option value="outro">Outro</option></select></label>{responsavelUuid === "outro" && <label className="campo">Nome do responsável<input value={responsavelOutro} onChange={(e) => setResponsavelOutro(e.target.value)} /></label>}</div></div>}
       {etapa === 1 && <div className="animar-etapa"><span className="sobrelinha">ETAPA 2 DE 4</span><h2>Confirme o catador</h2><p>Pesquise por nome, apelido ou código e confira a identidade.</p><label className="campo-busca busca-grande"><Search /><input value={buscaCatador} onChange={(e) => { setBuscaCatador(e.target.value); setCatadorUuid(""); setCatadorSelecionado(null); setPaginaCatadores(1); }} placeholder="Digite o nome ou código do catador" /></label><div className="resultados-catadores">{catadoresFiltrados.map((item) => <button type="button" className={item.uuid === catadorUuid ? "resultado-catador selecionado" : "resultado-catador"} key={item.uuid} onClick={() => { setCatadorUuid(item.uuid); setCatadorSelecionado(item); setBuscaCatador(`${item.codigo} — ${item.nome_completo}`); setPaginaCatadores(1); }}>{item.tem_foto ? <img src={`${URL_API}/api/catadores/${item.uuid}/foto`} alt={`Foto de ${item.nome_completo}`} /> : <i>{item.nome_completo.split(/\s+/).slice(0, 2).map((parte) => parte[0]).join("")}</i>}<span><strong>{item.codigo} — {item.nome_completo}</strong><small>{[item.cooperativa, item.contatos.map((contato) => contato.valor).join(" · "), item.endereco_resumo].filter(Boolean).join(" · ") || "Dados complementares não informados"}</small></span><b><small>Meta hoje</small>{Math.round(Number(item.percentual_meta_hoje))}%</b><em className={`status-caixa ${item.status_caixa_hoje}`}>Caixa {item.status_caixa_hoje}</em></button>)}</div><Paginacao pagina={paginaCatadores} total={totalCatadores} itensPorPagina={6} aoMudarPagina={setPaginaCatadores} rotulo="catadores encontrados" />{catador && <CartaoCatador catador={catador} caixa={caixa} metas={metas} metaGeral={metaGeral} />}</div>}
       {etapa === 2 && <div className="animar-etapa"><span className="sobrelinha">ETAPA 3 DE 4</span><h2>Material, peso e meta diária</h2><p>O pagamento e a meta usam a configuração preservada no banco.</p>{usaMetaGeral && <p className="aviso-meta-geral"><strong>Meta geral ativa:</strong> somente entregas escolhidas para a meta aumentam o alvo de {metaDiaria.toLocaleString("pt-BR")} {metaGeral?.unidade}.</p>}<div className="grade-materiais">{materiaisPaginados.map((item) => <button type="button" className={materialUuid === item.uuid ? "cartao-material selecionado" : "cartao-material"} onClick={() => selecionarMaterial(item)} key={item.uuid}><span>{item.tipo_material.slice(0, 2).toUpperCase()}</span><strong>{item.nome}</strong><small>{dinheiro(Number(item.valor_referencia))} / {Number(item.quantidade_referencia)} {item.unidade}</small><small>{!item.contabiliza_meta ? "Sempre fora da meta · pagamento imediato" : usaMetaGeral ? "Válido para a meta geral" : Number(item.meta_diaria) > 0 ? `Meta: ${Number(item.meta_diaria)} ${item.unidade}/dia` : "Válido para a meta geral"}</small>{materialUuid === item.uuid && <i>✓</i>}</button>)}</div><Paginacao pagina={paginaMateriais} total={materiais.length} itensPorPagina={6} aoMudarPagina={setPaginaMateriais} rotulo="materiais" />{material && (material.contabiliza_meta ? <label className="interruptor opcao-meta-pesagem"><input type="checkbox" checked={contabilizarNaMeta} onChange={(evento) => setContabilizarNaMeta(evento.target.checked)} /><span /><div><strong>Contabilizar esta entrega na meta</strong><small>{contabilizarNaMeta ? "O peso aumentará o progresso e o valor ficará sujeito à meta." : "Fora da meta: o peso não aumenta o progresso e o pagamento é imediato."}</small></div></label> : <div className="aviso-fora-meta"><strong>Este material não é válido para metas</strong><span>A entrega será paga imediatamente pelo preço configurado e não alterará o progresso diário.</span></div>)}<div className="grade-formulario espacada"><label className="campo campo-peso">Peso do material<div><input value={peso} onChange={(e) => setPeso(e.target.value)} inputMode="decimal" placeholder="0,00" /><span>{material?.unidade.toUpperCase() ?? "KG"}</span></div></label><label className="campo">Data e hora<input type="datetime-local" value={dataHora} onChange={(e) => setDataHora(e.target.value)} /></label><label className="campo">Status<select value={status} onChange={(e) => setStatus(e.target.value as StatusPesagem)}><option value="concluida">Concluída</option><option value="agendada">Agendada</option><option value="cancelada">Cancelada</option></select></label><label className="campo campo-largo">Observação <small>Opcional</small><textarea value={observacao} onChange={(e) => setObservacao(e.target.value)} /></label></div>{material && (foraDaMeta ? <PagamentoForaMeta peso={Math.max(pesoNumero, 0)} unidade={material.unidade} valor={status === "concluida" ? valorBrutoNovaPesagem : 0} caixa={caixa} /> : <ProgressoMeta percentual={percentualDepois} peso={pesoDiaDepois} meta={metaDiaria} falta={faltaDepois} ganho={ganhoDiaDepois} caixa={caixa} tipo={usaMetaGeral ? "geral" : "material"} metaAtingida={metaAtingidaDepois} detalhes={usaMetaGeral ? detalhesMetaGeralDepois : []} />)}</div>}
+      {etapa === 2 && usaMetaGeral && participaMeta && pesoExcedente > 0 && <section className="escolha-excedente-meta" aria-labelledby="titulo-excedente-meta"><div><span>EXCEDENTE DA META</span><strong id="titulo-excedente-meta">Como tratar {pesoExcedente.toLocaleString("pt-BR")} {material?.unidade} excedentes?</strong><small>O prêmio fixo de {dinheiro(Number(metaGeral?.valorPremio ?? 0))} quita o peso usado até a meta. Escolha somente o destino do que passou do alvo.</small></div><label className={!guardarExcedenteMeta ? "selecionada" : ""}><input type="radio" name="destino-excedente" checked={!guardarExcedenteMeta} onChange={() => setGuardarExcedenteMeta(false)} /><span><strong>Pagar excedente agora</strong><small>Aplica o preço configurado do material somente sobre os quilos excedentes.</small></span></label><label className={guardarExcedenteMeta ? "selecionada" : ""}><input type="radio" name="destino-excedente" checked={guardarExcedenteMeta} onChange={() => setGuardarExcedenteMeta(true)} /><span><strong>Guardar para a próxima meta</strong><small>Não paga agora e transforma o excedente em crédito de peso para um dia futuro.</small></span></label></section>}
       {etapa === 3 && <div className="animar-etapa"><span className="sobrelinha">ETAPA 4 DE 4</span><h2>Revise antes de registrar</h2><ResumoPesagem catador={catador} cooperativa={cooperativa} ponto={ponto} material={material} peso={pesoNumero} valor={valor} dataHora={dataHora} status={status} percentual={percentualDepois} falta={faltaDepois} ganhoDia={ganhoDiaDepois} usaMetaGeral={usaMetaGeral} metaAtingida={metaAtingidaDepois} contabilizaMeta={participaMeta} detalhes={detalhesMetaGeralDepois} /></div>}
       {erro && <p className="mensagem-erro" role="alert">{erro}</p>}
       {caixaBloqueado && <p className="mensagem-erro" role="alert">O caixa deste catador está fechado para o dia selecionado. Reabra-o na ficha do catador antes de registrar.</p>}
@@ -183,13 +191,28 @@ function ResumoPesagem({ catador, cooperativa, ponto, material, peso, valor, dat
   return <div className="resumo-pesagem"><div className="linha-resumo"><span>Código do catador e nome</span><strong>{catador?.codigo} — {catador?.nome_completo}</strong></div><div className="linha-resumo"><span>Cooperativa / associação</span><strong>{cooperativa?.nome}</strong></div><div className="linha-resumo"><span>Central / ponto</span><strong>{ponto?.nome}</strong></div><div className="linha-resumo"><span>Material</span><strong>{material?.nome}</strong></div><div className="linha-resumo"><span>Peso</span><strong>{peso.toLocaleString("pt-BR")} {material?.unidade}</strong></div><div className="linha-resumo"><span>Data e hora</span><strong>{dataHora ? new Date(dataHora).toLocaleString("pt-BR") : "—"}</strong></div><div className="linha-resumo"><span>Status</span><strong className={`status-pesagem ${status}`}>{rotulosStatus[status]}</strong></div><div className="linha-resumo"><span>Regra de pagamento</span><strong>{foraDaMeta ? "Fora da meta · pagamento imediato" : semMeta ? "Sem meta específica" : usaMetaGeral ? "Contabiliza na meta geral" : "Contabiliza na meta do material"}</strong></div>{!foraDaMeta && <div className="linha-resumo"><span>{usaMetaGeral ? "Meta geral após registro" : "Meta após registro"}</span><strong>{semMeta ? "Sem meta · pagamento imediato" : `${Math.round(percentual)}% · ${falta > 0 ? `faltam ${falta.toLocaleString("pt-BR")} kg` : "atingida"}`}</strong></div>}{pagamentoVisivel ? <>{!foraDaMeta && <><div className="linha-resumo"><span>Total liberado no dia</span><strong>{dinheiro(ganhoDia)}</strong></div>{usaMetaGeral && <DetalhesPagamento detalhes={detalhes} />}</>}<div className="total-pesagem"><span>{foraDaMeta ? "Pagamento imediato desta pesagem" : "Valor liberado nesta pesagem"}</span><strong>{dinheiro(valor)}</strong></div></> : <div className="valor-sujeito-meta"><strong>Valores sujeitos ao atingimento da meta</strong><span>Nenhum valor será exibido ou contabilizado antes do alvo.</span></div>}</div>;
 }
 
-function atualizarDetalhesMetaGeral(atuais: DetalheMetaGeralApi[], material: MaterialApi | undefined, peso: number, valorBruto: number, liberado: boolean) {
+function atualizarDetalhesMetaGeral(atuais: DetalheMetaGeralApi[], material: MaterialApi | undefined, peso: number, pesoMeta: number, pesoExcedente: number, guardarExcedente: boolean, premio: number, valorExcedente: number) {
   if (!material || peso <= 0) return atuais;
   const existente = atuais.find((item) => item.material_uuid === material.uuid);
-  const atualizado: DetalheMetaGeralApi = existente ? { ...existente, peso: Number(existente.peso) + peso, valor_bruto: Number(existente.valor_bruto) + valorBruto, valor_liberado: liberado ? Number(existente.valor_bruto) + valorBruto : 0 } : { material_uuid: material.uuid, nome: material.nome, unidade: material.unidade, peso, valor_bruto: valorBruto, valor_liberado: liberado ? valorBruto : 0 };
-  return [...atuais.filter((item) => item.material_uuid !== material.uuid).map((item) => ({ ...item, valor_liberado: liberado ? Number(item.valor_bruto) : 0 })), atualizado].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  const valorBruto = Math.round((peso / Number(material.quantidade_referencia) * Number(material.valor_referencia)) * 100) / 100;
+  const atualizado: DetalheMetaGeralApi = existente ? {
+    ...existente,
+    peso: Number(existente.peso) + peso,
+    peso_meta: Number(existente.peso_meta) + pesoMeta,
+    peso_excedente_pago: Number(existente.peso_excedente_pago) + (guardarExcedente ? 0 : pesoExcedente),
+    peso_excedente_credito: Number(existente.peso_excedente_credito) + (guardarExcedente ? pesoExcedente : 0),
+    valor_bruto: Number(existente.valor_bruto) + valorBruto,
+    valor_liberado: Number(existente.valor_liberado) + valorExcedente,
+    valor_premio: Number(existente.valor_premio) + premio,
+  } : {
+    material_uuid: material.uuid, nome: material.nome, unidade: material.unidade, peso, peso_meta: pesoMeta,
+    peso_excedente_pago: guardarExcedente ? 0 : pesoExcedente,
+    peso_excedente_credito: guardarExcedente ? pesoExcedente : 0,
+    valor_bruto: valorBruto, valor_liberado: valorExcedente, valor_premio: premio,
+  };
+  return [...atuais.filter((item) => item.material_uuid !== material.uuid), atualizado].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
 }
 
 function DetalhesPagamento({ detalhes }: { detalhes: DetalheMetaGeralApi[] }) {
-  return <div className="detalhes-pagamento-meta"><strong>Pagamento por material</strong>{detalhes.map((item) => <div key={item.material_uuid}><span>{item.nome} · {Number(item.peso).toLocaleString("pt-BR")} {item.unidade}</span><b>{dinheiro(Number(item.valor_liberado))}</b></div>)}</div>;
+  return <div className="detalhes-pagamento-meta"><strong>Liquidação detalhada</strong>{detalhes.map((item) => <div key={item.material_uuid}><span>{item.nome} · {Number(item.peso_meta).toLocaleString("pt-BR")} {item.unidade} na meta{Number(item.peso_excedente_credito) > 0 ? ` · ${Number(item.peso_excedente_credito).toLocaleString("pt-BR")} guardados` : ""}</span><b>{dinheiro(Number(item.valor_premio) + Number(item.valor_liberado))}</b></div>)}</div>;
 }

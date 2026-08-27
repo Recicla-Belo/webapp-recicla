@@ -141,11 +141,14 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(telaPesagem, /setEtapa\(1\)/);
   assert.match(telaPesagem, /Contabilizar esta entrega na meta/);
   assert.match(telaPesagem, /contabilizarNaMeta: participaMeta/);
+  assert.match(telaPesagem, /guardarExcedenteMeta/);
+  assert.match(telaPesagem, /Guardar para a próxima meta/);
   assert.match(telaPesagem, /Fora da meta · pagamento imediato/);
   assert.match(telaConfiguracoes, /Responsáveis pela pesagem/);
   assert.match(telaConfiguracoes, /\/api\/responsaveis-pesagem\?incluirInativos=true/);
   assert.match(telaConfiguracoes, /\/api\/configuracoes\/meta-geral/);
   assert.match(telaConfiguracoes, /Meta geral diária/);
+  assert.match(telaConfiguracoes, /Prêmio fixo ao bater a meta/);
   assert.match(telaConfiguracoes, /metaDiaria: ""/);
   assert.match(telaConfiguracoes, /placeholder="Sem meta específica"/);
   assert.match(telaConfiguracoes, /Material válido para metas/);
@@ -159,6 +162,8 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(servidor, /DELETE FROM responsaveis_pesagem WHERE uuid=\$1/);
   assert.match(servidor, /pesagensComHistoricoPreservado/);
   assert.match(servidor, /recalcularPagamentoMetaDiaria/);
+  assert.match(servidor, /recalcularMetasGeraisCatador/);
+  assert.match(servidor, /valor_premio_meta/);
   assert.match(servidor, /ref\.contabiliza_meta && entrada\.data\.contabilizarNaMeta/);
   assert.match(servidor, /valor_fora_meta_acumulado/);
   assert.match(telaRelatorios, /Fora da meta · pagamento imediato/);

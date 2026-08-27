@@ -47,16 +47,18 @@ export type ProgressoMetaApi = {
 };
 
 export type DetalheMetaGeralApi = {
-  material_uuid: string; nome: string; unidade: string; peso: number; valor_bruto: number; valor_liberado: number;
+  material_uuid: string; nome: string; unidade: string; peso: number; peso_meta: number;
+  peso_excedente_pago: number; peso_excedente_credito: number; valor_bruto: number; valor_liberado: number; valor_premio: number;
 };
 
 export type MetaGeralApi = {
   ativa: boolean; meta: number; unidade: string; peso: number; percentual: number; falta: number; atingida: boolean;
-  valorBruto: number; valorLiberado: number; detalhes: DetalheMetaGeralApi[];
+  valorBruto: number; valorLiberado: number; valorPremio: number; valorPremioLiberado: number; valorExcedenteLiberado: number;
+  creditoUtilizado: number; saldoCredito: number; detalhes: DetalheMetaGeralApi[];
 };
 
 export type ConfiguracaoMetaGeralApi = {
-  uuid: string; ativa: boolean; meta_diaria: number; unidade: string; atualizado_em: string;
+  uuid: string; ativa: boolean; meta_diaria: number; valor_premio: number; unidade: string; atualizado_em: string;
 };
 
 export type AdministradorApi = {

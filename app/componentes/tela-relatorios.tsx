@@ -15,7 +15,8 @@ type PesagemApi = {
   uuid: string; codigo: string; criado_em: string; data_hora: string; atualizado_em: string; peso_total: number; valor_total: number;
   status: StatusPesagem; observacao: string | null; excluida_em: string | null; motivo_exclusao: string | null;
   catador_uuid: string; codigo_catador: string; catador: string; material_uuid: string; material: string;
-  cooperativa_uuid: string; cooperativa: string | null; meta_diaria: number; percentual_meta: number; tipo_meta: "geral" | "material" | "fora_meta"; contabiliza_meta: boolean; valor_bruto: number; status_caixa: "aberto" | "fechado" | null;
+  cooperativa_uuid: string; cooperativa: string | null; meta_diaria: number; percentual_meta: number; tipo_meta: "geral" | "material" | "fora_meta"; contabiliza_meta: boolean; guardar_excedente_meta: boolean; valor_bruto: number; status_caixa: "aberto" | "fechado" | null;
+  peso_meta_aplicado: number; peso_excedente_pago: number; peso_excedente_credito: number; valor_premio_meta: number; valor_excedente_material: number;
   ponto_apoio_uuid: string; ponto_apoio: string; responsavel_pesagem_uuid: string | null; responsavel_outro: string | null; responsavel: string;
   historico: EventoAuditoria[];
 };
@@ -53,7 +54,7 @@ export function TelaRelatorios() {
   const [historicoAberto, setHistoricoAberto] = useState<PesagemApi | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [motivoExclusao, setMotivoExclusao] = useState("");
-  const [formulario, setFormulario] = useState({ catadorUuid: "", cooperativaUuid: "", pontoApoioUuid: "", responsavelUuid: "", responsavelOutro: "", materialUuid: "", contabilizarNaMeta: true, peso: "", dataHora: "", status: "concluida" as StatusPesagem, observacao: "", motivoAlteracao: "" });
+  const [formulario, setFormulario] = useState({ catadorUuid: "", cooperativaUuid: "", pontoApoioUuid: "", responsavelUuid: "", responsavelOutro: "", materialUuid: "", contabilizarNaMeta: true, guardarExcedenteMeta: false, peso: "", dataHora: "", status: "concluida" as StatusPesagem, observacao: "", motivoAlteracao: "" });
   const termoBusca = useTermoBusca(busca);
 
   const carregar = useCallback(async () => {
@@ -90,7 +91,7 @@ export function TelaRelatorios() {
 
   function abrirEdicao(item: PesagemApi) {
     setEditando(item);
-    setFormulario({ catadorUuid: item.catador_uuid, cooperativaUuid: item.cooperativa_uuid, pontoApoioUuid: item.ponto_apoio_uuid, responsavelUuid: item.responsavel_pesagem_uuid ?? "outro", responsavelOutro: item.responsavel_outro ?? "", materialUuid: item.material_uuid, contabilizarNaMeta: item.contabiliza_meta, peso: String(item.peso_total), dataHora: paraDataHoraLocal(item.data_hora), status: item.status, observacao: item.observacao ?? "", motivoAlteracao: "" });
+    setFormulario({ catadorUuid: item.catador_uuid, cooperativaUuid: item.cooperativa_uuid, pontoApoioUuid: item.ponto_apoio_uuid, responsavelUuid: item.responsavel_pesagem_uuid ?? "outro", responsavelOutro: item.responsavel_outro ?? "", materialUuid: item.material_uuid, contabilizarNaMeta: item.contabiliza_meta, guardarExcedenteMeta: item.guardar_excedente_meta, peso: String(item.peso_total), dataHora: paraDataHoraLocal(item.data_hora), status: item.status, observacao: item.observacao ?? "", motivoAlteracao: "" });
   }
 
   async function salvarEdicao() {
@@ -107,6 +108,7 @@ export function TelaRelatorios() {
         responsavelOutro: formulario.responsavelUuid === "outro" ? formulario.responsavelOutro.trim() : undefined,
         materialUuid: formulario.materialUuid,
         contabilizarNaMeta: formulario.contabilizarNaMeta,
+        guardarExcedenteMeta: formulario.contabilizarNaMeta && formulario.guardarExcedenteMeta,
         peso,
         dataHora: new Date(formulario.dataHora).toISOString(),
         status: formulario.status,
