@@ -3,7 +3,7 @@
 /* eslint-disable jsx-a11y/label-has-associated-control, @next/next/no-img-element, react-hooks/set-state-in-effect -- controles compostos e carregamentos persistidos ao montar */
 
 import { useCallback, useEffect, useState, type ChangeEvent } from "react";
-import { KeyRound, Pencil, Plus, ShieldCheck, Trash2, UserRound, X } from "lucide-react";
+import { Ban, CheckCircle2, KeyRound, Pencil, Plus, ShieldCheck, Target, Trash2, UserRound, X } from "lucide-react";
 import { requisitarApi, type AdministradorApi, type ConfiguracaoMetaGeralApi, type MaterialApi, type ResponsavelPesagemApi } from "@/app/dados/api";
 import { useIdentidadeVisual, type IdentidadeVisual } from "@/app/configuracao/identidade-visual";
 import { ModalConfirmacao } from "@/app/componentes/modal-confirmacao";
@@ -33,6 +33,8 @@ export function TelaConfiguracoes({ administrador, onAdministradorAtualizado }: 
   const abaInicial: AbaConfiguracao = podeMateriais || podeMetas ? "materiais" : podeResponsaveis ? "responsaveis" : "identidade";
   const [aba, setAba] = useState<AbaConfiguracao>(abaInicial);
   const [materiais, setMateriais] = useState<MaterialApi[]>([]);
+  const [materiaisMetaSelecionados, setMateriaisMetaSelecionados] = useState<string[]>([]);
+  const [salvandoMateriaisMeta, setSalvandoMateriaisMeta] = useState(false);
   const [modal, setModal] = useState(false);
   const [materialEdicao, setMaterialEdicao] = useState<MaterialApi | null>(null);
   const [formMaterial, setFormMaterial] = useState({ nome: "", tipoMaterial: "Outro", unidade: "kg", quantidadeReferencia: "1", valorReferencia: "0", metaDiaria: "", validoParaMeta: true, ativo: true });
@@ -53,7 +55,7 @@ export function TelaConfiguracoes({ administrador, onAdministradorAtualizado }: 
   const [dadosSenha, setDadosSenha] = useState({ senhaAtual: "", novaSenha: "", confirmarSenha: "" });
   const [salvandoConta, setSalvandoConta] = useState(false);
   const itensPorPagina = 6;
-  const carregarMateriais = useCallback(async () => { try { const dados = await requisitarApi<{ dados: MaterialApi[] }>("/api/materiais"); setMateriais(dados.dados); setPaginaMateriais((paginaAtual) => Math.min(paginaAtual, Math.max(1, Math.ceil(dados.dados.length / itensPorPagina)))); } catch (erro) { setMensagem(erro instanceof Error ? erro.message : "Não foi possível carregar os materiais."); } }, []);
+  const carregarMateriais = useCallback(async () => { try { const dados = await requisitarApi<{ dados: MaterialApi[] }>("/api/materiais"); setMateriais(dados.dados); setMateriaisMetaSelecionados(dados.dados.filter((material) => material.contabiliza_meta).map((material) => material.uuid)); setPaginaMateriais((paginaAtual) => Math.min(paginaAtual, Math.max(1, Math.ceil(dados.dados.length / itensPorPagina)))); } catch (erro) { setMensagem(erro instanceof Error ? erro.message : "Não foi possível carregar os materiais."); } }, []);
   const carregarResponsaveis = useCallback(async () => { try { const dados = await requisitarApi<{ dados: ResponsavelPesagemApi[] }>("/api/responsaveis-pesagem?incluirInativos=true"); setResponsaveis(dados.dados); setPaginaResponsaveis((paginaAtual) => Math.min(paginaAtual, Math.max(1, Math.ceil(dados.dados.length / itensPorPagina)))); } catch (erro) { setMensagem(erro instanceof Error ? erro.message : "Não foi possível carregar os responsáveis."); } }, []);
   const carregarMetaGeral = useCallback(async () => { try { const dados = await requisitarApi<ConfiguracaoMetaGeralApi>("/api/configuracoes/meta-geral"); setMetaGeral({ ativa: dados.ativa, metaDiaria: String(dados.meta_diaria), valorPremio: String(dados.valor_premio), unidade: dados.unidade }); } catch (erro) { setMensagem(erro instanceof Error ? erro.message : "Não foi possível carregar a meta geral."); } }, []);
   useEffect(() => {
@@ -129,6 +131,23 @@ export function TelaConfiguracoes({ administrador, onAdministradorAtualizado }: 
     finally { setSalvandoMetaGeral(false); }
   }
 
+  function alternarParticipacaoMeta(materialUuid: string) {
+    if (!podeMetas) return;
+    setMateriaisMetaSelecionados((selecionados) => selecionados.includes(materialUuid) ? selecionados.filter((uuid) => uuid !== materialUuid) : [...selecionados, materialUuid]);
+    setMensagem("");
+  }
+
+  async function salvarMateriaisDaMeta() {
+    if (!podeMetas) return;
+    setSalvandoMateriaisMeta(true); setMensagem("");
+    try {
+      const resultado = await requisitarApi<{ total: number; selecionados: number; alterados: number }>("/api/materiais/participacao-meta", { method: "PATCH", body: JSON.stringify({ materiaisUuids: materiaisMetaSelecionados }) });
+      setMensagem(resultado.alterados > 0 ? `${resultado.selecionados} de ${resultado.total} materiais agora participam das metas. A alteração vale para novas pesagens.` : "A seleção de materiais da meta já estava atualizada.");
+      await carregarMateriais();
+    } catch (erro) { setMensagem(erro instanceof Error ? erro.message : "Não foi possível salvar os materiais participantes da meta."); }
+    finally { setSalvandoMateriaisMeta(false); }
+  }
+
   function atualizar<K extends keyof IdentidadeVisual>(campo: K, valor: IdentidadeVisual[K]) {
     setEdicao((atual) => ({ ...atual, [campo]: valor }));
     setMensagem("");
@@ -196,6 +215,7 @@ export function TelaConfiguracoes({ administrador, onAdministradorAtualizado }: 
   }
 
   const materiaisPaginados = materiais.slice((paginaMateriais - 1) * itensPorPagina, paginaMateriais * itensPorPagina);
+  const selecaoMateriaisAlterada = materiais.some((material) => materiaisMetaSelecionados.includes(material.uuid) !== material.contabiliza_meta);
   const responsaveisPaginados = responsaveis.slice((paginaResponsaveis - 1) * itensPorPagina, paginaResponsaveis * itensPorPagina);
 
   return <section className={`pagina-interna configuracoes${podeMateriais ? "" : " sem-gerenciar-materiais"}${podeMetas ? "" : " sem-gerenciar-meta"}`}>
@@ -259,7 +279,8 @@ export function TelaConfiguracoes({ administrador, onAdministradorAtualizado }: 
       <div className="resumo-pagina"><div><h2>Materiais e valores</h2><p>Configurações armazenadas no PostgreSQL.</p></div>{podeMateriais && <button className="botao-primario" onClick={() => abrirMaterial()}><Plus /> Novo material</button>}</div>
       {mensagem && <p className="mensagem-configuracao" role="status">{mensagem}</p>}
       <section className="painel configuracao-meta-geral"><header><div><span>META FINANCEIRA PRINCIPAL</span><h3>Meta geral diária com prêmio fixo</h3><p>Quando ativa, soma somente materiais e entregas escolhidos para a meta e prevalece sobre as metas específicas.</p></div><label className="interruptor compacto"><input type="checkbox" checked={metaGeral.ativa} onChange={(evento) => setMetaGeral((atual) => ({ ...atual, ativa: evento.target.checked }))} /><span /><div><strong>{metaGeral.ativa ? "Meta geral ativa" : "Meta geral desativada"}</strong></div></label></header><div className="grade-formulario"><label className="campo">Quantidade diária<input inputMode="decimal" value={metaGeral.metaDiaria} onChange={(evento) => setMetaGeral((atual) => ({ ...atual, metaDiaria: evento.target.value }))} /></label><label className="campo">Prêmio fixo ao bater a meta (R$)<input inputMode="decimal" value={metaGeral.valorPremio} onChange={(evento) => setMetaGeral((atual) => ({ ...atual, valorPremio: evento.target.value }))} /></label><label className="campo">Unidade<select value={metaGeral.unidade} onChange={(evento) => setMetaGeral((atual) => ({ ...atual, unidade: evento.target.value }))}><option value="kg">kg</option></select></label><button type="button" className="botao-primario" onClick={() => void salvarMetaGeral()} disabled={salvandoMetaGeral}>{salvandoMetaGeral ? "Salvando..." : "Salvar meta geral"}</button></div><small>O peso usado para alcançar a meta não recebe o preço dos materiais: libera somente o prêmio fixo. O excedente pode ser pago ou guardado para uma meta futura. O novo prêmio recalcula caixas abertos de hoje; caixas fechados preservam a configuração auditada.</small></section>
-      <div className="lista-materiais">{materiaisPaginados.map((material) => <article key={material.uuid}><span className="amostra-material">{material.tipo_material.slice(0, 2).toUpperCase()}</span><div className="nome-material"><strong>{material.nome}</strong><small>{material.tipo_material} · {material.unidade.toUpperCase()}</small></div><div><small>Pagamento e meta diária</small><strong>{Number(material.valor_referencia).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} / {Number(material.quantidade_referencia)} {material.unidade} · {material.contabiliza_meta ? Number(material.meta_diaria) > 0 ? `Meta ${Number(material.meta_diaria)} ${material.unidade}` : "Válido para a meta geral" : "Fora das metas · pagamento imediato"}</strong></div><span className={material.status === "ativo" ? "status ativo" : "status"}>● {material.status}</span><div className="acoes-material"><button className="menu-acoes editar" onClick={() => abrirMaterial(material)} aria-label={`Editar ${material.nome}`} title="Editar material"><Pencil /></button><button className="menu-acoes perigoso" onClick={() => setConfirmacaoExclusao({ tipo: "material", item: material })} aria-label={`Excluir ${material.nome}`} title="Excluir material"><Trash2 /></button></div></article>)}</div>
+      <section className="controle-materiais-meta" aria-labelledby="titulo-materiais-meta"><header><span><Target /></span><div><small>COMPOSIÇÃO DA META</small><h3 id="titulo-materiais-meta">Escolha quais materiais contam para a meta</h3><p>Marque somente os materiais cujo peso deve ajudar o catador a alcançar a meta. Materiais deixados de fora são pagos imediatamente pelo valor configurado.</p></div></header><div><strong>{materiaisMetaSelecionados.length} de {materiais.length} selecionados</strong><button type="button" className="botao-primario" onClick={() => void salvarMateriaisDaMeta()} disabled={!podeMetas || salvandoMateriaisMeta || !selecaoMateriaisAlterada}>{salvandoMateriaisMeta ? "Salvando seleção..." : selecaoMateriaisAlterada ? "Salvar materiais da meta" : "Seleção salva"}</button></div></section>
+      <div className="lista-materiais">{materiaisPaginados.map((material) => { const participaMeta = materiaisMetaSelecionados.includes(material.uuid); return <article key={material.uuid}><span className="amostra-material">{material.tipo_material.slice(0, 2).toUpperCase()}</span><div className="nome-material"><strong>{material.nome}</strong><small>{material.tipo_material} · {material.unidade.toUpperCase()}</small></div><div><small>Pagamento e meta diária</small><strong>{Number(material.valor_referencia).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} / {Number(material.quantidade_referencia)} {material.unidade} · {participaMeta ? Number(material.meta_diaria) > 0 ? `Meta ${Number(material.meta_diaria)} ${material.unidade}` : "Válido para a meta geral" : "Fora das metas · pagamento imediato"}</strong></div><label className={participaMeta ? "seletor-participacao-material selecionado" : "seletor-participacao-material"}><input type="checkbox" checked={participaMeta} disabled={!podeMetas} onChange={() => alternarParticipacaoMeta(material.uuid)} /><span aria-hidden="true">{participaMeta ? <CheckCircle2 /> : <Ban />}</span><div><strong>{participaMeta ? "Conta para a meta" : "Fora da meta"}</strong><small>{participaMeta ? "O peso pode compor metas" : "Pagamento imediato"}</small></div></label><span className={material.status === "ativo" ? "status ativo" : "status"}>● {material.status}</span>{podeMateriais && <div className="acoes-material"><button className="menu-acoes editar" onClick={() => abrirMaterial(material)} aria-label={`Editar ${material.nome}`} title="Editar material"><Pencil /></button><button className="menu-acoes perigoso" onClick={() => setConfirmacaoExclusao({ tipo: "material", item: material })} aria-label={`Excluir ${material.nome}`} title="Excluir material"><Trash2 /></button></div>}</article>; })}</div>
       <Paginacao pagina={paginaMateriais} total={materiais.length} itensPorPagina={itensPorPagina} aoMudarPagina={setPaginaMateriais} rotulo="materiais" />
       <div className="nota-configuracao"><span>i</span><p><strong>Como o valor é calculado?</strong><br />Somente materiais marcados como válidos podem compor metas. Mesmo nesses materiais, a equipe pode registrar uma entrega fora da meta e liberar o pagamento imediatamente. A escolha fica preservada no histórico.</p></div>
     </>}

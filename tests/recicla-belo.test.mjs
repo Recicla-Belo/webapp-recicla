@@ -24,9 +24,10 @@ test("renderiza a experiência do Recicla Belô", async () => {
 });
 
 test("mantém ambiente, banco e instalação documentados", async () => {
-  const [migracaoPerfis, painelUsuarios] = await Promise.all([
+  const [migracaoPerfis, painelUsuarios, migracaoDescricaoMetas] = await Promise.all([
     readFile(new URL("../servidor/migracoes/016_perfis_acesso_usuarios.sql", import.meta.url), "utf8"),
     readFile(new URL("../app/componentes/painel-usuarios.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../servidor/migracoes/018_descricao_permissao_metas_materiais.sql", import.meta.url), "utf8"),
   ]);
   const [exemplo, estilos, migracao, migracaoNotificacoes, migracaoAuditoria, migracaoCaixas, migracaoLimpeza, migracaoNotificacoesOrfas, migracaoPagamentoMeta, migracaoMetaGeral, migracaoSessao, migracaoMateriaisMeta, sqlCompleto, instalador, instaladorProducao, composeProducao, dockerfileProducao, supervisor, servidor, estrutura, api, painel, telaLogin, telaPesagem, telaCatadores, telaCooperativas, telaRelatorios, telaConfiguracoes, paginacao, leiaMe, pacote] = await Promise.all([
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
@@ -81,6 +82,7 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(migracaoSessao, /versao_sessao/);
   assert.match(migracaoPerfis, /perfil_acesso_usuario/);
   assert.match(migracaoPerfis, /operador_cadastro/);
+  assert.match(migracaoDescricaoMetas, /Gerenciar metas e materiais participantes/);
   assert.match(sqlCompleto, /perfil perfil_acesso_usuario/);
   assert.match(migracaoMateriaisMeta, /ALTER TABLE materiais[\s\S]*contabiliza_meta/);
   assert.match(migracaoMateriaisMeta, /ALTER TABLE itens_pesagem[\s\S]*contabiliza_meta/);
@@ -164,6 +166,10 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(telaConfiguracoes, /placeholder="Sem meta específica"/);
   assert.match(telaConfiguracoes, /Material válido para metas/);
   assert.match(telaConfiguracoes, /validoParaMeta/);
+  assert.match(telaConfiguracoes, /Escolha quais materiais contam para a meta/);
+  assert.match(telaConfiguracoes, /\/api\/materiais\/participacao-meta/);
+  assert.match(telaConfiguracoes, /Conta para a meta/);
+  assert.match(telaConfiguracoes, /Fora da meta/);
   assert.match(telaConfiguracoes, /Conta do administrador/);
   assert.match(telaConfiguracoes, /Usuários e permissões/);
   assert.match(painelUsuarios, /Nova conta/);
@@ -181,6 +187,8 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(servidor, /alteracao_senha/);
   assert.match(servidor, /versaoSessao/);
   assert.match(servidor, /permissoesExigidasPelaRota/);
+  assert.match(servidor, /aplicacao\.patch\("\/api\/materiais\/participacao-meta"/);
+  assert.match(servidor, /materiais_participantes/);
   assert.match(servidor, /permissoes_usuario/);
   assert.match(servidor, /Sua conta não possui permissão/);
   assert.match(servidor, /aplicacao\.post\("\/api\/responsaveis-pesagem"/);

@@ -757,3 +757,10 @@ SELECT u.uuid,p.chave FROM usuarios u CROSS JOIN (VALUES
 ) AS p(chave)
 WHERE u.perfil='operador_cadastro'
 ON CONFLICT DO NOTHING;
+
+-- 018_descricao_permissao_metas_materiais.sql
+UPDATE permissoes
+SET nome = 'Gerenciar metas e materiais participantes',
+    descricao = 'Alterar a meta geral, o prêmio e escolher quais materiais participam das metas.',
+    atualizado_em = now()
+WHERE chave = 'metas_gerenciar';

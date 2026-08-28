@@ -49,6 +49,22 @@ async function executar() {
   assert.ok(catalogoPermissoes.length >= 18);
   assert.ok(catalogoPermissoes.some((item) => item.chave === "cooperativas_editar"));
 
+  const materiaisAntesDaSelecao = (await chamar("/api/materiais")).dados.dados;
+  const materiaisSelecionadosOriginais = materiaisAntesDaSelecao.filter((material) => material.contabiliza_meta).map((material) => material.uuid);
+  const selecaoTemporaria = materiaisSelecionadosOriginais.length === materiaisAntesDaSelecao.length
+    ? materiaisSelecionadosOriginais.slice(0, -1)
+    : materiaisAntesDaSelecao.map((material) => material.uuid);
+  try {
+    const atualizacaoParticipantes = await chamar("/api/materiais/participacao-meta", { method: "PATCH", body: JSON.stringify({ materiaisUuids: selecaoTemporaria }) });
+    assert.equal(atualizacaoParticipantes.dados.selecionados, selecaoTemporaria.length);
+    const materiaisDepoisDaSelecao = (await chamar("/api/materiais")).dados.dados;
+    assert.deepEqual(materiaisDepoisDaSelecao.filter((material) => material.contabiliza_meta).map((material) => material.uuid).sort(), [...selecaoTemporaria].sort());
+  } finally {
+    await chamar("/api/materiais/participacao-meta", { method: "PATCH", body: JSON.stringify({ materiaisUuids: materiaisSelecionadosOriginais }) });
+    await bancoTeste.query("DELETE FROM notificacoes WHERE entidade='configuracoes_meta_geral' AND criado_em >= $1", [inicioTeste]);
+    await bancoTeste.query("DELETE FROM auditoria WHERE entidade='configuracoes_meta_geral' AND dados->>'tipo'='materiais_participantes' AND criado_em >= $1", [inicioTeste]);
+  }
+
   const cookieAdministradorPermissoes = cookie;
   const emailRestrito = `cadastro-${Date.now()}-${process.pid}@reciclabelo.local`;
   const senhaRestrita = `Cadastro!${Date.now()}Aa`;
@@ -72,6 +88,8 @@ async function executar() {
     assert.equal(exclusaoBloqueada.status, 403);
     const configuracaoBloqueada = await fetch(`${urlApi}/api/materiais`, { method: "POST", headers: { "content-type": "application/json", cookie: cookieRestrito }, body: JSON.stringify({ nome: "Material indevido", tipoMaterial: "Teste", unidade: "kg", quantidadeReferencia: 1, valorReferencia: 1, metaDiaria: 0, ativo: true }) });
     assert.equal(configuracaoBloqueada.status, 403);
+    const selecaoMetaBloqueada = await fetch(`${urlApi}/api/materiais/participacao-meta`, { method: "PATCH", headers: { "content-type": "application/json", cookie: cookieRestrito }, body: JSON.stringify({ materiaisUuids: [] }) });
+    assert.equal(selecaoMetaBloqueada.status, 403);
     assert.equal((await fetch(`${urlApi}/api/catadores`, { headers: { cookie: cookieRestrito } })).status, 403);
     cookie = cookieAdministradorPermissoes;
     const permissoesComEdicao = [...permissoesRestritas, "cooperativas_editar"];

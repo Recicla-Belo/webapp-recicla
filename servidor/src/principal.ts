@@ -397,6 +397,7 @@ function permissoesExigidasPelaRota(requisicao: FastifyRequest): PermissaoUsuari
   if (metodo === "POST" && rota === "/api/pesagens") return ["pesagens_cadastrar"];
   if (metodo === "PUT" && rota === "/api/pesagens/:uuid") return ["pesagens_editar"];
   if (metodo === "DELETE" && rota === "/api/pesagens/:uuid") return ["pesagens_excluir"];
+  if (metodo === "PATCH" && rota === "/api/materiais/participacao-meta") return ["metas_gerenciar"];
   if (["POST", "PUT", "DELETE"].includes(metodo) && rota.startsWith("/api/materiais")) return ["materiais_gerenciar"];
   if (["POST", "PUT", "DELETE"].includes(metodo) && rota.startsWith("/api/responsaveis-pesagem")) return ["responsaveis_gerenciar"];
   if (metodo === "PUT" && rota === "/api/configuracoes/meta-geral") return ["metas_gerenciar"];
@@ -1002,6 +1003,51 @@ aplicacao.get("/api/catadores/:uuid/foto", async (requisicao, resposta) => {
 aplicacao.get("/api/materiais", async () => {
   const { rows } = await banco.query("SELECT * FROM materiais ORDER BY status DESC, nome");
   return { dados: rows };
+});
+
+aplicacao.patch("/api/materiais/participacao-meta", async (requisicao, resposta) => {
+  const entrada = z.object({
+    materiaisUuids: z.array(z.uuid()).max(500).refine((itens) => new Set(itens).size === itens.length, "Não repita materiais."),
+  }).safeParse(requisicao.body);
+  if (!entrada.success) return resposta.code(400).send({ mensagem: "Revise os materiais selecionados para a meta.", detalhes: z.treeifyError(entrada.error) });
+
+  const cliente = await banco.connect();
+  try {
+    await cliente.query("BEGIN");
+    const materiais = await cliente.query<{ uuid: string; nome: string; contabiliza_meta: boolean }>(
+      "SELECT uuid,nome,contabiliza_meta FROM materiais ORDER BY nome FOR UPDATE",
+    );
+    const existentes = new Set(materiais.rows.map((material) => material.uuid));
+    if (entrada.data.materiaisUuids.some((uuid) => !existentes.has(uuid))) {
+      await cliente.query("ROLLBACK");
+      return resposta.code(400).send({ mensagem: "Um dos materiais selecionados não existe mais. Atualize a página e tente novamente." });
+    }
+
+    const selecionados = new Set(entrada.data.materiaisUuids);
+    const antes = materiais.rows.filter((material) => material.contabiliza_meta).map((material) => ({ uuid: material.uuid, nome: material.nome }));
+    const depois = materiais.rows.filter((material) => selecionados.has(material.uuid)).map((material) => ({ uuid: material.uuid, nome: material.nome }));
+    const alterados = materiais.rows.filter((material) => material.contabiliza_meta !== selecionados.has(material.uuid));
+
+    if (alterados.length > 0) {
+      await cliente.query(`UPDATE materiais
+        SET contabiliza_meta=(uuid=ANY($1::uuid[])),atualizado_em=now()
+        WHERE contabiliza_meta IS DISTINCT FROM (uuid=ANY($1::uuid[]))`, [entrada.data.materiaisUuids]);
+      const configuracao = await cliente.query<{ uuid: string }>("SELECT uuid FROM configuracoes_meta_geral WHERE chave='principal'");
+      await registrarAuditoria(cliente, requisicao.user.usuarioUuid, "alteracao", "configuracoes_meta_geral", configuracao.rows[0]!.uuid, {
+        tipo: "materiais_participantes",
+        antes,
+        depois,
+        materiaisAlterados: alterados.map((material) => material.nome),
+        observacao: "A alteração vale para novas pesagens; registros anteriores preservam a configuração usada no lançamento.",
+      }, requisicao.ip);
+      await criarNotificacao(cliente, requisicao.user.usuarioUuid, "meta", "Materiais participantes da meta atualizados", `${depois.length} de ${materiais.rows.length} materiais passam a contar para novas metas.`, "configuracoes_meta_geral", configuracao.rows[0]!.uuid);
+    }
+    await cliente.query("COMMIT");
+    return { total: materiais.rows.length, selecionados: depois.length, alterados: alterados.length };
+  } catch (erro) {
+    await cliente.query("ROLLBACK");
+    throw erro;
+  } finally { cliente.release(); }
 });
 
 const esquemaMaterial = z.object({ nome: z.string().trim().min(2).max(160), tipoMaterial: z.string().trim().min(2).max(100), unidade: z.string().trim().min(1).max(30), quantidadeReferencia: z.number().positive(), valorReferencia: z.number().nonnegative(), metaDiaria: z.number().nonnegative(), validoParaMeta: z.boolean().default(true), ativo: z.boolean().default(true) });
