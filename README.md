@@ -24,7 +24,7 @@ WebApp responsivo para gestão de cooperativas de reciclagem, catadores, produç
 - menu móvel com rolagem própria, áreas seguras do iPhone e proteção contra estouro horizontal da página;
 - API autenticada, PostgreSQL com UUID, auditoria, índices e pesquisa textual em português.
 - conta administrativa editável sob demanda: nome/e-mail e senha ficam ocultos até a ação escolhida, exigem a senha atual, geram auditoria e a troca de senha revoga as sessões anteriores.
-- contas de cadastro restrito gerenciadas pelo administrador, com autorização aplicada no backend: podem consultar o painel e inserir catadores, cooperativas e pesagens, mas não podem editar, excluir, movimentar caixas ou acessar configurações sensíveis.
+- contas operacionais com permissões granulares escolhidas pelo administrador e validadas no backend para painel, catadores, cooperativas, pesagens, relatórios, caixas e configurações.
 
 ## Arquitetura
 
@@ -168,7 +168,7 @@ Não existe tela pública de cadastro. A senha solicitada para o ambiente local 
 
 ### Contas restritas para a equipe
 
-O administrador pode abrir **Configurações → Usuários e permissões** e criar uma ou mais contas de cadastro restrito. Cada conta possui nome, e-mail, senha forte e situação ativa/bloqueada. Alterar ou bloquear uma conta revoga imediatamente todas as sessões anteriores; registros de usuários não são apagados, preservando a auditoria.
+O administrador pode abrir **Configurações → Usuários e permissões** e criar uma ou mais contas operacionais. Para cada conta, ele escolhe individualmente as permissões de consulta, cadastro, edição, exclusão, caixa, relatórios e configurações. A API nega por padrão qualquer operação não concedida; rotas de administração de usuários e da conta principal nunca podem ser delegadas. Cada conta também possui nome, e-mail, senha forte e situação ativa/bloqueada. Alterar permissões, senha ou situação revoga imediatamente todas as sessões anteriores, e a mudança fica registrada na auditoria.
 
 A conta restrita pode consultar dados e cadastrar catadores, cooperativas/associações e novas pesagens. Ela não pode editar, inativar ou excluir registros existentes, fechar ou reabrir caixas, gerenciar materiais, responsáveis, metas, identidade visual, outras contas ou os dados do administrador. Esses bloqueios são validados pelo servidor com resposta HTTP `403`, mesmo que alguém tente chamar a API diretamente.
 

@@ -37,7 +37,7 @@ await aplicacao.register(rateLimit, {
   global: true,
   max: 240,
   timeWindow: "1 minute",
-  errorResponseBuilder: () => ({ mensagem: "Muitas requisições. Aguarde alguns instantes e tente novamente." }),
+  errorResponseBuilder: () => ({ statusCode: 429, error: "Too Many Requests", message: "Muitas requisições. Aguarde alguns instantes e tente novamente." }),
 });
 await aplicacao.register(cookie);
 await aplicacao.register(jwt, {
@@ -59,14 +59,26 @@ const opcoesCookieSessao = {
 };
 
 type PerfilAcesso = "administrador" | "operador_cadastro";
-type UsuarioAtivo = { uuid: string; nome: string; email: string; administrador: boolean; perfil: PerfilAcesso; versao_sessao: number };
+const chavesPermissao = [
+  "painel_visualizar",
+  "catadores_visualizar", "catadores_cadastrar", "catadores_editar", "catadores_excluir", "catadores_gerenciar_caixa",
+  "cooperativas_visualizar", "cooperativas_cadastrar", "cooperativas_editar", "cooperativas_excluir",
+  "pesagens_cadastrar", "relatorios_visualizar", "pesagens_editar", "pesagens_excluir",
+  "materiais_gerenciar", "responsaveis_gerenciar", "metas_gerenciar", "identidade_visual_gerenciar",
+] as const;
+type PermissaoUsuario = typeof chavesPermissao[number];
+type UsuarioAtivo = { uuid: string; nome: string; email: string; administrador: boolean; perfil: PerfilAcesso; versao_sessao: number; permissoes: PermissaoUsuario[] };
 type ExecutorSql = { query: <R extends QueryResultRow = QueryResultRow>(texto: string, valores?: unknown[]) => Promise<QueryResult<R>> };
 type EnderecoCep = { cep: string; logradouro: string; complemento: string; bairro: string; cidade: string; estado: string };
 const cacheEnderecosCep = new Map<string, { endereco: EnderecoCep; expiraEm: number }>();
 
 async function buscarUsuarioAtivo(usuarioUuid: string) {
   const resultado = await banco.query<UsuarioAtivo>(
-    "SELECT uuid,nome,email,administrador,perfil,versao_sessao FROM usuarios WHERE uuid=$1 AND ativo=TRUE LIMIT 1",
+    `SELECT u.uuid,u.nome,u.email,u.administrador,u.perfil,u.versao_sessao,
+      coalesce(array_agg(pu.permissao_chave ORDER BY pu.permissao_chave) FILTER (WHERE pu.permissao_chave IS NOT NULL),'{}') AS permissoes
+     FROM usuarios u LEFT JOIN permissoes_usuario pu ON pu.usuario_uuid=u.uuid
+     WHERE u.uuid=$1 AND u.ativo=TRUE
+     GROUP BY u.uuid,u.nome,u.email,u.administrador,u.perfil,u.versao_sessao LIMIT 1`,
     [usuarioUuid],
   );
   return resultado.rows[0];
@@ -358,16 +370,37 @@ async function exigirAutenticacao(requisicao: FastifyRequest, resposta: FastifyR
   return usuario;
 }
 
-function rotaPermitidaAoOperador(requisicao: FastifyRequest) {
+function permissoesExigidasPelaRota(requisicao: FastifyRequest): PermissaoUsuario[] | "autenticado" | "administrador" {
   const metodo = requisicao.method;
   const rota = requisicao.routeOptions.url ?? requisicao.url.split("?", 1)[0] ?? "";
-  if (["GET", "HEAD", "OPTIONS"].includes(metodo)) {
-    return !rota.startsWith("/api/administrador") && !rota.startsWith("/api/usuarios") && rota !== "/api/configuracoes/meta-geral";
+  if (rota === "/api/autenticacao/sair" || rota.startsWith("/api/notificacoes")) return "autenticado";
+  if (rota.startsWith("/api/administrador") || rota.startsWith("/api/usuarios") || rota === "/api/permissoes") return "administrador";
+  if (metodo === "GET" || metodo === "HEAD") {
+    if (rota === "/api/painel") return ["painel_visualizar"];
+    if (["/api/catadores", "/api/catadores/:uuid/perfil", "/api/catadores/:uuid/foto", "/api/catadores/:uuid/metas"].includes(rota)) return ["catadores_visualizar", "pesagens_cadastrar", "relatorios_visualizar"];
+    if (rota === "/api/cooperativas") return ["cooperativas_visualizar", "catadores_visualizar", "catadores_cadastrar", "catadores_editar", "pesagens_cadastrar", "relatorios_visualizar"];
+    if (rota === "/api/materiais") return ["materiais_gerenciar", "metas_gerenciar", "pesagens_cadastrar", "relatorios_visualizar"];
+    if (rota === "/api/configuracoes/meta-geral") return ["metas_gerenciar", "pesagens_cadastrar"];
+    if (rota === "/api/pontos-apoio") return ["pesagens_cadastrar", "relatorios_visualizar"];
+    if (rota === "/api/responsaveis-pesagem") return ["responsaveis_gerenciar", "pesagens_cadastrar", "relatorios_visualizar"];
+    if (rota === "/api/enderecos/cep/:cep") return ["catadores_cadastrar", "catadores_editar"];
+    if (rota === "/api/relatorios/pesagens") return ["relatorios_visualizar"];
   }
-  if (metodo === "POST") {
-    return rota === "/api/autenticacao/sair" || rota === "/api/cooperativas" || rota === "/api/catadores" || rota === "/api/catadores/:uuid/foto" || rota === "/api/pesagens";
-  }
-  return rota.startsWith("/api/notificacoes") && ["PATCH", "DELETE"].includes(metodo);
+  if (metodo === "POST" && rota === "/api/catadores") return ["catadores_cadastrar"];
+  if (metodo === "POST" && rota === "/api/catadores/:uuid/foto") return ["catadores_cadastrar", "catadores_editar"];
+  if ((metodo === "PUT" && rota === "/api/catadores/:uuid") || (metodo === "PATCH" && rota === "/api/catadores/:uuid/status")) return ["catadores_editar"];
+  if (metodo === "DELETE" && rota === "/api/catadores/:uuid") return ["catadores_excluir"];
+  if (metodo === "POST" && rota.startsWith("/api/catadores/:uuid/caixa/")) return ["catadores_gerenciar_caixa"];
+  if (metodo === "POST" && rota === "/api/cooperativas") return ["cooperativas_cadastrar"];
+  if (metodo === "PUT" && rota === "/api/cooperativas/:uuid") return ["cooperativas_editar"];
+  if (metodo === "DELETE" && rota === "/api/cooperativas/:uuid") return ["cooperativas_excluir"];
+  if (metodo === "POST" && rota === "/api/pesagens") return ["pesagens_cadastrar"];
+  if (metodo === "PUT" && rota === "/api/pesagens/:uuid") return ["pesagens_editar"];
+  if (metodo === "DELETE" && rota === "/api/pesagens/:uuid") return ["pesagens_excluir"];
+  if (["POST", "PUT", "DELETE"].includes(metodo) && rota.startsWith("/api/materiais")) return ["materiais_gerenciar"];
+  if (["POST", "PUT", "DELETE"].includes(metodo) && rota.startsWith("/api/responsaveis-pesagem")) return ["responsaveis_gerenciar"];
+  if (metodo === "PUT" && rota === "/api/configuracoes/meta-geral") return ["metas_gerenciar"];
+  return "administrador";
 }
 
 aplicacao.addHook("onRequest", async (requisicao, resposta) => {
@@ -375,8 +408,9 @@ aplicacao.addHook("onRequest", async (requisicao, resposta) => {
   if (!caminho.startsWith("/api/") || rotasPublicas.has(caminho)) return;
   const usuario = await exigirAutenticacao(requisicao, resposta);
   if (!usuario || resposta.sent) return;
-  if (!usuario.administrador && !rotaPermitidaAoOperador(requisicao)) {
-    return resposta.code(403).send({ mensagem: "Sua conta possui permissão somente para consultar e cadastrar informações." });
+  const exigencia = permissoesExigidasPelaRota(requisicao);
+  if (!usuario.administrador && (exigencia === "administrador" || (Array.isArray(exigencia) && !exigencia.some((permissao) => usuario.permissoes.includes(permissao))))) {
+    return resposta.code(403).send({ mensagem: "Sua conta não possui permissão para realizar esta operação." });
   }
 });
 
@@ -405,7 +439,8 @@ aplicacao.post("/api/autenticacao/entrar", { config: { rateLimit: { max: 5, time
   await banco.query("UPDATE usuarios SET ultimo_acesso_em = now() WHERE uuid = $1", [usuario.uuid]);
   const token = await resposta.jwtSign({ usuarioUuid: usuario.uuid, email: usuario.email, administrador: usuario.administrador, perfil: usuario.perfil, versaoSessao: usuario.versao_sessao });
   resposta.setCookie("reciclabelo_sessao", token, opcoesCookieSessao);
-  return { autenticado: true, usuario: { uuid: usuario.uuid, nome: usuario.nome, email: usuario.email, administrador: usuario.administrador, perfil: usuario.perfil } };
+  const usuarioComPermissoes = await buscarUsuarioAtivo(usuario.uuid);
+  return { autenticado: true, usuario: usuarioComPermissoes };
 });
 
 aplicacao.get(rotaConsultarSessao, { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (requisicao, resposta) => {
@@ -431,7 +466,7 @@ aplicacao.post("/api/autenticacao/sair", async (_requisicao, resposta) => {
 
 aplicacao.get("/api/administrador/perfil", async (requisicao) => {
   const usuario = await buscarUsuarioAtivo(requisicao.user.usuarioUuid);
-  return { uuid: usuario!.uuid, nome: usuario!.nome, email: usuario!.email, administrador: usuario!.administrador, perfil: usuario!.perfil };
+  return { uuid: usuario!.uuid, nome: usuario!.nome, email: usuario!.email, administrador: usuario!.administrador, perfil: usuario!.perfil, permissoes: usuario!.permissoes };
 });
 
 aplicacao.patch("/api/administrador/perfil", { config: { rateLimit: { max: 8, timeWindow: "15 minutes" } } }, async (requisicao, resposta) => {
@@ -456,7 +491,7 @@ aplicacao.patch("/api/administrador/perfil", { config: { rateLimit: { max: 8, ti
   const perfil = atualizado.rows[0]!;
   const token = await resposta.jwtSign({ usuarioUuid: perfil.uuid, email: perfil.email, administrador: perfil.administrador, perfil: perfil.perfil, versaoSessao: perfil.versao_sessao });
   resposta.setCookie("reciclabelo_sessao", token, opcoesCookieSessao);
-  return { uuid: perfil.uuid, nome: perfil.nome, email: perfil.email, administrador: perfil.administrador, perfil: perfil.perfil };
+  return { uuid: perfil.uuid, nome: perfil.nome, email: perfil.email, administrador: perfil.administrador, perfil: perfil.perfil, permissoes: [] };
 });
 
 aplicacao.patch("/api/administrador/senha", { config: { rateLimit: { max: 5, timeWindow: "15 minutes" } } }, async (requisicao, resposta) => {
@@ -482,53 +517,91 @@ aplicacao.patch("/api/administrador/senha", { config: { rateLimit: { max: 5, tim
 
 const esquemaSenhaSegura = z.string().min(12).max(128)
   .refine((senha) => /[a-z]/.test(senha) && /[A-Z]/.test(senha) && /\d/.test(senha) && /[^A-Za-z0-9]/.test(senha), "Use letra minúscula, maiúscula, número e símbolo.");
+const esquemaPermissoes = z.array(z.enum(chavesPermissao)).min(1).max(chavesPermissao.length)
+  .refine((permissoes) => new Set(permissoes).size === permissoes.length, "Não repita permissões.")
+  .superRefine((permissoes, contexto) => {
+    const dependencias: Partial<Record<PermissaoUsuario, PermissaoUsuario>> = {
+      catadores_cadastrar: "catadores_visualizar", catadores_editar: "catadores_visualizar", catadores_excluir: "catadores_visualizar", catadores_gerenciar_caixa: "catadores_visualizar",
+      cooperativas_cadastrar: "cooperativas_visualizar", cooperativas_editar: "cooperativas_visualizar", cooperativas_excluir: "cooperativas_visualizar",
+      pesagens_editar: "relatorios_visualizar", pesagens_excluir: "relatorios_visualizar",
+    };
+    for (const permissao of permissoes) {
+      const dependencia = dependencias[permissao];
+      if (dependencia && !permissoes.includes(dependencia)) contexto.addIssue({ code: "custom", message: `A permissão ${permissao} exige ${dependencia}.` });
+    }
+  });
 const esquemaUsuarioRestrito = z.object({
   nome: z.string().trim().min(2).max(160),
   email: z.string().trim().max(254).regex(/^[^\s@]+@[^\s@]+$/).transform((valor) => valor.toLowerCase()),
   senha: esquemaSenhaSegura.optional(),
   ativo: z.boolean().default(true),
+  permissoes: esquemaPermissoes,
+}).strict();
+
+aplicacao.get("/api/permissoes", async () => {
+  const permissoes = await banco.query("SELECT chave,nome,descricao,grupo,ordem FROM permissoes WHERE ativa=TRUE ORDER BY ordem,chave");
+  return { dados: permissoes.rows };
 });
 
 aplicacao.get("/api/usuarios", async () => {
-  const usuarios = await banco.query(`SELECT uuid,nome,email,perfil,administrador,ativo,ultimo_acesso_em,criado_em,atualizado_em
-    FROM usuarios ORDER BY administrador DESC,ativo DESC,nome`);
+  const usuarios = await banco.query(`SELECT u.uuid,u.nome,u.email,u.perfil,u.administrador,u.ativo,u.ultimo_acesso_em,u.criado_em,u.atualizado_em,
+      coalesce(array_agg(pu.permissao_chave ORDER BY p.ordem) FILTER (WHERE pu.permissao_chave IS NOT NULL),'{}') AS permissoes
+    FROM usuarios u
+    LEFT JOIN permissoes_usuario pu ON pu.usuario_uuid=u.uuid
+    LEFT JOIN permissoes p ON p.chave=pu.permissao_chave
+    GROUP BY u.uuid,u.nome,u.email,u.perfil,u.administrador,u.ativo,u.ultimo_acesso_em,u.criado_em,u.atualizado_em
+    ORDER BY u.administrador DESC,u.ativo DESC,u.nome`);
   return { dados: usuarios.rows };
 });
 
 aplicacao.post("/api/usuarios", { config: { rateLimit: { max: 10, timeWindow: "15 minutes" } } }, async (requisicao, resposta) => {
   const entrada = esquemaUsuarioRestrito.required({ senha: true }).safeParse(requisicao.body);
-  if (!entrada.success) return resposta.code(400).send({ mensagem: "Revise nome, e-mail e senha. A senha deve ter 12 caracteres, maiúscula, minúscula, número e símbolo.", detalhes: z.treeifyError(entrada.error) });
+  if (!entrada.success) return resposta.code(400).send({ mensagem: "Revise os dados, selecione permissões válidas e use uma senha com 12 caracteres, maiúscula, minúscula, número e símbolo.", detalhes: z.treeifyError(entrada.error) });
   const senhaHash = await bcrypt.hash(entrada.data.senha, 12);
+  const cliente = await banco.connect();
   try {
-    const criado = await banco.query<{ uuid: string }>(`INSERT INTO usuarios (nome,email,senha_hash,administrador,perfil,ativo)
+    await cliente.query("BEGIN");
+    const criado = await cliente.query<{ uuid: string }>(`INSERT INTO usuarios (nome,email,senha_hash,administrador,perfil,ativo)
       VALUES ($1,$2,$3,FALSE,'operador_cadastro',$4) RETURNING uuid`, [entrada.data.nome, entrada.data.email, senhaHash, entrada.data.ativo]);
-    await registrarAuditoria(banco, requisicao.user.usuarioUuid, "criacao", "usuarios", criado.rows[0]!.uuid, { nome: entrada.data.nome, email: entrada.data.email, perfil: "operador_cadastro", ativo: entrada.data.ativo }, requisicao.ip);
-    await criarNotificacao(banco, requisicao.user.usuarioUuid, "seguranca", "Conta restrita criada", `${entrada.data.nome} recebeu acesso somente para consultas e novos cadastros.`, "usuarios", criado.rows[0]!.uuid);
+    await cliente.query(`INSERT INTO permissoes_usuario (usuario_uuid,permissao_chave,concedida_por_uuid)
+      SELECT $1,unnest($2::varchar[]),$3`, [criado.rows[0]!.uuid, entrada.data.permissoes, requisicao.user.usuarioUuid]);
+    await registrarAuditoria(cliente, requisicao.user.usuarioUuid, "criacao", "usuarios", criado.rows[0]!.uuid, { nome: entrada.data.nome, email: entrada.data.email, perfil: "operador_cadastro", ativo: entrada.data.ativo, permissoes: entrada.data.permissoes }, requisicao.ip);
+    await criarNotificacao(cliente, requisicao.user.usuarioUuid, "seguranca", "Conta com permissões criada", `${entrada.data.nome} recebeu ${entrada.data.permissoes.length} permissões selecionadas pelo administrador.`, "usuarios", criado.rows[0]!.uuid);
+    await cliente.query("COMMIT");
     return resposta.code(201).send({ uuid: criado.rows[0]!.uuid });
   } catch (erro) {
+    await cliente.query("ROLLBACK");
     if ((erro as { code?: string }).code === "23505") return resposta.code(409).send({ mensagem: "Já existe uma conta com este e-mail." });
     throw erro;
-  }
+  } finally { cliente.release(); }
 });
 
 aplicacao.patch("/api/usuarios/:uuid", { config: { rateLimit: { max: 12, timeWindow: "15 minutes" } } }, async (requisicao, resposta) => {
   const uuid = z.uuid().parse((requisicao.params as { uuid: string }).uuid);
   const entrada = esquemaUsuarioRestrito.safeParse(requisicao.body);
   if (!entrada.success) return resposta.code(400).send({ mensagem: "Revise os dados da conta restrita.", detalhes: z.treeifyError(entrada.error) });
-  const atual = await banco.query("SELECT uuid,nome,email,perfil,ativo FROM usuarios WHERE uuid=$1", [uuid]);
-  if (!atual.rows[0]) return resposta.code(404).send({ mensagem: "Conta não encontrada." });
-  if (atual.rows[0].perfil !== "operador_cadastro") return resposta.code(403).send({ mensagem: "A conta administrativa não pode ser alterada por esta rota." });
   const senhaHash = entrada.data.senha ? await bcrypt.hash(entrada.data.senha, 12) : null;
+  const cliente = await banco.connect();
   try {
-    await banco.query(`UPDATE usuarios SET nome=$1,email=$2,ativo=$3,
-      senha_hash=coalesce($4,senha_hash),versao_sessao=versao_sessao+1,atualizado_em=now() WHERE uuid=$5`,
-    [entrada.data.nome, entrada.data.email, entrada.data.ativo, senhaHash, uuid]);
+    await cliente.query("BEGIN");
+    const atual = await cliente.query("SELECT uuid,nome,email,perfil,ativo FROM usuarios WHERE uuid=$1 FOR UPDATE", [uuid]);
+    if (!atual.rows[0]) { await cliente.query("ROLLBACK"); return resposta.code(404).send({ mensagem: "Conta não encontrada." }); }
+    if (atual.rows[0].perfil !== "operador_cadastro") { await cliente.query("ROLLBACK"); return resposta.code(403).send({ mensagem: "A conta administrativa não pode ser alterada por esta rota." }); }
+    const permissoesAnteriores = await cliente.query<{ permissao_chave: string }>("SELECT permissao_chave FROM permissoes_usuario WHERE usuario_uuid=$1 ORDER BY permissao_chave", [uuid]);
+    const antes = { ...atual.rows[0], permissoes: permissoesAnteriores.rows.map((item) => item.permissao_chave) };
+    await cliente.query(`UPDATE usuarios SET nome=$1,email=$2,ativo=$3,senha_hash=coalesce($4,senha_hash),
+      versao_sessao=versao_sessao+1,atualizado_em=now() WHERE uuid=$5 AND perfil='operador_cadastro'`, [entrada.data.nome, entrada.data.email, entrada.data.ativo, senhaHash, uuid]);
+    await cliente.query("DELETE FROM permissoes_usuario WHERE usuario_uuid=$1", [uuid]);
+    await cliente.query(`INSERT INTO permissoes_usuario (usuario_uuid,permissao_chave,concedida_por_uuid)
+      SELECT $1,unnest($2::varchar[]),$3`, [uuid, entrada.data.permissoes, requisicao.user.usuarioUuid]);
+    await registrarAuditoria(cliente, requisicao.user.usuarioUuid, "alteracao", "usuarios", uuid, { antes, depois: { nome: entrada.data.nome, email: entrada.data.email, ativo: entrada.data.ativo, senhaRedefinida: Boolean(entrada.data.senha), permissoes: entrada.data.permissoes } }, requisicao.ip);
+    await criarNotificacao(cliente, requisicao.user.usuarioUuid, "seguranca", "Conta e permissões atualizadas", `${entrada.data.nome}: ${entrada.data.permissoes.length} permissões; sessões anteriores revogadas.`, "usuarios", uuid);
+    await cliente.query("COMMIT");
   } catch (erro) {
+    await cliente.query("ROLLBACK");
     if ((erro as { code?: string }).code === "23505") return resposta.code(409).send({ mensagem: "Já existe uma conta com este e-mail." });
     throw erro;
-  }
-  await registrarAuditoria(banco, requisicao.user.usuarioUuid, "alteracao", "usuarios", uuid, { antes: atual.rows[0], depois: { nome: entrada.data.nome, email: entrada.data.email, ativo: entrada.data.ativo, senhaRedefinida: Boolean(entrada.data.senha) } }, requisicao.ip);
-  await criarNotificacao(banco, requisicao.user.usuarioUuid, "seguranca", "Conta restrita atualizada", `${entrada.data.nome}: acesso ${entrada.data.ativo ? "ativo" : "bloqueado"}; sessões anteriores revogadas.`, "usuarios", uuid);
+  } finally { cliente.release(); }
   return resposta.code(204).send();
 });
 

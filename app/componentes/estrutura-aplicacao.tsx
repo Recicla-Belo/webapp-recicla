@@ -31,16 +31,26 @@ import { TelaRelatorios } from "./tela-relatorios";
 import { TelaConfiguracoes } from "./tela-configuracoes";
 import { TelaLogin } from "./tela-login";
 import { MarcaPlataforma } from "./marca-plataforma";
-import { requisitarApi, type AdministradorApi, type NotificacaoApi } from "@/app/dados/api";
+import { requisitarApi, type AdministradorApi, type NotificacaoApi, type PermissaoUsuario } from "@/app/dados/api";
 
-const itens: Array<{ pagina: Pagina; rotulo: string; icone: LucideIcon }> = [
-  { pagina: "painel", rotulo: "Visão geral", icone: LayoutDashboard },
-  { pagina: "catadores", rotulo: "Catadores", icone: UsersRound },
-  { pagina: "cooperativas", rotulo: "Cooperativas", icone: Building2 },
-  { pagina: "pesagem", rotulo: "Pesagem e produção", icone: Scale },
-  { pagina: "relatorios", rotulo: "Relatórios", icone: FileChartColumn },
-  { pagina: "configuracoes", rotulo: "Configurações", icone: Settings },
+const permissoesConfiguracao: PermissaoUsuario[] = ["materiais_gerenciar", "responsaveis_gerenciar", "metas_gerenciar", "identidade_visual_gerenciar"];
+const itens: Array<{ pagina: Pagina; rotulo: string; icone: LucideIcon; permissoes: PermissaoUsuario[] }> = [
+  { pagina: "painel", rotulo: "Visão geral", icone: LayoutDashboard, permissoes: ["painel_visualizar"] },
+  { pagina: "catadores", rotulo: "Catadores", icone: UsersRound, permissoes: ["catadores_visualizar"] },
+  { pagina: "cooperativas", rotulo: "Cooperativas", icone: Building2, permissoes: ["cooperativas_visualizar"] },
+  { pagina: "pesagem", rotulo: "Pesagem e produção", icone: Scale, permissoes: ["pesagens_cadastrar"] },
+  { pagina: "relatorios", rotulo: "Relatórios", icone: FileChartColumn, permissoes: ["relatorios_visualizar"] },
+  { pagina: "configuracoes", rotulo: "Configurações", icone: Settings, permissoes: permissoesConfiguracao },
 ];
+
+function possuiPermissao(usuario: AdministradorApi | null, permissao: PermissaoUsuario) {
+  return Boolean(usuario?.administrador || usuario?.permissoes.includes(permissao));
+}
+
+function podeAcessarPagina(usuario: AdministradorApi | null, pagina: Pagina) {
+  const item = itens.find((opcao) => opcao.pagina === pagina);
+  return Boolean(item && (usuario?.administrador || item.permissoes.some((permissao) => possuiPermissao(usuario, permissao))));
+}
 
 const titulos: Record<Pagina, { sobrelinha: string; titulo: string }> = {
   painel: { sobrelinha: "VISÃO GERAL", titulo: "Olá, Administrador!" },
@@ -151,8 +161,14 @@ export function EstruturaAplicacao() {
     void carregarNotificacoes();
   }, [autenticado, carregarNotificacoes]);
 
+  useEffect(() => {
+    if (!autenticado || !administrador || podeAcessarPagina(administrador, pagina)) return;
+    const primeiraPagina = itens.find((item) => podeAcessarPagina(administrador, item.pagina));
+    if (primeiraPagina) setPagina(primeiraPagina.pagina);
+  }, [administrador, autenticado, pagina]);
+
   function navegar(destino: Pagina) {
-    if (destino === "configuracoes" && !administrador?.administrador) destino = "painel";
+    if (!podeAcessarPagina(administrador, destino)) destino = itens.find((item) => podeAcessarPagina(administrador, item.pagina))?.pagina ?? "painel";
     setPagina(destino);
     setNotificacoesAbertas(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -190,7 +206,7 @@ export function EstruturaAplicacao() {
       }
       setNotificacoes((lista) => lista.map((notificacao) => notificacao.uuid === item.uuid ? { ...notificacao, lida_em: notificacao.lida_em ?? new Date().toISOString() } : notificacao));
       const destino = paginaDaNotificacao(item.entidade);
-      navegar(destino === "configuracoes" && !administrador?.administrador ? "painel" : destino);
+      navegar(destino);
     } catch (falha) {
       setErroNotificacoes(mensagemFalha(falha, "Não foi possível abrir esta notificação."));
     } finally { setAcaoNotificacao(null); }
@@ -239,7 +255,7 @@ export function EstruturaAplicacao() {
   if (autenticado === null) return <main className="pagina-login"><div className="cenario-login" aria-hidden="true"><span className="orbe-login orbe-um" /><span className="orbe-login orbe-dois" /><span className="malha-login" /></div><section className="login-central carregando-sessao" aria-live="polite"><MarcaPlataforma /><p>Carregando seu painel...</p></section></main>;
   if (!autenticado) return <TelaLogin onAutenticado={autenticar} />;
   const acessoAdministrativo = Boolean(administrador?.administrador);
-  const itensVisiveis = acessoAdministrativo ? itens : itens.filter((item) => item.pagina !== "configuracoes");
+  const itensVisiveis = itens.filter((item) => podeAcessarPagina(administrador, item.pagina));
 
   return (
     <main className="aplicacao">
@@ -256,7 +272,7 @@ export function EstruturaAplicacao() {
           ))}
         </nav>
         <div className="apoio-menu"><span><LifeBuoy aria-hidden="true" /></span><div><strong>Precisa de ajuda?</strong><small>Acesse o guia do sistema</small></div></div>
-        <button className="usuario" type="button" onClick={sair} title="Sair do sistema"><span>{(administrador?.nome ?? "Usuário").split(/\s+/).slice(0, 2).map((parte) => parte[0]).join("").toUpperCase()}</span><div><strong>{administrador?.nome ?? "Usuário"}</strong><small>{acessoAdministrativo ? "Administrador" : "Cadastro restrito"}</small></div><LogOut aria-hidden="true" /></button>
+        <button className="usuario" type="button" onClick={sair} title="Sair do sistema"><span>{(administrador?.nome ?? "Usuário").split(/\s+/).slice(0, 2).map((parte) => parte[0]).join("").toUpperCase()}</span><div><strong>{administrador?.nome ?? "Usuário"}</strong><small>{acessoAdministrativo ? "Administrador" : "Acesso personalizado"}</small></div><LogOut aria-hidden="true" /></button>
         </div>
       </aside>
 
@@ -278,16 +294,16 @@ export function EstruturaAplicacao() {
               </section>}
             </div>
             <button className="botao-icone botao-sair-mobile" type="button" onClick={sair} aria-label="Sair do sistema" title="Sair do sistema"><LogOut /></button>
-            {pagina !== "pesagem" && <button className="botao-primario botao-nova-pesagem" type="button" onClick={() => navegar("pesagem")}><Plus /> <span>Nova pesagem</span></button>}
+            {pagina !== "pesagem" && possuiPermissao(administrador, "pesagens_cadastrar") && <button className="botao-primario botao-nova-pesagem" type="button" onClick={() => navegar("pesagem")}><Plus /> <span>Nova pesagem</span></button>}
           </div>
         </header>
 
-        {pagina === "painel" && <PainelPrincipal onNovaPesagem={() => navegar("pesagem")} />}
-        {pagina === "catadores" && <TelaCatadores podeGerenciar={acessoAdministrativo} />}
-        {pagina === "cooperativas" && <TelaCooperativas podeGerenciar={acessoAdministrativo} />}
-        {pagina === "pesagem" && <TelaPesagem />}
-        {pagina === "relatorios" && <TelaRelatorios podeGerenciar={acessoAdministrativo} />}
-        {pagina === "configuracoes" && administrador?.administrador && <TelaConfiguracoes administrador={administrador} onAdministradorAtualizado={setAdministrador} />}
+        {pagina === "painel" && podeAcessarPagina(administrador, "painel") && <PainelPrincipal onNovaPesagem={() => navegar("pesagem")} podeNovaPesagem={possuiPermissao(administrador, "pesagens_cadastrar")} />}
+        {pagina === "catadores" && podeAcessarPagina(administrador, "catadores") && <TelaCatadores acessos={{ cadastrar: possuiPermissao(administrador, "catadores_cadastrar"), editar: possuiPermissao(administrador, "catadores_editar"), excluir: possuiPermissao(administrador, "catadores_excluir"), gerenciarCaixa: possuiPermissao(administrador, "catadores_gerenciar_caixa") }} />}
+        {pagina === "cooperativas" && podeAcessarPagina(administrador, "cooperativas") && <TelaCooperativas acessos={{ cadastrar: possuiPermissao(administrador, "cooperativas_cadastrar"), editar: possuiPermissao(administrador, "cooperativas_editar"), excluir: possuiPermissao(administrador, "cooperativas_excluir") }} />}
+        {pagina === "pesagem" && possuiPermissao(administrador, "pesagens_cadastrar") && <TelaPesagem />}
+        {pagina === "relatorios" && podeAcessarPagina(administrador, "relatorios") && <TelaRelatorios acessos={{ editar: possuiPermissao(administrador, "pesagens_editar"), excluir: possuiPermissao(administrador, "pesagens_excluir") }} />}
+        {pagina === "configuracoes" && podeAcessarPagina(administrador, "configuracoes") && <TelaConfiguracoes administrador={administrador!} onAdministradorAtualizado={setAdministrador} />}
       </section>
     </main>
   );

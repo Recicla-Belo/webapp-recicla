@@ -3,7 +3,7 @@
 /* eslint-disable jsx-a11y/label-has-associated-control -- controles compostos usam texto visível e input aninhado */
 
 import { useCallback, useEffect, useState } from "react";
-import { Download, History, LockKeyhole, Pencil, Search, Trash2, X } from "lucide-react";
+import { Download, History, Pencil, Search, Trash2, X } from "lucide-react";
 import { requisitarApi, type CatadorApi, type CooperativaApi, type MaterialApi } from "@/app/dados/api";
 import { Paginacao } from "@/app/componentes/paginacao";
 import { useTermoBusca } from "@/app/utilitarios/use-termo-busca";
@@ -34,7 +34,7 @@ function alteracoesEvento(evento: EventoAuditoria) {
   });
 }
 
-export function TelaRelatorios({ podeGerenciar = true }: { podeGerenciar?: boolean }) {
+export function TelaRelatorios({ acessos }: { acessos: { editar: boolean; excluir: boolean } }) {
   const [pesagens, setPesagens] = useState<PesagemApi[]>([]);
   const [catadores, setCatadores] = useState<CatadorApi[]>([]);
   const [materiais, setMateriais] = useState<MaterialApi[]>([]);
@@ -80,6 +80,7 @@ export function TelaRelatorios({ podeGerenciar = true }: { podeGerenciar?: boole
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void carregar(); }, [carregar]);
   useEffect(() => {
+    if (!acessos.editar) return;
     void Promise.all([
       requisitarApi<{ dados: CatadorApi[] }>("/api/catadores?limite=100"),
       requisitarApi<{ dados: CooperativaApi[] }>("/api/cooperativas"),
@@ -87,9 +88,10 @@ export function TelaRelatorios({ podeGerenciar = true }: { podeGerenciar?: boole
       requisitarApi<{ dados: Referencia[] }>("/api/pontos-apoio"),
       requisitarApi<{ dados: Referencia[] }>("/api/responsaveis-pesagem"),
     ]).then(([c, co, m, p, r]) => { setCatadores(c.dados); setCooperativas(co.dados); setMateriais(m.dados); setPontos(p.dados); setResponsaveis(r.dados); }).catch(() => undefined);
-  }, []);
+  }, [acessos.editar]);
 
   function abrirEdicao(item: PesagemApi) {
+    if (!acessos.editar) return;
     setEditando(item);
     setFormulario({ catadorUuid: item.catador_uuid, cooperativaUuid: item.cooperativa_uuid, pontoApoioUuid: item.ponto_apoio_uuid, responsavelUuid: item.responsavel_pesagem_uuid ?? "outro", responsavelOutro: item.responsavel_outro ?? "", materialUuid: item.material_uuid, contabilizarNaMeta: item.contabiliza_meta, guardarExcedenteMeta: item.guardar_excedente_meta, peso: String(item.peso_total), dataHora: paraDataHoraLocal(item.data_hora), status: item.status, observacao: item.observacao ?? "", motivoAlteracao: "" });
   }
@@ -122,6 +124,7 @@ export function TelaRelatorios({ podeGerenciar = true }: { podeGerenciar?: boole
   }
 
   async function confirmarExclusao() {
+    if (!acessos.excluir) return;
     if (!excluindo || motivoExclusao.trim().length < 3) return setErro("Informe o motivo da exclusão.");
     setSalvando(true); setErro("");
     try {
@@ -139,9 +142,8 @@ export function TelaRelatorios({ podeGerenciar = true }: { podeGerenciar?: boole
     const link = document.createElement("a"); link.href = url; link.download = "relatorio-pesagens.csv"; link.click(); URL.revokeObjectURL(url);
   }
 
-  return <section className={`pagina-interna${podeGerenciar ? "" : " somente-cadastro"}`}>
+  return <section className={`pagina-interna${acessos.editar ? "" : " sem-edicao-pesagem"}${acessos.excluir ? "" : " sem-exclusao-pesagem"}`}>
     <div className="resumo-pagina"><div><h2>Produção, pagamentos e auditoria</h2><p>Registros ativos, alterados e excluídos logicamente.</p></div><button type="button" className="botao-secundario" onClick={exportar} disabled={pesagens.length === 0}><Download /> Exportar página</button></div>
-    {!podeGerenciar && <p className="aviso-permissao"><LockKeyhole /> Sua conta pode consultar e exportar relatórios, mas não pode corrigir nem excluir pesagens.</p>}
     {erro && <p className="mensagem-erro" role="alert">{erro}</p>}
     <div className="grade-resumo-relatorio"><article><span>KG</span><div><small>Peso concluído</small><strong>{totais.peso.toLocaleString("pt-BR")} kg</strong></div></article><article><span>R$</span><div><small>Valor concluído</small><strong>{totais.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong></div></article><article><span>№</span><div><small>Registros no relatório</small><strong>{total.toLocaleString("pt-BR")}</strong></div></article></div>
     <div className="barra-ferramentas"><label className="campo-busca"><Search /><input value={busca} onChange={(e) => { setBusca(e.target.value); setPagina(1); }} placeholder="Buscar catador, material, código ou status..." aria-label="Buscar no relatório" /></label><input className="entrada-filtro" type="date" value={inicio} onChange={(e) => { setInicio(e.target.value); setPagina(1); }} aria-label="Data inicial" /><input className="entrada-filtro" type="date" value={fim} onChange={(e) => { setFim(e.target.value); setPagina(1); }} aria-label="Data final" /></div>

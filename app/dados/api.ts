@@ -61,13 +61,24 @@ export type ConfiguracaoMetaGeralApi = {
   uuid: string; ativa: boolean; meta_diaria: number; valor_premio: number; unidade: string; atualizado_em: string;
 };
 
+export type PermissaoUsuario =
+  | "painel_visualizar"
+  | "catadores_visualizar" | "catadores_cadastrar" | "catadores_editar" | "catadores_excluir" | "catadores_gerenciar_caixa"
+  | "cooperativas_visualizar" | "cooperativas_cadastrar" | "cooperativas_editar" | "cooperativas_excluir"
+  | "pesagens_cadastrar" | "relatorios_visualizar" | "pesagens_editar" | "pesagens_excluir"
+  | "materiais_gerenciar" | "responsaveis_gerenciar" | "metas_gerenciar" | "identidade_visual_gerenciar";
+
+export type PermissaoCatalogoApi = { chave: PermissaoUsuario; nome: string; descricao: string; grupo: string; ordem: number };
+
 export type AdministradorApi = {
   uuid: string; nome: string; email: string; administrador: boolean; perfil: "administrador" | "operador_cadastro";
+  permissoes: PermissaoUsuario[];
 };
 
 export type UsuarioContaApi = {
   uuid: string; nome: string; email: string; perfil: "administrador" | "operador_cadastro"; administrador: boolean;
   ativo: boolean; ultimo_acesso_em: string | null; criado_em: string; atualizado_em: string;
+  permissoes: PermissaoUsuario[];
 };
 
 export type ResponsavelPesagemApi = {

@@ -1,6 +1,6 @@
 "use client";
 
-/* eslint-disable jsx-a11y/label-has-associated-control, @next/next/no-img-element -- controles compostos usam associação explícita e as imagens configuráveis podem ser data URLs locais */
+/* eslint-disable jsx-a11y/label-has-associated-control, @next/next/no-img-element, react-hooks/set-state-in-effect -- controles compostos e carregamentos persistidos ao montar */
 
 import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 import { KeyRound, Pencil, Plus, ShieldCheck, Trash2, UserRound, X } from "lucide-react";
@@ -26,7 +26,12 @@ async function lerImagem(evento: ChangeEvent<HTMLInputElement>) {
 }
 
 export function TelaConfiguracoes({ administrador, onAdministradorAtualizado }: { administrador: AdministradorApi; onAdministradorAtualizado: (administrador: AdministradorApi) => void }) {
-  const [aba, setAba] = useState<AbaConfiguracao>("materiais");
+  const podeMateriais = administrador.administrador || administrador.permissoes.includes("materiais_gerenciar");
+  const podeResponsaveis = administrador.administrador || administrador.permissoes.includes("responsaveis_gerenciar");
+  const podeMetas = administrador.administrador || administrador.permissoes.includes("metas_gerenciar");
+  const podeIdentidade = administrador.administrador || administrador.permissoes.includes("identidade_visual_gerenciar");
+  const abaInicial: AbaConfiguracao = podeMateriais || podeMetas ? "materiais" : podeResponsaveis ? "responsaveis" : "identidade";
+  const [aba, setAba] = useState<AbaConfiguracao>(abaInicial);
   const [materiais, setMateriais] = useState<MaterialApi[]>([]);
   const [modal, setModal] = useState(false);
   const [materialEdicao, setMaterialEdicao] = useState<MaterialApi | null>(null);
@@ -51,16 +56,23 @@ export function TelaConfiguracoes({ administrador, onAdministradorAtualizado }: 
   const carregarMateriais = useCallback(async () => { try { const dados = await requisitarApi<{ dados: MaterialApi[] }>("/api/materiais"); setMateriais(dados.dados); setPaginaMateriais((paginaAtual) => Math.min(paginaAtual, Math.max(1, Math.ceil(dados.dados.length / itensPorPagina)))); } catch (erro) { setMensagem(erro instanceof Error ? erro.message : "Não foi possível carregar os materiais."); } }, []);
   const carregarResponsaveis = useCallback(async () => { try { const dados = await requisitarApi<{ dados: ResponsavelPesagemApi[] }>("/api/responsaveis-pesagem?incluirInativos=true"); setResponsaveis(dados.dados); setPaginaResponsaveis((paginaAtual) => Math.min(paginaAtual, Math.max(1, Math.ceil(dados.dados.length / itensPorPagina)))); } catch (erro) { setMensagem(erro instanceof Error ? erro.message : "Não foi possível carregar os responsáveis."); } }, []);
   const carregarMetaGeral = useCallback(async () => { try { const dados = await requisitarApi<ConfiguracaoMetaGeralApi>("/api/configuracoes/meta-geral"); setMetaGeral({ ativa: dados.ativa, metaDiaria: String(dados.meta_diaria), valorPremio: String(dados.valor_premio), unidade: dados.unidade }); } catch (erro) { setMensagem(erro instanceof Error ? erro.message : "Não foi possível carregar a meta geral."); } }, []);
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { void Promise.all([carregarMateriais(), carregarResponsaveis(), carregarMetaGeral()]); }, [carregarMateriais, carregarMetaGeral, carregarResponsaveis]);
+  useEffect(() => {
+    const carregamentos: Array<Promise<void>> = [];
+    if (podeMateriais || podeMetas) carregamentos.push(carregarMateriais());
+    if (podeResponsaveis) carregamentos.push(carregarResponsaveis());
+    if (podeMetas) carregamentos.push(carregarMetaGeral());
+    void Promise.all(carregamentos);
+  }, [carregarMateriais, carregarMetaGeral, carregarResponsaveis, podeMateriais, podeMetas, podeResponsaveis]);
 
   function abrirMaterial(material?: MaterialApi) {
+    if (!podeMateriais) return;
     setMaterialEdicao(material ?? null);
     setFormMaterial(material ? { nome: material.nome, tipoMaterial: material.tipo_material, unidade: material.unidade, quantidadeReferencia: String(material.quantidade_referencia), valorReferencia: String(material.valor_referencia), metaDiaria: String(material.meta_diaria), validoParaMeta: material.contabiliza_meta, ativo: material.status === "ativo" } : { nome: "", tipoMaterial: "Outro", unidade: "kg", quantidadeReferencia: "1", valorReferencia: "0", metaDiaria: "", validoParaMeta: true, ativo: true });
     setModal(true);
   }
 
   async function salvarMaterial() {
+    if (!podeMateriais) return;
     try {
       await requisitarApi(materialEdicao ? `/api/materiais/${materialEdicao.uuid}` : "/api/materiais", { method: materialEdicao ? "PUT" : "POST", body: JSON.stringify({ ...formMaterial, quantidadeReferencia: Number(formMaterial.quantidadeReferencia.replace(",", ".")), valorReferencia: Number(formMaterial.valorReferencia.replace(",", ".")), metaDiaria: Number(formMaterial.metaDiaria.replace(",", ".")) }) });
       setModal(false); await carregarMateriais();
@@ -68,17 +80,20 @@ export function TelaConfiguracoes({ administrador, onAdministradorAtualizado }: 
   }
 
   async function excluirMaterial(material: MaterialApi) {
+    if (!podeMateriais) return;
     try { await requisitarApi(`/api/materiais/${material.uuid}`, { method: "DELETE" }); await carregarMateriais(); }
     catch (erro) { setMensagem(erro instanceof Error ? erro.message : "Não foi possível excluir o material."); }
   }
 
   function abrirResponsavel(responsavel?: ResponsavelPesagemApi) {
+    if (!podeResponsaveis) return;
     setResponsavelEdicao(responsavel ?? null);
     setFormResponsavel(responsavel ? { nome: responsavel.nome, ativo: responsavel.status === "ativo" } : { nome: "", ativo: true });
     setMensagem(""); setModalResponsavel(true);
   }
 
   async function salvarResponsavel() {
+    if (!podeResponsaveis) return;
     try {
       await requisitarApi(responsavelEdicao ? `/api/responsaveis-pesagem/${responsavelEdicao.uuid}` : "/api/responsaveis-pesagem", { method: responsavelEdicao ? "PUT" : "POST", body: JSON.stringify(formResponsavel) });
       setModalResponsavel(false); await carregarResponsaveis(); setMensagem("Responsável salvo com sucesso.");
@@ -86,6 +101,7 @@ export function TelaConfiguracoes({ administrador, onAdministradorAtualizado }: 
   }
 
   async function excluirResponsavel(responsavel: ResponsavelPesagemApi) {
+    if (!podeResponsaveis) return;
     try { await requisitarApi(`/api/responsaveis-pesagem/${responsavel.uuid}`, { method: "DELETE" }); await carregarResponsaveis(); setMensagem("Responsável excluído. O nome foi preservado somente nas pesagens antigas."); }
     catch (erro) { setMensagem(erro instanceof Error ? erro.message : "Não foi possível excluir o responsável."); }
   }
@@ -99,6 +115,7 @@ export function TelaConfiguracoes({ administrador, onAdministradorAtualizado }: 
   }
 
   async function salvarMetaGeral() {
+    if (!podeMetas) return;
     const valor = Number(metaGeral.metaDiaria.replace(",", "."));
     const premio = Number(metaGeral.valorPremio.replace(",", "."));
     if (!Number.isFinite(valor) || valor < 0 || (metaGeral.ativa && valor <= 0)) { setMensagem("Informe uma meta geral maior que zero para ativá-la."); return; }
@@ -181,14 +198,14 @@ export function TelaConfiguracoes({ administrador, onAdministradorAtualizado }: 
   const materiaisPaginados = materiais.slice((paginaMateriais - 1) * itensPorPagina, paginaMateriais * itensPorPagina);
   const responsaveisPaginados = responsaveis.slice((paginaResponsaveis - 1) * itensPorPagina, paginaResponsaveis * itensPorPagina);
 
-  return <section className="pagina-interna configuracoes">
+  return <section className={`pagina-interna configuracoes${podeMateriais ? "" : " sem-gerenciar-materiais"}${podeMetas ? "" : " sem-gerenciar-meta"}`}>
     <div className="abas-configuracao" role="tablist" aria-label="Configurações">
-      <button className={aba === "materiais" ? "ativo" : ""} onClick={() => setAba("materiais")} role="tab" aria-selected={aba === "materiais"}>Materiais</button>
-      <button className={aba === "responsaveis" ? "ativo" : ""} onClick={() => setAba("responsaveis")} role="tab" aria-selected={aba === "responsaveis"}>Responsáveis pela pesagem</button>
-      <button className={aba === "identidade" ? "ativo" : ""} onClick={() => setAba("identidade")} role="tab" aria-selected={aba === "identidade"}>Identidade visual</button>
-      <button className={aba === "usuarios" ? "ativo" : ""} onClick={() => setAba("usuarios")} role="tab" aria-selected={aba === "usuarios"}>Usuários e permissões</button>
-      <button className={aba === "conta" ? "ativo" : ""} onClick={() => { setAba("conta"); cancelarConta(); }} role="tab" aria-selected={aba === "conta"}>Conta do administrador</button>
-      <button disabled title="Disponível em uma próxima etapa">Pontos de apoio</button>
+      {(podeMateriais || podeMetas) && <button className={aba === "materiais" ? "ativo" : ""} onClick={() => setAba("materiais")} role="tab" aria-selected={aba === "materiais"}>Materiais e metas</button>}
+      {podeResponsaveis && <button className={aba === "responsaveis" ? "ativo" : ""} onClick={() => setAba("responsaveis")} role="tab" aria-selected={aba === "responsaveis"}>Responsáveis pela pesagem</button>}
+      {podeIdentidade && <button className={aba === "identidade" ? "ativo" : ""} onClick={() => setAba("identidade")} role="tab" aria-selected={aba === "identidade"}>Identidade visual</button>}
+      {administrador.administrador && <button className={aba === "usuarios" ? "ativo" : ""} onClick={() => setAba("usuarios")} role="tab" aria-selected={aba === "usuarios"}>Usuários e permissões</button>}
+      {administrador.administrador && <button className={aba === "conta" ? "ativo" : ""} onClick={() => { setAba("conta"); cancelarConta(); }} role="tab" aria-selected={aba === "conta"}>Conta do administrador</button>}
+      {administrador.administrador && <button disabled title="Disponível em uma próxima etapa">Pontos de apoio</button>}
     </div>
 
     {aba === "usuarios" ? <PainelUsuarios /> : aba === "conta" ? <section className="painel conta-administrador">
@@ -234,12 +251,12 @@ export function TelaConfiguracoes({ administrador, onAdministradorAtualizado }: 
         </aside>
       </div>
     </div> : aba === "responsaveis" ? <div className="painel-responsaveis">
-      <div className="resumo-pagina"><div><h2>Responsáveis pela pesagem</h2><p>Cadastre quem pode ser selecionado nas novas pesagens. Registros antigos permanecem preservados.</p></div><button className="botao-primario" onClick={() => abrirResponsavel()}><Plus /> Novo responsável</button></div>
+      <div className="resumo-pagina"><div><h2>Responsáveis pela pesagem</h2><p>Cadastre quem pode ser selecionado nas novas pesagens. Registros antigos permanecem preservados.</p></div>{podeResponsaveis && <button className="botao-primario" onClick={() => abrirResponsavel()}><Plus /> Novo responsável</button>}</div>
       {mensagem && <p className="mensagem-configuracao" role="status">{mensagem}</p>}
       <div className="lista-responsaveis">{responsaveis.length === 0 ? <p className="estado-vazio">Nenhum responsável cadastrado.</p> : responsaveisPaginados.map((responsavel) => <article key={responsavel.uuid}><span>{responsavel.nome.split(/\s+/).slice(0, 2).map((parte) => parte[0]).join("").toUpperCase()}</span><div><strong>{responsavel.nome}</strong><small>{responsavel.status === "ativo" ? "Disponível para novas pesagens" : "Cadastro inativo"}</small></div><em className={responsavel.status === "ativo" ? "status ativo" : "status"}>● {responsavel.status}</em><button className="botao-secundario" onClick={() => abrirResponsavel(responsavel)}><Pencil /> Editar</button><button className="menu-acoes perigoso" onClick={() => setConfirmacaoExclusao({ tipo: "responsavel", item: responsavel })} aria-label={`Excluir ${responsavel.nome}`}><Trash2 /></button></article>)}</div>
       <Paginacao pagina={paginaResponsaveis} total={responsaveis.length} itensPorPagina={itensPorPagina} aoMudarPagina={setPaginaResponsaveis} rotulo="responsáveis" />
     </div> : <>
-      <div className="resumo-pagina"><div><h2>Materiais e valores</h2><p>Configurações armazenadas no PostgreSQL.</p></div><button className="botao-primario" onClick={() => abrirMaterial()}><Plus /> Novo material</button></div>
+      <div className="resumo-pagina"><div><h2>Materiais e valores</h2><p>Configurações armazenadas no PostgreSQL.</p></div>{podeMateriais && <button className="botao-primario" onClick={() => abrirMaterial()}><Plus /> Novo material</button>}</div>
       {mensagem && <p className="mensagem-configuracao" role="status">{mensagem}</p>}
       <section className="painel configuracao-meta-geral"><header><div><span>META FINANCEIRA PRINCIPAL</span><h3>Meta geral diária com prêmio fixo</h3><p>Quando ativa, soma somente materiais e entregas escolhidos para a meta e prevalece sobre as metas específicas.</p></div><label className="interruptor compacto"><input type="checkbox" checked={metaGeral.ativa} onChange={(evento) => setMetaGeral((atual) => ({ ...atual, ativa: evento.target.checked }))} /><span /><div><strong>{metaGeral.ativa ? "Meta geral ativa" : "Meta geral desativada"}</strong></div></label></header><div className="grade-formulario"><label className="campo">Quantidade diária<input inputMode="decimal" value={metaGeral.metaDiaria} onChange={(evento) => setMetaGeral((atual) => ({ ...atual, metaDiaria: evento.target.value }))} /></label><label className="campo">Prêmio fixo ao bater a meta (R$)<input inputMode="decimal" value={metaGeral.valorPremio} onChange={(evento) => setMetaGeral((atual) => ({ ...atual, valorPremio: evento.target.value }))} /></label><label className="campo">Unidade<select value={metaGeral.unidade} onChange={(evento) => setMetaGeral((atual) => ({ ...atual, unidade: evento.target.value }))}><option value="kg">kg</option></select></label><button type="button" className="botao-primario" onClick={() => void salvarMetaGeral()} disabled={salvandoMetaGeral}>{salvandoMetaGeral ? "Salvando..." : "Salvar meta geral"}</button></div><small>O peso usado para alcançar a meta não recebe o preço dos materiais: libera somente o prêmio fixo. O excedente pode ser pago ou guardado para uma meta futura. O novo prêmio recalcula caixas abertos de hoje; caixas fechados preservam a configuração auditada.</small></section>
       <div className="lista-materiais">{materiaisPaginados.map((material) => <article key={material.uuid}><span className="amostra-material">{material.tipo_material.slice(0, 2).toUpperCase()}</span><div className="nome-material"><strong>{material.nome}</strong><small>{material.tipo_material} · {material.unidade.toUpperCase()}</small></div><div><small>Pagamento e meta diária</small><strong>{Number(material.valor_referencia).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} / {Number(material.quantidade_referencia)} {material.unidade} · {material.contabiliza_meta ? Number(material.meta_diaria) > 0 ? `Meta ${Number(material.meta_diaria)} ${material.unidade}` : "Válido para a meta geral" : "Fora das metas · pagamento imediato"}</strong></div><span className={material.status === "ativo" ? "status ativo" : "status"}>● {material.status}</span><div className="acoes-material"><button className="menu-acoes editar" onClick={() => abrirMaterial(material)} aria-label={`Editar ${material.nome}`} title="Editar material"><Pencil /></button><button className="menu-acoes perigoso" onClick={() => setConfirmacaoExclusao({ tipo: "material", item: material })} aria-label={`Excluir ${material.nome}`} title="Excluir material"><Trash2 /></button></div></article>)}</div>

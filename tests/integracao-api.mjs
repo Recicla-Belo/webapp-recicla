@@ -45,6 +45,9 @@ async function executar() {
   const perfilAdministrador = (await chamar("/api/administrador/perfil")).dados;
   assert.equal(perfilAdministrador.email, process.env.ADMIN_EMAIL);
   assert.equal(perfilAdministrador.perfil, "administrador");
+  const catalogoPermissoes = (await chamar("/api/permissoes")).dados.dados;
+  assert.ok(catalogoPermissoes.length >= 18);
+  assert.ok(catalogoPermissoes.some((item) => item.chave === "cooperativas_editar"));
 
   const cookieAdministradorPermissoes = cookie;
   const emailRestrito = `cadastro-${Date.now()}-${process.pid}@reciclabelo.local`;
@@ -52,10 +55,12 @@ async function executar() {
   let usuarioRestritoUuid;
   let cooperativaRestritaUuid;
   try {
-    usuarioRestritoUuid = (await chamar("/api/usuarios", { method: "POST", body: JSON.stringify({ nome: "Operador de cadastro", email: emailRestrito, senha: senhaRestrita, ativo: true }) })).dados.uuid;
+    const permissoesRestritas = ["painel_visualizar", "cooperativas_visualizar", "cooperativas_cadastrar"];
+    usuarioRestritoUuid = (await chamar("/api/usuarios", { method: "POST", body: JSON.stringify({ nome: "Operador de cadastro", email: emailRestrito, senha: senhaRestrita, ativo: true, permissoes: permissoesRestritas }) })).dados.uuid;
     const loginRestrito = await chamar("/api/autenticacao/entrar", { method: "POST", body: JSON.stringify({ email: emailRestrito, senha: senhaRestrita }) }, false);
     const cookieRestrito = (loginRestrito.resposta.headers.get("set-cookie") ?? "").split(";", 1)[0];
     assert.equal(loginRestrito.dados.usuario.perfil, "operador_cadastro");
+    assert.deepEqual(loginRestrito.dados.usuario.permissoes.sort(), [...permissoesRestritas].sort());
     cookie = cookieRestrito;
     assert.equal((await chamar("/api/painel")).resposta.status, 200);
     cooperativaRestritaUuid = (await chamar("/api/cooperativas", { method: "POST", body: JSON.stringify({ nome: `Cadastro restrito ${Date.now()}`, nomeResponsavel: "Equipe operacional", ativa: true }) })).dados.uuid;
@@ -67,11 +72,23 @@ async function executar() {
     assert.equal(exclusaoBloqueada.status, 403);
     const configuracaoBloqueada = await fetch(`${urlApi}/api/materiais`, { method: "POST", headers: { "content-type": "application/json", cookie: cookieRestrito }, body: JSON.stringify({ nome: "Material indevido", tipoMaterial: "Teste", unidade: "kg", quantidadeReferencia: 1, valorReferencia: 1, metaDiaria: 0, ativo: true }) });
     assert.equal(configuracaoBloqueada.status, 403);
+    assert.equal((await fetch(`${urlApi}/api/catadores`, { headers: { cookie: cookieRestrito } })).status, 403);
+    cookie = cookieAdministradorPermissoes;
+    const permissoesComEdicao = [...permissoesRestritas, "cooperativas_editar"];
+    await chamar(`/api/usuarios/${usuarioRestritoUuid}`, { method: "PATCH", body: JSON.stringify({ nome: "Operador de cadastro", email: emailRestrito, ativo: true, permissoes: permissoesComEdicao }) });
+    const sessaoAntigaRevogada = await fetch(`${urlApi}/api/autenticacao/sessao`, { headers: { cookie: cookieRestrito } });
+    assert.equal((await sessaoAntigaRevogada.json()).autenticado, false);
+    const novoLoginRestrito = await chamar("/api/autenticacao/entrar", { method: "POST", body: JSON.stringify({ email: emailRestrito, senha: senhaRestrita }) }, false);
+    const cookieRestritoAtualizado = (novoLoginRestrito.resposta.headers.get("set-cookie") ?? "").split(";", 1)[0];
+    assert.ok(novoLoginRestrito.dados.usuario.permissoes.includes("cooperativas_editar"));
+    cookie = cookieRestritoAtualizado;
+    const edicaoConcedida = await chamar(`/api/cooperativas/${cooperativaRestritaUuid}`, { method: "PUT", body: JSON.stringify({ nome: `Cadastro restrito editado ${Date.now()}`, nomeResponsavel: "Equipe operacional", ativa: true }) });
+    assert.equal(edicaoConcedida.resposta.status, 204);
     cookie = cookieAdministradorPermissoes;
     await chamar(`/api/cooperativas/${cooperativaRestritaUuid}`, { method: "DELETE" });
     cooperativaRestritaUuid = undefined;
-    await chamar(`/api/usuarios/${usuarioRestritoUuid}`, { method: "PATCH", body: JSON.stringify({ nome: "Operador de cadastro", email: emailRestrito, ativo: false }) });
-    const sessaoRevogada = await fetch(`${urlApi}/api/autenticacao/sessao`, { headers: { cookie: cookieRestrito } });
+    await chamar(`/api/usuarios/${usuarioRestritoUuid}`, { method: "PATCH", body: JSON.stringify({ nome: "Operador de cadastro", email: emailRestrito, ativo: false, permissoes: permissoesComEdicao }) });
+    const sessaoRevogada = await fetch(`${urlApi}/api/autenticacao/sessao`, { headers: { cookie: cookieRestritoAtualizado } });
     assert.equal(sessaoRevogada.status, 200);
     assert.equal((await sessaoRevogada.json()).autenticado, false);
   } finally {
