@@ -24,10 +24,11 @@ test("renderiza a experiência do Recicla Belô", async () => {
 });
 
 test("mantém ambiente, banco e instalação documentados", async () => {
-  const [migracaoPerfis, painelUsuarios, migracaoDescricaoMetas] = await Promise.all([
+  const [migracaoPerfis, painelUsuarios, migracaoDescricaoMetas, migracaoRelatorios] = await Promise.all([
     readFile(new URL("../servidor/migracoes/016_perfis_acesso_usuarios.sql", import.meta.url), "utf8"),
     readFile(new URL("../app/componentes/painel-usuarios.tsx", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/018_descricao_permissao_metas_materiais.sql", import.meta.url), "utf8"),
+    readFile(new URL("../servidor/migracoes/019_relatorios_confiaveis_e_auditoria_imutavel.sql", import.meta.url), "utf8"),
   ]);
   const [exemplo, estilos, migracao, migracaoNotificacoes, migracaoAuditoria, migracaoCaixas, migracaoLimpeza, migracaoNotificacoesOrfas, migracaoPagamentoMeta, migracaoMetaGeral, migracaoSessao, migracaoMateriaisMeta, sqlCompleto, instalador, instaladorProducao, composeProducao, dockerfileProducao, supervisor, servidor, estrutura, api, painel, telaLogin, telaPesagem, telaCatadores, telaCooperativas, telaRelatorios, telaConfiguracoes, paginacao, leiaMe, pacote] = await Promise.all([
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
@@ -83,6 +84,8 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(migracaoPerfis, /perfil_acesso_usuario/);
   assert.match(migracaoPerfis, /operador_cadastro/);
   assert.match(migracaoDescricaoMetas, /Gerenciar metas e materiais participantes/);
+  assert.match(migracaoRelatorios, /CREATE OR REPLACE VIEW relatorio_resumo_diario/);
+  assert.match(migracaoRelatorios, /CREATE TRIGGER auditoria_imutavel/);
   assert.match(sqlCompleto, /perfil perfil_acesso_usuario/);
   assert.match(migracaoMateriaisMeta, /ALTER TABLE materiais[\s\S]*contabiliza_meta/);
   assert.match(migracaoMateriaisMeta, /ALTER TABLE itens_pesagem[\s\S]*contabiliza_meta/);
@@ -181,7 +184,7 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(estrutura, /possuiPermissao/);
   assert.match(telaCatadores, /acessos\.gerenciarCaixa/);
   assert.match(telaCooperativas, /acessos\.editar/);
-  assert.match(telaRelatorios, /acessos\.excluir/);
+  assert.doesNotMatch(telaRelatorios, /method: "PUT"|method: "DELETE"/);
   assert.match(telaConfiguracoes, /\/api\/administrador\/perfil/);
   assert.match(telaConfiguracoes, /\/api\/administrador\/senha/);
   assert.match(servidor, /alteracao_senha/);
@@ -221,8 +224,13 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(estilos, /titulo-cabecalho h1\{max-width:none;white-space:normal/);
   assert.match(telaCooperativas, /<Paginacao/);
   assert.match(telaCooperativas, /ModalConfirmacao/);
-  assert.match(telaRelatorios, /CORREÇÃO AUDITÁVEL/);
-  assert.match(telaRelatorios, /exclusao_logica/);
+  assert.match(telaRelatorios, /Histórico completo, somente leitura/);
+  assert.match(telaRelatorios, /Livro de auditoria/);
+  assert.match(telaRelatorios, /Escolha as informações/);
+  assert.match(telaRelatorios, /\/api\/relatorios\/exportar/);
+  assert.match(servidor, /aplicacao\.get\("\/api\/relatorios\/resumo-diario"/);
+  assert.match(servidor, /aplicacao\.get\("\/api\/relatorios\/auditoria"/);
+  assert.match(servidor, /aplicacao\.get\("\/api\/relatorios\/exportar"/);
   assert.match(telaRelatorios, /<Paginacao/);
   assert.match(paginacao, /paginasVisiveis/);
   assert.match(estilos, /\.paginacao\{[^}]*max-width:100%/);

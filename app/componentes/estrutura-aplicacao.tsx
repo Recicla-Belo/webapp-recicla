@@ -302,7 +302,7 @@ export function EstruturaAplicacao() {
         {pagina === "catadores" && podeAcessarPagina(administrador, "catadores") && <TelaCatadores acessos={{ cadastrar: possuiPermissao(administrador, "catadores_cadastrar"), editar: possuiPermissao(administrador, "catadores_editar"), excluir: possuiPermissao(administrador, "catadores_excluir"), gerenciarCaixa: possuiPermissao(administrador, "catadores_gerenciar_caixa") }} />}
         {pagina === "cooperativas" && podeAcessarPagina(administrador, "cooperativas") && <TelaCooperativas acessos={{ cadastrar: possuiPermissao(administrador, "cooperativas_cadastrar"), editar: possuiPermissao(administrador, "cooperativas_editar"), excluir: possuiPermissao(administrador, "cooperativas_excluir") }} />}
         {pagina === "pesagem" && possuiPermissao(administrador, "pesagens_cadastrar") && <TelaPesagem />}
-        {pagina === "relatorios" && podeAcessarPagina(administrador, "relatorios") && <TelaRelatorios acessos={{ editar: possuiPermissao(administrador, "pesagens_editar"), excluir: possuiPermissao(administrador, "pesagens_excluir") }} />}
+        {pagina === "relatorios" && podeAcessarPagina(administrador, "relatorios") && <TelaRelatorios />}
         {pagina === "configuracoes" && podeAcessarPagina(administrador, "configuracoes") && <TelaConfiguracoes administrador={administrador!} onAdministradorAtualizado={setAdministrador} />}
       </section>
     </main>

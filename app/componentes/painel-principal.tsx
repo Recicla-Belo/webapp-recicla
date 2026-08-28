@@ -62,13 +62,13 @@ export function PainelPrincipal({ onNovaPesagem, podeNovaPesagem = true }: { onN
 
   return <section className="painel-principal">
     <section className="secao-indicadores sem-chamada">
-      <div className="titulo-secao"><div><h2>Indicadores principais</h2><p>Dados calculados a partir dos registros do mês atual</p></div></div>
+      <div className="titulo-secao"><div><h2>Indicadores de hoje</h2><p>Resultados da operação do dia; o histórico completo permanece em Relatórios</p></div></div>
       <div className="grade-indicadores">{indicadores.map((item, indice) => <article className="cartao-indicador" key={item.rotulo}><div className={`icone-indicador cor-${indice}`}><item.icone /></div><p>{item.rotulo}</p><strong>{item.valor}</strong></article>)}</div>
     </section>
     <div className="grade-inferior">
       <section className="painel"><div className="titulo-secao"><div><h2>Produção dos últimos 7 dias</h2><p>Volume confirmado no banco de dados</p></div></div><div className="grafico" aria-label="Gráfico de produção dos últimos sete dias">{dados.producaoSemanal.map((item) => <div className="barra-grupo" key={item.data}><div className="barra" title={`${Number(item.peso).toLocaleString("pt-BR")} kg`} style={{ height: `${Math.max((Number(item.peso) / maiorPeso) * 100, Number(item.peso) > 0 ? 6 : 1)}%` }} /><span>{rotuloDia(item.data)}</span></div>)}</div></section>
       <section className="painel atividade">
-        <div className="titulo-secao"><div><h2>Atividade recente</h2><p>Todas as ações auditadas, organizadas em páginas</p></div>{podeNovaPesagem && <button type="button" onClick={onNovaPesagem}>Registrar nova</button>}</div>
+        <div className="titulo-secao"><div><h2>Atividade recente</h2><p>Últimos 30 dias, limitada a 100 eventos; o livro completo fica em Relatórios</p></div>{podeNovaPesagem && <button type="button" onClick={onNovaPesagem}>Registrar nova</button>}</div>
         {dados.atividades.length === 0 ? <p className="estado-vazio">Nenhuma movimentação registrada.</p> : dados.atividades.map((atividade) => <AtividadeRecente atividade={atividade} key={atividade.uuid} />)}
         <Paginacao pagina={paginaAtividades} total={dados.paginacaoAtividades.total} itensPorPagina={limiteAtividades} aoMudarPagina={setPaginaAtividades} aoMudarQuantidade={(quantidade) => { setLimiteAtividades(quantidade); setPaginaAtividades(1); }} opcoesQuantidade={[5, 10, 20]} rotulo="atividades" />
       </section>

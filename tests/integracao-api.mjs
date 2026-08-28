@@ -6,6 +6,20 @@ const bancoTeste = new pg.Pool({ connectionString: process.env.URL_BANCO });
 let cookie = "";
 const entidadesCriadas = new Set();
 
+async function excluirAuditoriaDeTeste(texto, valores = []) {
+  const cliente = await bancoTeste.connect();
+  try {
+    await cliente.query("BEGIN");
+    await cliente.query("ALTER TABLE auditoria DISABLE TRIGGER auditoria_imutavel");
+    await cliente.query(texto, valores);
+    await cliente.query("ALTER TABLE auditoria ENABLE TRIGGER auditoria_imutavel");
+    await cliente.query("COMMIT");
+  } catch (erro) {
+    await cliente.query("ROLLBACK");
+    throw erro;
+  } finally { cliente.release(); }
+}
+
 async function chamar(caminho, opcoes = {}, autenticado = true) {
   const cabecalhos = new Headers(opcoes.headers);
   if (opcoes.body && !cabecalhos.has("content-type")) cabecalhos.set("content-type", "application/json");
@@ -62,8 +76,13 @@ async function executar() {
   } finally {
     await chamar("/api/materiais/participacao-meta", { method: "PATCH", body: JSON.stringify({ materiaisUuids: materiaisSelecionadosOriginais }) });
     await bancoTeste.query("DELETE FROM notificacoes WHERE entidade='configuracoes_meta_geral' AND criado_em >= $1", [inicioTeste]);
-    await bancoTeste.query("DELETE FROM auditoria WHERE entidade='configuracoes_meta_geral' AND dados->>'tipo'='materiais_participantes' AND criado_em >= $1", [inicioTeste]);
+    await excluirAuditoriaDeTeste("DELETE FROM auditoria WHERE entidade='configuracoes_meta_geral' AND dados->>'tipo'='materiais_participantes' AND criado_em >= $1", [inicioTeste]);
   }
+  const eventoProtegido = await bancoTeste.query("SELECT uuid FROM auditoria ORDER BY criado_em DESC LIMIT 1");
+  if (eventoProtegido.rows[0]) await assert.rejects(
+    bancoTeste.query("DELETE FROM auditoria WHERE uuid=$1", [eventoProtegido.rows[0].uuid]),
+    (erro) => erro?.code === "55000",
+  );
 
   const cookieAdministradorPermissoes = cookie;
   const emailRestrito = `cadastro-${Date.now()}-${process.pid}@reciclabelo.local`;
@@ -114,7 +133,7 @@ async function executar() {
     if (cooperativaRestritaUuid) await bancoTeste.query("DELETE FROM cooperativas WHERE uuid=$1", [cooperativaRestritaUuid]);
     if (usuarioRestritoUuid) {
       await bancoTeste.query("DELETE FROM notificacoes WHERE entidade='usuarios' AND entidade_uuid=$1", [usuarioRestritoUuid]);
-      await bancoTeste.query("DELETE FROM auditoria WHERE entidade='usuarios' AND entidade_uuid=$1", [usuarioRestritoUuid]);
+      await excluirAuditoriaDeTeste("DELETE FROM auditoria WHERE usuario_uuid=$1 OR (entidade='usuarios' AND entidade_uuid=$1)", [usuarioRestritoUuid]);
       await bancoTeste.query("DELETE FROM usuarios WHERE uuid=$1", [usuarioRestritoUuid]);
     }
   }
@@ -273,6 +292,18 @@ async function executar() {
     assert.equal(Number(respostaRelatorio.totais.valor), 0);
     let relatorio = respostaRelatorio.dados;
     assert.ok(relatorio.some((item) => item.uuid === pesagemUuid && item.status === "agendada" && Number(item.valor_total) === 0 && item.historico.some((evento) => evento.acao === "alteracao")));
+    assert.ok(relatorio.every((item) => item.uuid && item.criado_por && Array.isArray(item.historico)));
+    const resumoDiario = (await chamar(`/api/relatorios/resumo-diario?inicio=${dataCaixa}&fim=${dataCaixa}&limite=5&deslocamento=0`)).dados;
+    assert.ok(resumoDiario.dados.some((item) => String(item.data_operacao).slice(0, 10) === dataCaixa));
+    const livroAuditoria = (await chamar(`/api/relatorios/auditoria?busca=${encodeURIComponent(pesagem.codigo)}&limite=5&deslocamento=0`)).dados;
+    assert.ok(livroAuditoria.dados.some((item) => item.entidade === "pesagens" && item.entidade_uuid === pesagemUuid));
+    const consultaExportacao = new URLSearchParams({ tipo: "pesagens", inicio: dataCaixa, fim: dataCaixa, campos: "protocolo,codigo,catador,material,peso_total,valor_total,historico", busca: catador.codigo });
+    const exportacao = await fetch(`${urlApi}/api/relatorios/exportar?${consultaExportacao}`, { headers: { cookie } });
+    assert.equal(exportacao.status, 200);
+    assert.match(exportacao.headers.get("content-type") ?? "", /^text\/csv/);
+    const csv = await exportacao.text();
+    assert.match(csv, /Protocolo UUID/);
+    assert.match(csv, new RegExp(pesagem.codigo));
     const perfil = (await chamar(`/api/catadores/${catadorUuid}/perfil`)).dados;
     assert.equal(perfil.catador.uuid, catadorUuid);
     assert.ok(perfil.caixas.some((item) => String(item.data_caixa).slice(0, 10) === dataCaixa && item.reaberto_em));
@@ -422,6 +453,7 @@ async function executar() {
     const cliente = await bancoTeste.connect();
     try {
       await cliente.query("BEGIN");
+      await cliente.query("ALTER TABLE auditoria DISABLE TRIGGER auditoria_imutavel");
       const entidades = [...entidadesCriadas];
       if (entidades.length) {
         await cliente.query("DELETE FROM notificacoes WHERE entidade_uuid = ANY($1::uuid[])", [entidades]);
@@ -450,6 +482,7 @@ async function executar() {
       await cliente.query("DELETE FROM auditoria WHERE entidade='configuracoes_meta_geral' AND criado_em >= $1", [inicioTeste]);
       await cliente.query("DELETE FROM notificacoes WHERE entidade='usuarios' AND entidade_uuid=$1 AND criado_em >= $2", [perfilAdministrador.uuid, inicioTeste]);
       await cliente.query("DELETE FROM auditoria WHERE entidade='usuarios' AND entidade_uuid=$1 AND criado_em >= $2", [perfilAdministrador.uuid, inicioTeste]);
+      await cliente.query("ALTER TABLE auditoria ENABLE TRIGGER auditoria_imutavel");
       await cliente.query("COMMIT");
     } catch (falha) {
       await cliente.query("ROLLBACK");

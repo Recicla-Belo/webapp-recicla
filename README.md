@@ -24,6 +24,10 @@ WebApp responsivo para gestão de cooperativas de reciclagem, catadores, produç
 - menu móvel com rolagem própria, áreas seguras do iPhone e proteção contra estouro horizontal da página;
 - API autenticada, PostgreSQL com UUID, auditoria, índices e pesquisa textual em português.
 - conta administrativa editável sob demanda: nome/e-mail e senha ficam ocultos até a ação escolhida, exigem a senha atual, geram auditoria e a troca de senha revoga as sessões anteriores.
+- dashboard operacional diário: peso, pagamentos, média e coletas são reiniciados visualmente a cada dia e permanecem disponíveis no relatório histórico;
+- atividade recente limitada aos últimos 30 dias e a 100 eventos no dashboard, sem apagar o livro permanente de auditoria;
+- relatórios somente leitura com resumo diário, pesagens completas e livro imutável de auditoria, todos paginados e filtráveis;
+- exportação CSV de todos os registros do período filtrado, permitindo escolher individualmente as colunas e protegendo contra fórmulas maliciosas em planilhas.
 - contas operacionais com permissões granulares escolhidas pelo administrador e validadas no backend para painel, catadores, cooperativas, pesagens, relatórios, caixas e configurações.
 
 ## Arquitetura

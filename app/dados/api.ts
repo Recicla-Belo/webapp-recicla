@@ -25,6 +25,23 @@ export async function requisitarApi<T>(caminho: string, opcoes: RequestInit = {}
   return resposta.json() as Promise<T>;
 }
 
+export async function baixarArquivoApi(caminho: string): Promise<{ arquivo: Blob; nome: string }> {
+  let resposta: Response;
+  try {
+    resposta = await fetch(`${URL_API}${caminho}`, { method: "GET", credentials: "include", headers: { accept: "text/csv" } });
+  } catch {
+    throw new ErroApi("Não foi possível conectar ao servidor para gerar a exportação.", 0);
+  }
+  if (!resposta.ok) {
+    const dados = await resposta.json().catch(() => ({})) as { mensagem?: string };
+    if (resposta.status === 401) window.dispatchEvent(new Event("reciclabelo:sessao-expirada"));
+    throw new ErroApi(dados.mensagem ?? "Não foi possível gerar a exportação.", resposta.status);
+  }
+  const disposicao = resposta.headers.get("content-disposition") ?? "";
+  const nome = disposicao.match(/filename="?([^";]+)"?/i)?.[1] ?? "relatorio-recicla-belo.csv";
+  return { arquivo: await resposta.blob(), nome };
+}
+
 export type CatadorApi = {
   uuid: string; codigo: string; nome_completo: string; apelido: string | null; status: "ativo" | "inativo";
   cooperativa: string | null; contatos: Array<{ tipo: string; valor: string }>; endereco_resumo: string | null; total_quilos: number; total_ganhos: number;

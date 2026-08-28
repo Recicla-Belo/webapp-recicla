@@ -29,6 +29,7 @@ await aplicacao.register(cors, {
     return retorno(new Error("Origem não permitida"), false);
   },
   methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  exposedHeaders: ["Content-Disposition", "X-Total-Registros"],
   credentials: true,
   maxAge: 600,
 });
@@ -384,7 +385,7 @@ function permissoesExigidasPelaRota(requisicao: FastifyRequest): PermissaoUsuari
     if (rota === "/api/pontos-apoio") return ["pesagens_cadastrar", "relatorios_visualizar"];
     if (rota === "/api/responsaveis-pesagem") return ["responsaveis_gerenciar", "pesagens_cadastrar", "relatorios_visualizar"];
     if (rota === "/api/enderecos/cep/:cep") return ["catadores_cadastrar", "catadores_editar"];
-    if (rota === "/api/relatorios/pesagens") return ["relatorios_visualizar"];
+    if (rota.startsWith("/api/relatorios/")) return ["relatorios_visualizar"];
   }
   if (metodo === "POST" && rota === "/api/catadores") return ["catadores_cadastrar"];
   if (metodo === "POST" && rota === "/api/catadores/:uuid/foto") return ["catadores_cadastrar", "catadores_editar"];
@@ -631,7 +632,8 @@ aplicacao.get("/api/painel", async (requisicao) => {
     coalesce(sum(p.valor_total), 0)::float8 AS valor_total_pagar,
     count(p.uuid)::int AS coletas_realizadas,
     coalesce(sum(p.peso_total) / nullif(count(DISTINCT p.catador_uuid), 0), 0)::float8 AS media_por_catador
-    FROM pesagens p WHERE p.status = 'concluida' AND p.excluida_em IS NULL AND date_trunc('month', p.data_hora) = date_trunc('month', now())`);
+    FROM pesagens p WHERE p.status = 'concluida' AND p.excluida_em IS NULL
+      AND (p.data_hora AT TIME ZONE 'America/Bahia')::date = (now() AT TIME ZONE 'America/Bahia')::date`);
   const producao = await banco.query(`SELECT to_char(dia,'YYYY-MM-DD') AS data, coalesce(sum(p.peso_total),0)::float8 AS peso
     FROM generate_series(current_date - interval '6 days', current_date, interval '1 day') dia
     LEFT JOIN pesagens p ON p.status='concluida' AND p.excluida_em IS NULL AND p.data_hora >= dia AND p.data_hora < dia + interval '1 day'
@@ -667,11 +669,13 @@ aplicacao.get("/api/painel", async (requisicao) => {
         count(mc.uuid) FILTER (WHERE mc.ativa)::int AS movimentacoes
       FROM movimentacoes_caixa_catador mc WHERE mc.caixa_uuid=cx.uuid
     ) totais_caixa ON TRUE
-    WHERE a.entidade<>'caixas_catador' OR cx.uuid IS NOT NULL
+    WHERE a.criado_em >= (now() - interval '30 days')
+      AND (a.entidade<>'caixas_catador' OR cx.uuid IS NOT NULL)
     ORDER BY a.criado_em DESC LIMIT $1 OFFSET $2`, [paginacao.limiteAtividades, deslocamentoAtividades]);
-  const totalAtividades = await banco.query<{ total: number }>(`SELECT count(*)::int AS total FROM auditoria a
+  const totalAtividades = await banco.query<{ total: number }>(`SELECT least(count(*),100)::int AS total FROM auditoria a
     LEFT JOIN caixas_catador cx ON a.entidade='caixas_catador' AND cx.uuid=a.entidade_uuid
-    WHERE a.entidade<>'caixas_catador' OR cx.uuid IS NOT NULL`);
+    WHERE a.criado_em >= (now() - interval '30 days')
+      AND (a.entidade<>'caixas_catador' OR cx.uuid IS NOT NULL)`);
   return { indicadores: indicadores.rows[0], producaoSemanal: producao.rows, atividades: atividades.rows, paginacaoAtividades: { pagina: paginacao.paginaAtividades, limite: paginacao.limiteAtividades, total: totalAtividades.rows[0]?.total ?? 0 } };
 });
 
@@ -961,7 +965,7 @@ aplicacao.delete("/api/catadores/:uuid", async (requisicao, resposta) => {
       (n.entidade='catadores' AND n.entidade_uuid=$1) OR
       (n.entidade='pesagens' AND n.entidade_uuid IN (SELECT p.uuid FROM pesagens p WHERE p.catador_uuid=$1)) OR
       (n.entidade='caixas_catador' AND n.entidade_uuid IN (SELECT cx.uuid FROM caixas_catador cx WHERE cx.catador_uuid=$1))`, [uuid]);
-    await cliente.query(`DELETE FROM auditoria a WHERE
+    const auditoriasPreservadas = await cliente.query<{ total: number }>(`SELECT count(*)::int AS total FROM auditoria a WHERE
       (a.entidade='catadores' AND a.entidade_uuid=$1) OR
       (a.entidade='pesagens' AND a.entidade_uuid IN (SELECT p.uuid FROM pesagens p WHERE p.catador_uuid=$1)) OR
       (a.entidade='caixas_catador' AND a.entidade_uuid IN (SELECT cx.uuid FROM caixas_catador cx WHERE cx.catador_uuid=$1))`, [uuid]);
@@ -973,6 +977,7 @@ aplicacao.delete("/api/catadores/:uuid", async (requisicao, resposta) => {
       codigo: catador.rows[0].codigo,
       motivo: confirmacao.data.motivo,
       registrosRemovidos: { ...totais.rows[0], arquivos: chavesArquivos.length },
+      eventosAuditoriaPreservados: auditoriasPreservadas.rows[0]?.total ?? 0,
     }, requisicao.ip);
     await cliente.query("COMMIT");
   } catch (erro) {
@@ -1495,11 +1500,13 @@ aplicacao.delete("/api/notificacoes", async (requisicao, resposta) => {
 });
 
 aplicacao.get("/api/relatorios/pesagens", async (requisicao) => {
-  const filtro = z.object({ inicio: z.iso.date().optional(), fim: z.iso.date().optional(), catadorUuid: z.uuid().optional(), busca: z.string().trim().max(120).default(""), limite: z.coerce.number().int().min(5).max(50).default(10), deslocamento: z.coerce.number().int().min(0).default(0) }).parse(requisicao.query);
-  const parametros = [filtro.inicio ?? null, filtro.fim ?? null, filtro.catadorUuid ?? null, filtro.busca, filtro.limite, filtro.deslocamento];
-  const { rows } = await banco.query(`SELECT p.uuid,p.codigo,p.criado_em,p.data_hora,p.atualizado_em,p.peso_total,p.valor_total,p.status,p.observacao,
+  const filtro = z.object({ inicio: z.iso.date().optional(), fim: z.iso.date().optional(), catadorUuid: z.uuid().optional(), materialUuid: z.uuid().optional(), cooperativaUuid: z.uuid().optional(), status: z.enum(["concluida", "agendada", "cancelada", "excluida"]).optional(), busca: z.string().trim().max(120).default(""), limite: z.coerce.number().int().min(5).max(50).default(10), deslocamento: z.coerce.number().int().min(0).default(0) }).parse(requisicao.query);
+  const parametros = [filtro.inicio ?? null, filtro.fim ?? null, filtro.catadorUuid ?? null, filtro.busca, filtro.materialUuid ?? null, filtro.cooperativaUuid ?? null, filtro.status ?? null, filtro.limite, filtro.deslocamento];
+  const { rows } = await banco.query(`SELECT p.uuid,p.codigo,p.criado_em,p.data_hora,p.confirmada_em,p.atualizado_em,p.peso_total,p.valor_total,p.status,p.observacao,
       p.excluida_em,p.motivo_exclusao,p.catador_uuid,p.cooperativa_uuid,p.ponto_apoio_uuid,p.responsavel_pesagem_uuid,p.responsavel_outro,
-      c.codigo AS codigo_catador,c.nome_completo AS catador,ip.material_uuid,m.nome AS material,ip.contabiliza_meta,ip.guardar_excedente_meta,
+      c.codigo AS codigo_catador,c.nome_completo AS catador,c.cpf AS cpf_catador,
+      (SELECT string_agg(ct.tipo || ': ' || ct.valor,' | ' ORDER BY ct.principal DESC,ct.criado_em) FROM contatos_catador ct WHERE ct.catador_uuid=c.uuid) AS contatos_catador,
+      ip.material_uuid,m.nome AS material,m.tipo_material,ip.unidade,ip.quantidade_referencia::float8,ip.valor_referencia::float8,ip.observacao AS observacao_item,ip.contabiliza_meta,ip.guardar_excedente_meta,
       ip.peso_meta_aplicado::float8,ip.peso_excedente_pago::float8,ip.peso_excedente_credito::float8,
       ip.valor_premio_meta::float8,ip.valor_excedente_material::float8,
       CASE WHEN NOT ip.contabiliza_meta THEN 0 WHEN cx.meta_geral_ativa AND cx.meta_geral_diaria>0 THEN cx.meta_geral_diaria ELSE ip.meta_diaria END::float8 AS meta_diaria,
@@ -1511,27 +1518,135 @@ aplicacao.get("/api/relatorios/pesagens", async (requisicao) => {
         least(round((cx.credito_meta_utilizado + (SELECT coalesce(sum(ip2.peso_meta_aplicado),0) FROM pesagens p2 JOIN itens_pesagem ip2 ON ip2.pesagem_uuid=p2.uuid WHERE p2.catador_uuid=p.catador_uuid AND ip2.contabiliza_meta AND p2.status='concluida' AND p2.excluida_em IS NULL AND (p2.data_hora AT TIME ZONE 'America/Bahia')::date=(p.data_hora AT TIME ZONE 'America/Bahia')::date))/cx.meta_geral_diaria*100,2),100)::float8
       WHEN ip.meta_diaria<=0 THEN 100
       ELSE least(round((SELECT coalesce(sum(ip2.peso),0) FROM pesagens p2 JOIN itens_pesagem ip2 ON ip2.pesagem_uuid=p2.uuid WHERE p2.catador_uuid=p.catador_uuid AND ip2.material_uuid=ip.material_uuid AND ip2.contabiliza_meta AND p2.status='concluida' AND p2.excluida_em IS NULL AND (p2.data_hora AT TIME ZONE 'America/Bahia')::date=(p.data_hora AT TIME ZONE 'America/Bahia')::date)/ip.meta_diaria*100,2),100)::float8 END AS percentual_meta,
-      coalesce(rp.nome,p.responsavel_outro) AS responsavel,
-      coalesce((SELECT json_agg(json_build_object('uuid',a.uuid,'acao',a.acao,'dados',a.dados,'criado_em',a.criado_em) ORDER BY a.criado_em DESC)
-        FROM auditoria a WHERE a.entidade='pesagens' AND a.entidade_uuid=p.uuid), '[]'::json) AS historico
+      coalesce(rp.nome,p.responsavel_outro) AS responsavel,uc.nome AS criado_por,uc.email AS criado_por_email,
+      ue.nome AS excluido_por,ue.email AS excluido_por_email,
+      coalesce((SELECT json_agg(json_build_object('uuid',a.uuid,'acao',a.acao,'dados',a.dados,'criado_em',a.criado_em,'usuario',ua.nome,'email',ua.email,'endereco_ip',host(a.endereco_ip)) ORDER BY a.criado_em DESC)
+        FROM auditoria a LEFT JOIN usuarios ua ON ua.uuid=a.usuario_uuid WHERE a.entidade='pesagens' AND a.entidade_uuid=p.uuid), '[]'::json) AS historico
     FROM pesagens p JOIN catadores c ON c.uuid=p.catador_uuid JOIN pontos_apoio pa ON pa.uuid=p.ponto_apoio_uuid
     LEFT JOIN cooperativas co ON co.uuid=p.cooperativa_uuid
     LEFT JOIN caixas_catador cx ON cx.catador_uuid=p.catador_uuid AND cx.data_caixa=(p.data_hora AT TIME ZONE 'America/Bahia')::date
     LEFT JOIN responsaveis_pesagem rp ON rp.uuid=p.responsavel_pesagem_uuid
+    LEFT JOIN usuarios uc ON uc.uuid=p.criada_por_uuid
+    LEFT JOIN usuarios ue ON ue.uuid=p.excluida_por_uuid
     JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN materiais m ON m.uuid=ip.material_uuid
     WHERE ($1::date IS NULL OR p.data_hora >= $1::date) AND ($2::date IS NULL OR p.data_hora < $2::date + interval '1 day')
       AND ($3::uuid IS NULL OR p.catador_uuid=$3)
       AND ($4='' OR to_tsvector('portuguese',c.nome_completo || ' ' || c.codigo || ' ' || p.codigo || ' ' || m.nome || ' ' || p.status::text || ' ' || coalesce(co.nome,'')) @@ consulta_busca_prefixada($4))
-    ORDER BY p.data_hora DESC LIMIT $5 OFFSET $6`, parametros);
-  const totais = await banco.query<{ total: number; peso: number; valor: number }>(`SELECT count(*)::int AS total,
+      AND ($5::uuid IS NULL OR ip.material_uuid=$5)
+      AND ($6::uuid IS NULL OR p.cooperativa_uuid=$6)
+      AND ($7::text IS NULL OR CASE WHEN $7='excluida' THEN p.excluida_em IS NOT NULL ELSE p.status::text=$7 AND p.excluida_em IS NULL END)
+    ORDER BY p.data_hora DESC,p.uuid DESC LIMIT $8 OFFSET $9`, parametros);
+  const totais = await banco.query<{ total: number; peso: number; valor: number; catadores: number; coletas: number }>(`SELECT count(*)::int AS total,
       coalesce(sum(p.peso_total) FILTER (WHERE p.status='concluida' AND p.excluida_em IS NULL),0)::float8 AS peso,
-      coalesce(sum(p.valor_total) FILTER (WHERE p.status='concluida' AND p.excluida_em IS NULL),0)::float8 AS valor
+      coalesce(sum(p.valor_total) FILTER (WHERE p.status='concluida' AND p.excluida_em IS NULL),0)::float8 AS valor,
+      count(DISTINCT p.catador_uuid) FILTER (WHERE p.status='concluida' AND p.excluida_em IS NULL)::int AS catadores,
+      count(p.uuid) FILTER (WHERE p.status='concluida' AND p.excluida_em IS NULL)::int AS coletas
     FROM pesagens p JOIN catadores c ON c.uuid=p.catador_uuid JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN materiais m ON m.uuid=ip.material_uuid
     LEFT JOIN cooperativas co ON co.uuid=p.cooperativa_uuid
     WHERE ($1::date IS NULL OR p.data_hora >= $1::date) AND ($2::date IS NULL OR p.data_hora < $2::date + interval '1 day')
       AND ($3::uuid IS NULL OR p.catador_uuid=$3)
-      AND ($4='' OR to_tsvector('portuguese',c.nome_completo || ' ' || c.codigo || ' ' || p.codigo || ' ' || m.nome || ' ' || p.status::text || ' ' || coalesce(co.nome,'')) @@ consulta_busca_prefixada($4))`, parametros.slice(0, 4));
-  return { dados: rows, total: totais.rows[0]?.total ?? 0, totais: { peso: totais.rows[0]?.peso ?? 0, valor: totais.rows[0]?.valor ?? 0 }, limite: filtro.limite, deslocamento: filtro.deslocamento };
+      AND ($4='' OR to_tsvector('portuguese',c.nome_completo || ' ' || c.codigo || ' ' || p.codigo || ' ' || m.nome || ' ' || p.status::text || ' ' || coalesce(co.nome,'')) @@ consulta_busca_prefixada($4))
+      AND ($5::uuid IS NULL OR ip.material_uuid=$5)
+      AND ($6::uuid IS NULL OR p.cooperativa_uuid=$6)
+      AND ($7::text IS NULL OR CASE WHEN $7='excluida' THEN p.excluida_em IS NOT NULL ELSE p.status::text=$7 AND p.excluida_em IS NULL END)`, parametros.slice(0, 7));
+  const resumo = totais.rows[0];
+  return { dados: rows, total: resumo?.total ?? 0, totais: { peso: resumo?.peso ?? 0, valor: resumo?.valor ?? 0, catadores: resumo?.catadores ?? 0, coletas: resumo?.coletas ?? 0, media: resumo?.catadores ? Number(resumo.peso) / resumo.catadores : 0 }, limite: filtro.limite, deslocamento: filtro.deslocamento };
+});
+
+aplicacao.get("/api/relatorios/resumo-diario", async (requisicao) => {
+  const filtro = z.object({ inicio: z.iso.date().optional(), fim: z.iso.date().optional(), limite: z.coerce.number().int().min(5).max(50).default(10), deslocamento: z.coerce.number().int().min(0).default(0) }).parse(requisicao.query);
+  const parametros = [filtro.inicio ?? null, filtro.fim ?? null, filtro.limite, filtro.deslocamento];
+  const linhas = await banco.query(`SELECT data_operacao::text,coletas_realizadas,catadores_atendidos,total_coletado::float8,
+      valor_total_pagar::float8,media_por_catador::float8,catadores_meta_atingida
+    FROM relatorio_resumo_diario
+    WHERE ($1::date IS NULL OR data_operacao >= $1::date) AND ($2::date IS NULL OR data_operacao <= $2::date)
+    ORDER BY data_operacao DESC LIMIT $3 OFFSET $4`, parametros);
+  const total = await banco.query<{ total: number }>(`SELECT count(*)::int AS total FROM relatorio_resumo_diario
+    WHERE ($1::date IS NULL OR data_operacao >= $1::date) AND ($2::date IS NULL OR data_operacao <= $2::date)`, parametros.slice(0, 2));
+  return { dados: linhas.rows, total: total.rows[0]?.total ?? 0, limite: filtro.limite, deslocamento: filtro.deslocamento };
+});
+
+aplicacao.get("/api/relatorios/auditoria", async (requisicao) => {
+  const filtro = z.object({ inicio: z.iso.date().optional(), fim: z.iso.date().optional(), entidade: z.string().trim().max(80).default(""), acao: z.string().trim().max(80).default(""), busca: z.string().trim().max(120).default(""), limite: z.coerce.number().int().min(5).max(50).default(10), deslocamento: z.coerce.number().int().min(0).default(0) }).parse(requisicao.query);
+  const parametros = [filtro.inicio ?? null, filtro.fim ?? null, filtro.entidade, filtro.acao, filtro.busca, filtro.limite, filtro.deslocamento];
+  const baseFiltro = `WHERE ($1::date IS NULL OR a.criado_em >= $1::date)
+      AND ($2::date IS NULL OR a.criado_em < $2::date + interval '1 day')
+      AND ($3='' OR a.entidade=$3) AND ($4='' OR a.acao=$4)
+      AND ($5='' OR to_tsvector('portuguese',coalesce(u.nome,'') || ' ' || coalesce(u.email,'') || ' ' || a.acao || ' ' || a.entidade || ' ' || coalesce(a.entidade_uuid::text,'') || ' ' || a.dados::text) @@ consulta_busca_prefixada($5))`;
+  const linhas = await banco.query(`SELECT a.uuid,a.acao,a.entidade,a.entidade_uuid,a.dados,host(a.endereco_ip) AS endereco_ip,a.criado_em,
+      u.uuid AS usuario_uuid,u.nome AS usuario,u.email AS usuario_email
+    FROM auditoria a LEFT JOIN usuarios u ON u.uuid=a.usuario_uuid ${baseFiltro}
+    ORDER BY a.criado_em DESC,a.uuid DESC LIMIT $6 OFFSET $7`, parametros);
+  const total = await banco.query<{ total: number }>(`SELECT count(*)::int AS total FROM auditoria a LEFT JOIN usuarios u ON u.uuid=a.usuario_uuid ${baseFiltro}`, parametros.slice(0, 5));
+  const opcoes = await banco.query<{ entidades: string[]; acoes: string[] }>(`SELECT
+    coalesce(array_agg(DISTINCT entidade ORDER BY entidade),'{}') AS entidades,
+    coalesce(array_agg(DISTINCT acao ORDER BY acao),'{}') AS acoes FROM auditoria`);
+  return { dados: linhas.rows, total: total.rows[0]?.total ?? 0, opcoes: opcoes.rows[0] ?? { entidades: [], acoes: [] }, limite: filtro.limite, deslocamento: filtro.deslocamento };
+});
+
+type CampoExportacao = { cabecalho: string; chave: string };
+const camposExportacaoPesagens: Record<string, CampoExportacao> = {
+  protocolo: { cabecalho: "Protocolo UUID", chave: "uuid" }, codigo: { cabecalho: "Código da pesagem", chave: "codigo" },
+  data_hora: { cabecalho: "Data e hora da pesagem", chave: "data_hora" }, criado_em: { cabecalho: "Registrada em", chave: "criado_em" }, atualizado_em: { cabecalho: "Última atualização", chave: "atualizado_em" },
+  codigo_catador: { cabecalho: "Código do catador", chave: "codigo_catador" }, catador: { cabecalho: "Catador", chave: "catador" }, cpf_catador: { cabecalho: "CPF do catador", chave: "cpf_catador" }, contatos_catador: { cabecalho: "Contatos do catador", chave: "contatos_catador" },
+  cooperativa: { cabecalho: "Cooperativa / associação", chave: "cooperativa" }, ponto_apoio: { cabecalho: "Central / ponto", chave: "ponto_apoio" }, responsavel: { cabecalho: "Responsável pela pesagem", chave: "responsavel" },
+  material: { cabecalho: "Material", chave: "material" }, tipo_material: { cabecalho: "Tipo de material", chave: "tipo_material" }, unidade: { cabecalho: "Unidade", chave: "unidade" }, peso_total: { cabecalho: "Peso", chave: "peso_total" }, quantidade_referencia: { cabecalho: "Quantidade de referência", chave: "quantidade_referencia" }, valor_referencia: { cabecalho: "Valor de referência", chave: "valor_referencia" }, valor_bruto: { cabecalho: "Valor bruto", chave: "valor_bruto" }, valor_total: { cabecalho: "Valor liberado", chave: "valor_total" },
+  regra_meta: { cabecalho: "Regra da meta", chave: "regra_meta" }, meta_diaria: { cabecalho: "Meta diária", chave: "meta_diaria" }, peso_meta_aplicado: { cabecalho: "Peso aplicado na meta", chave: "peso_meta_aplicado" }, peso_excedente_pago: { cabecalho: "Excedente pago", chave: "peso_excedente_pago" }, peso_excedente_credito: { cabecalho: "Excedente guardado", chave: "peso_excedente_credito" }, valor_premio_meta: { cabecalho: "Prêmio da meta", chave: "valor_premio_meta" }, valor_excedente_material: { cabecalho: "Valor do excedente", chave: "valor_excedente_material" },
+  status: { cabecalho: "Status", chave: "status_relatorio" }, status_caixa: { cabecalho: "Status do caixa", chave: "status_caixa" }, observacao: { cabecalho: "Observação", chave: "observacao" }, criada_por: { cabecalho: "Registrada por", chave: "criada_por" }, excluida_em: { cabecalho: "Excluída em", chave: "excluida_em" }, excluido_por: { cabecalho: "Excluída por", chave: "excluido_por" }, motivo_exclusao: { cabecalho: "Motivo da exclusão", chave: "motivo_exclusao" }, historico: { cabecalho: "Histórico de auditoria", chave: "historico" },
+};
+const camposExportacaoResumo: Record<string, CampoExportacao> = {
+  data_operacao: { cabecalho: "Data", chave: "data_operacao" }, total_coletado: { cabecalho: "Total coletado (kg)", chave: "total_coletado" }, valor_total_pagar: { cabecalho: "Valor total a pagar", chave: "valor_total_pagar" }, media_por_catador: { cabecalho: "Média por catador (kg)", chave: "media_por_catador" }, coletas_realizadas: { cabecalho: "Coletas realizadas", chave: "coletas_realizadas" }, catadores_atendidos: { cabecalho: "Catadores atendidos", chave: "catadores_atendidos" }, catadores_meta_atingida: { cabecalho: "Catadores que bateram meta", chave: "catadores_meta_atingida" },
+};
+const camposExportacaoAuditoria: Record<string, CampoExportacao> = {
+  protocolo: { cabecalho: "Protocolo UUID", chave: "uuid" }, criado_em: { cabecalho: "Data e hora", chave: "criado_em" }, usuario: { cabecalho: "Usuário", chave: "usuario" }, usuario_email: { cabecalho: "E-mail do usuário", chave: "usuario_email" }, acao: { cabecalho: "Ação", chave: "acao" }, entidade: { cabecalho: "Entidade", chave: "entidade" }, entidade_uuid: { cabecalho: "UUID da entidade", chave: "entidade_uuid" }, endereco_ip: { cabecalho: "Endereço IP", chave: "endereco_ip" }, dados: { cabecalho: "Dados completos do evento", chave: "dados" },
+};
+function celulaCsv(valor: unknown) {
+  const textoOriginal = typeof valor === "object" && valor !== null ? JSON.stringify(valor) : valor == null ? "" : String(valor);
+  const texto = /^[=+\-@]/.test(textoOriginal) ? `'${textoOriginal}` : textoOriginal;
+  return `"${texto.replaceAll('"', '""')}"`;
+}
+function montarCsv(linhas: Record<string, unknown>[], campos: string[], catalogo: Record<string, CampoExportacao>) {
+  return [campos.map((campo) => celulaCsv(catalogo[campo]!.cabecalho)).join(";"), ...linhas.map((linha) => campos.map((campo) => celulaCsv(linha[catalogo[campo]!.chave])).join(";"))].join("\r\n");
+}
+
+aplicacao.get("/api/relatorios/exportar", async (requisicao, resposta) => {
+  const filtro = z.object({ tipo: z.enum(["pesagens", "resumo", "auditoria"]), inicio: z.iso.date(), fim: z.iso.date(), campos: z.string().min(1).max(1000), busca: z.string().trim().max(120).default(""), catadorUuid: z.uuid().optional(), materialUuid: z.uuid().optional(), cooperativaUuid: z.uuid().optional(), status: z.enum(["concluida", "agendada", "cancelada", "excluida"]).optional(), entidade: z.string().trim().max(80).default(""), acao: z.string().trim().max(80).default("") }).parse(requisicao.query);
+  const inicio = new Date(`${filtro.inicio}T00:00:00Z`); const fim = new Date(`${filtro.fim}T00:00:00Z`);
+  if (fim < inicio || fim.getTime() - inicio.getTime() > 366 * 86_400_000) return resposta.code(400).send({ mensagem: "Selecione um período válido de até 366 dias para a exportação." });
+  const catalogo = filtro.tipo === "pesagens" ? camposExportacaoPesagens : filtro.tipo === "resumo" ? camposExportacaoResumo : camposExportacaoAuditoria;
+  const campos = [...new Set(filtro.campos.split(",").map((campo) => campo.trim()).filter(Boolean))];
+  if (!campos.length || campos.length > 40 || campos.some((campo) => !catalogo[campo])) return resposta.code(400).send({ mensagem: "Seleção de campos inválida." });
+  let linhas: Record<string, unknown>[];
+  if (filtro.tipo === "resumo") {
+    linhas = (await banco.query(`SELECT data_operacao::text,total_coletado::float8,valor_total_pagar::float8,media_por_catador::float8,coletas_realizadas,catadores_atendidos,catadores_meta_atingida FROM relatorio_resumo_diario WHERE data_operacao BETWEEN $1::date AND $2::date ORDER BY data_operacao`, [filtro.inicio, filtro.fim])).rows;
+  } else if (filtro.tipo === "auditoria") {
+    linhas = (await banco.query(`SELECT a.uuid,a.criado_em,u.nome AS usuario,u.email AS usuario_email,a.acao,a.entidade,a.entidade_uuid,host(a.endereco_ip) AS endereco_ip,a.dados
+      FROM auditoria a LEFT JOIN usuarios u ON u.uuid=a.usuario_uuid WHERE a.criado_em >= $1::date AND a.criado_em < $2::date+interval '1 day'
+      AND ($3='' OR a.entidade=$3) AND ($4='' OR a.acao=$4)
+      AND ($5='' OR to_tsvector('portuguese',coalesce(u.nome,'') || ' ' || coalesce(u.email,'') || ' ' || a.acao || ' ' || a.entidade || ' ' || coalesce(a.entidade_uuid::text,'') || ' ' || a.dados::text) @@ consulta_busca_prefixada($5))
+      ORDER BY a.criado_em,a.uuid LIMIT 100001`, [filtro.inicio, filtro.fim, filtro.entidade, filtro.acao, filtro.busca])).rows;
+  } else {
+    linhas = (await banco.query(`SELECT p.uuid,p.codigo,p.data_hora,p.criado_em,p.atualizado_em,c.codigo AS codigo_catador,c.nome_completo AS catador,c.cpf AS cpf_catador,
+      (SELECT string_agg(ct.tipo || ': ' || ct.valor,' | ' ORDER BY ct.principal DESC,ct.criado_em) FROM contatos_catador ct WHERE ct.catador_uuid=c.uuid) AS contatos_catador,
+      co.nome AS cooperativa,pa.nome AS ponto_apoio,coalesce(rp.nome,p.responsavel_outro) AS responsavel,m.nome AS material,m.tipo_material,ip.unidade,
+      p.peso_total::float8,ip.quantidade_referencia::float8,ip.valor_referencia::float8,round((ip.peso/ip.quantidade_referencia)*ip.valor_referencia,2)::float8 AS valor_bruto,p.valor_total::float8,
+      CASE WHEN NOT ip.contabiliza_meta THEN 'fora da meta' WHEN cx.meta_geral_ativa AND cx.meta_geral_diaria>0 THEN 'meta geral' ELSE 'meta do material' END AS regra_meta,
+      CASE WHEN NOT ip.contabiliza_meta THEN 0 WHEN cx.meta_geral_ativa AND cx.meta_geral_diaria>0 THEN cx.meta_geral_diaria ELSE ip.meta_diaria END::float8 AS meta_diaria,
+      ip.peso_meta_aplicado::float8,ip.peso_excedente_pago::float8,ip.peso_excedente_credito::float8,ip.valor_premio_meta::float8,ip.valor_excedente_material::float8,
+      CASE WHEN p.excluida_em IS NOT NULL THEN 'excluída' ELSE p.status::text END AS status_relatorio,cx.status::text AS status_caixa,p.observacao,uc.nome AS criada_por,p.excluida_em,ue.nome AS excluido_por,p.motivo_exclusao,
+      coalesce((SELECT json_agg(json_build_object('protocolo',a.uuid,'acao',a.acao,'data',a.criado_em,'usuario',ua.nome,'email',ua.email,'ip',host(a.endereco_ip),'dados',a.dados) ORDER BY a.criado_em) FROM auditoria a LEFT JOIN usuarios ua ON ua.uuid=a.usuario_uuid WHERE a.entidade='pesagens' AND a.entidade_uuid=p.uuid),'[]'::json) AS historico
+      FROM pesagens p JOIN catadores c ON c.uuid=p.catador_uuid JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN materiais m ON m.uuid=ip.material_uuid
+      JOIN pontos_apoio pa ON pa.uuid=p.ponto_apoio_uuid LEFT JOIN cooperativas co ON co.uuid=p.cooperativa_uuid LEFT JOIN responsaveis_pesagem rp ON rp.uuid=p.responsavel_pesagem_uuid
+      LEFT JOIN caixas_catador cx ON cx.catador_uuid=p.catador_uuid AND cx.data_caixa=(p.data_hora AT TIME ZONE 'America/Bahia')::date LEFT JOIN usuarios uc ON uc.uuid=p.criada_por_uuid LEFT JOIN usuarios ue ON ue.uuid=p.excluida_por_uuid
+      WHERE p.data_hora >= $1::date AND p.data_hora < $2::date+interval '1 day' AND ($3::uuid IS NULL OR p.catador_uuid=$3) AND ($4::uuid IS NULL OR ip.material_uuid=$4) AND ($5::uuid IS NULL OR p.cooperativa_uuid=$5)
+      AND ($6::text IS NULL OR CASE WHEN $6='excluida' THEN p.excluida_em IS NOT NULL ELSE p.status::text=$6 AND p.excluida_em IS NULL END)
+      AND ($7='' OR to_tsvector('portuguese',c.nome_completo || ' ' || c.codigo || ' ' || p.codigo || ' ' || m.nome || ' ' || p.status::text || ' ' || coalesce(co.nome,'')) @@ consulta_busca_prefixada($7))
+      ORDER BY p.data_hora,p.uuid LIMIT 100001`, [filtro.inicio, filtro.fim, filtro.catadorUuid ?? null, filtro.materialUuid ?? null, filtro.cooperativaUuid ?? null, filtro.status ?? null, filtro.busca])).rows;
+  }
+  if (linhas.length > 100000) return resposta.code(413).send({ mensagem: "O período possui mais de 100.000 registros. Divida a exportação em períodos menores para garantir um arquivo completo e seguro." });
+  const csv = `\uFEFF${montarCsv(linhas, campos, catalogo)}`;
+  const nome = `recicla-belo-${filtro.tipo}-${filtro.inicio}-a-${filtro.fim}.csv`;
+  return resposta.header("Cache-Control", "no-store").header("Content-Type", "text/csv; charset=utf-8").header("Content-Disposition", `attachment; filename="${nome}"`).header("X-Total-Registros", String(linhas.length)).send(csv);
 });
 
 aplicacao.setNotFoundHandler((_requisicao, resposta) => resposta.code(404).send({ mensagem: "Recurso não encontrado." }));
