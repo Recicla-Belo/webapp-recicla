@@ -8,8 +8,9 @@ import { requisitarApi, type AdministradorApi, type ConfiguracaoMetaGeralApi, ty
 import { useIdentidadeVisual, type IdentidadeVisual } from "@/app/configuracao/identidade-visual";
 import { ModalConfirmacao } from "@/app/componentes/modal-confirmacao";
 import { Paginacao } from "@/app/componentes/paginacao";
+import { PainelUsuarios } from "@/app/componentes/painel-usuarios";
 
-type AbaConfiguracao = "materiais" | "responsaveis" | "identidade" | "conta";
+type AbaConfiguracao = "materiais" | "responsaveis" | "identidade" | "usuarios" | "conta";
 
 async function lerImagem(evento: ChangeEvent<HTMLInputElement>) {
   const arquivo = evento.target.files?.[0];
@@ -185,11 +186,12 @@ export function TelaConfiguracoes({ administrador, onAdministradorAtualizado }: 
       <button className={aba === "materiais" ? "ativo" : ""} onClick={() => setAba("materiais")} role="tab" aria-selected={aba === "materiais"}>Materiais</button>
       <button className={aba === "responsaveis" ? "ativo" : ""} onClick={() => setAba("responsaveis")} role="tab" aria-selected={aba === "responsaveis"}>Responsáveis pela pesagem</button>
       <button className={aba === "identidade" ? "ativo" : ""} onClick={() => setAba("identidade")} role="tab" aria-selected={aba === "identidade"}>Identidade visual</button>
+      <button className={aba === "usuarios" ? "ativo" : ""} onClick={() => setAba("usuarios")} role="tab" aria-selected={aba === "usuarios"}>Usuários e permissões</button>
       <button className={aba === "conta" ? "ativo" : ""} onClick={() => { setAba("conta"); cancelarConta(); }} role="tab" aria-selected={aba === "conta"}>Conta do administrador</button>
       <button disabled title="Disponível em uma próxima etapa">Pontos de apoio</button>
     </div>
 
-    {aba === "conta" ? <section className="painel conta-administrador">
+    {aba === "usuarios" ? <PainelUsuarios /> : aba === "conta" ? <section className="painel conta-administrador">
       <header className="cabecalho-conta"><span><ShieldCheck /></span><div><small>CONTA PROTEGIDA</small><h2>Administrador da plataforma</h2><p>Os campos permanecem bloqueados até você escolher o que deseja alterar.</p></div></header>
       <div className="resumo-conta"><div><small>Nome</small><strong>{administrador.nome}</strong></div><div><small>E-mail de acesso</small><strong>{administrador.email}</strong></div><div><small>Nível de acesso</small><strong>Administrador único</strong></div></div>
       {modoConta === "nenhum" ? <div className="acoes-conta"><button type="button" className="botao-secundario" onClick={() => { setModoConta("dados"); setMensagem(""); }}><UserRound /> Alterar nome ou e-mail</button><button type="button" className="botao-secundario" onClick={() => { setModoConta("senha"); setMensagem(""); }}><KeyRound /> Alterar senha</button></div> : <form className="formulario-conta" onSubmit={(evento) => evento.preventDefault()}>

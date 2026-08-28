@@ -103,7 +103,7 @@ export function TelaLogin({ onAutenticado }: { onAutenticado: (usuario: Administ
           {erro && <div className="erro-login" role="alert">{erro}</div>}
           <button className="botao-primario botao-entrar" disabled={enviando}>{enviando ? "Verificando acesso..." : `Entrar no ${identidade.nomeAplicacao}`}</button>
         </form>
-        <div className="rodape-login"><span aria-hidden="true">●</span> Acesso exclusivo do administrador</div>
+        <div className="rodape-login"><span aria-hidden="true">●</span> Acesso seguro para equipe autorizada</div>
       </div>
     </section>
   </main>;

@@ -3,7 +3,7 @@
 /* eslint-disable jsx-a11y/label-has-associated-control -- controles compostos usam texto visível e input aninhado */
 
 import { useCallback, useEffect, useState } from "react";
-import { Download, History, Pencil, Search, Trash2, X } from "lucide-react";
+import { Download, History, LockKeyhole, Pencil, Search, Trash2, X } from "lucide-react";
 import { requisitarApi, type CatadorApi, type CooperativaApi, type MaterialApi } from "@/app/dados/api";
 import { Paginacao } from "@/app/componentes/paginacao";
 import { useTermoBusca } from "@/app/utilitarios/use-termo-busca";
@@ -34,7 +34,7 @@ function alteracoesEvento(evento: EventoAuditoria) {
   });
 }
 
-export function TelaRelatorios() {
+export function TelaRelatorios({ podeGerenciar = true }: { podeGerenciar?: boolean }) {
   const [pesagens, setPesagens] = useState<PesagemApi[]>([]);
   const [catadores, setCatadores] = useState<CatadorApi[]>([]);
   const [materiais, setMateriais] = useState<MaterialApi[]>([]);
@@ -139,8 +139,9 @@ export function TelaRelatorios() {
     const link = document.createElement("a"); link.href = url; link.download = "relatorio-pesagens.csv"; link.click(); URL.revokeObjectURL(url);
   }
 
-  return <section className="pagina-interna">
+  return <section className={`pagina-interna${podeGerenciar ? "" : " somente-cadastro"}`}>
     <div className="resumo-pagina"><div><h2>Produção, pagamentos e auditoria</h2><p>Registros ativos, alterados e excluídos logicamente.</p></div><button type="button" className="botao-secundario" onClick={exportar} disabled={pesagens.length === 0}><Download /> Exportar página</button></div>
+    {!podeGerenciar && <p className="aviso-permissao"><LockKeyhole /> Sua conta pode consultar e exportar relatórios, mas não pode corrigir nem excluir pesagens.</p>}
     {erro && <p className="mensagem-erro" role="alert">{erro}</p>}
     <div className="grade-resumo-relatorio"><article><span>KG</span><div><small>Peso concluído</small><strong>{totais.peso.toLocaleString("pt-BR")} kg</strong></div></article><article><span>R$</span><div><small>Valor concluído</small><strong>{totais.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong></div></article><article><span>№</span><div><small>Registros no relatório</small><strong>{total.toLocaleString("pt-BR")}</strong></div></article></div>
     <div className="barra-ferramentas"><label className="campo-busca"><Search /><input value={busca} onChange={(e) => { setBusca(e.target.value); setPagina(1); }} placeholder="Buscar catador, material, código ou status..." aria-label="Buscar no relatório" /></label><input className="entrada-filtro" type="date" value={inicio} onChange={(e) => { setInicio(e.target.value); setPagina(1); }} aria-label="Data inicial" /><input className="entrada-filtro" type="date" value={fim} onChange={(e) => { setFim(e.target.value); setPagina(1); }} aria-label="Data final" /></div>

@@ -152,6 +152,7 @@ export function EstruturaAplicacao() {
   }, [autenticado, carregarNotificacoes]);
 
   function navegar(destino: Pagina) {
+    if (destino === "configuracoes" && !administrador?.administrador) destino = "painel";
     setPagina(destino);
     setNotificacoesAbertas(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -188,7 +189,8 @@ export function EstruturaAplicacao() {
         setNotificacoesNaoLidas((total) => Math.max(0, total - 1));
       }
       setNotificacoes((lista) => lista.map((notificacao) => notificacao.uuid === item.uuid ? { ...notificacao, lida_em: notificacao.lida_em ?? new Date().toISOString() } : notificacao));
-      navegar(paginaDaNotificacao(item.entidade));
+      const destino = paginaDaNotificacao(item.entidade);
+      navegar(destino === "configuracoes" && !administrador?.administrador ? "painel" : destino);
     } catch (falha) {
       setErroNotificacoes(mensagemFalha(falha, "Não foi possível abrir esta notificação."));
     } finally { setAcaoNotificacao(null); }
@@ -236,6 +238,8 @@ export function EstruturaAplicacao() {
 
   if (autenticado === null) return <main className="pagina-login"><div className="cenario-login" aria-hidden="true"><span className="orbe-login orbe-um" /><span className="orbe-login orbe-dois" /><span className="malha-login" /></div><section className="login-central carregando-sessao" aria-live="polite"><MarcaPlataforma /><p>Carregando seu painel...</p></section></main>;
   if (!autenticado) return <TelaLogin onAutenticado={autenticar} />;
+  const acessoAdministrativo = Boolean(administrador?.administrador);
+  const itensVisiveis = acessoAdministrativo ? itens : itens.filter((item) => item.pagina !== "configuracoes");
 
   return (
     <main className="aplicacao">
@@ -245,20 +249,20 @@ export function EstruturaAplicacao() {
           <MarcaPlataforma compacta />
         </button>
         <nav>
-          {itens.map((item) => (
+          {itensVisiveis.map((item) => (
             <button className={pagina === item.pagina ? "item-menu ativo" : "item-menu"} key={item.pagina} onClick={() => navegar(item.pagina)} type="button">
               <span className="icone-menu" aria-hidden="true"><item.icone /></span><span>{item.rotulo}</span>
             </button>
           ))}
         </nav>
         <div className="apoio-menu"><span><LifeBuoy aria-hidden="true" /></span><div><strong>Precisa de ajuda?</strong><small>Acesse o guia do sistema</small></div></div>
-        <button className="usuario" type="button" onClick={sair} title="Sair do sistema"><span>{(administrador?.nome ?? "Administrador").split(/\s+/).slice(0, 2).map((parte) => parte[0]).join("").toUpperCase()}</span><div><strong>{administrador?.nome ?? "Administrador"}</strong><small>{administrador?.email ?? "Conta administrativa"}</small></div><LogOut aria-hidden="true" /></button>
+        <button className="usuario" type="button" onClick={sair} title="Sair do sistema"><span>{(administrador?.nome ?? "Usuário").split(/\s+/).slice(0, 2).map((parte) => parte[0]).join("").toUpperCase()}</span><div><strong>{administrador?.nome ?? "Usuário"}</strong><small>{acessoAdministrativo ? "Administrador" : "Cadastro restrito"}</small></div><LogOut aria-hidden="true" /></button>
         </div>
       </aside>
 
       <section className="conteudo">
         <header className="cabecalho">
-          <div className="titulo-cabecalho"><span className="selo-pagina" aria-hidden="true"><Recycle /></span><div><p>{titulos[pagina].sobrelinha}</p><h1>{titulos[pagina].titulo}</h1></div></div>
+          <div className="titulo-cabecalho"><span className="selo-pagina" aria-hidden="true"><Recycle /></span><div><p>{titulos[pagina].sobrelinha}</p><h1>{pagina === "painel" ? `Olá, ${administrador?.nome?.split(/\s+/)[0] ?? "Usuário"}!` : titulos[pagina].titulo}</h1></div></div>
           <div className="acoes-cabecalho">
             <button className="botao-icone" onClick={() => setEscuro((valor) => !valor)} aria-label={escuro ? "Ativar tema claro" : "Ativar tema escuro"} title={escuro ? "Ativar tema claro" : "Ativar tema escuro"}>{escuro ? <Sun /> : <Moon />}</button>
             <div className="area-notificacoes">
@@ -279,11 +283,11 @@ export function EstruturaAplicacao() {
         </header>
 
         {pagina === "painel" && <PainelPrincipal onNovaPesagem={() => navegar("pesagem")} />}
-        {pagina === "catadores" && <TelaCatadores />}
-        {pagina === "cooperativas" && <TelaCooperativas />}
+        {pagina === "catadores" && <TelaCatadores podeGerenciar={acessoAdministrativo} />}
+        {pagina === "cooperativas" && <TelaCooperativas podeGerenciar={acessoAdministrativo} />}
         {pagina === "pesagem" && <TelaPesagem />}
-        {pagina === "relatorios" && <TelaRelatorios />}
-        {pagina === "configuracoes" && administrador && <TelaConfiguracoes administrador={administrador} onAdministradorAtualizado={setAdministrador} />}
+        {pagina === "relatorios" && <TelaRelatorios podeGerenciar={acessoAdministrativo} />}
+        {pagina === "configuracoes" && administrador?.administrador && <TelaConfiguracoes administrador={administrador} onAdministradorAtualizado={setAdministrador} />}
       </section>
     </main>
   );

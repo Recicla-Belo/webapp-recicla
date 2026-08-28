@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { LockKeyhole, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { requisitarApi, type CooperativaApi } from "@/app/dados/api";
 import { Paginacao } from "@/app/componentes/paginacao";
 import { ModalConfirmacao } from "@/app/componentes/modal-confirmacao";
@@ -9,7 +9,7 @@ import { useTermoBusca } from "@/app/utilitarios/use-termo-busca";
 
 const formularioVazio = { nome: "", nomeResponsavel: "", telefone: "", observacao: "", ativa: true };
 
-export function TelaCooperativas() {
+export function TelaCooperativas({ podeGerenciar = true }: { podeGerenciar?: boolean }) {
   const [cooperativas, setCooperativas] = useState<CooperativaApi[]>([]);
   const [modal, setModal] = useState(false);
   const [edicao, setEdicao] = useState<CooperativaApi | null>(null);
@@ -37,6 +37,7 @@ export function TelaCooperativas() {
   useEffect(() => { void carregar(); }, [carregar]);
 
   function abrir(item?: CooperativaApi) {
+    if (item && !podeGerenciar) return;
     setEdicao(item ?? null);
     setFormulario(item ? {
       nome: item.nome,
@@ -77,15 +78,16 @@ export function TelaCooperativas() {
         <div><h2>Cooperativas e associações</h2><p>{total} organizações encontradas no PostgreSQL.</p></div>
         <button type="button" className="botao-primario" onClick={() => abrir()}><Plus /> Nova cooperativa</button>
       </div>
+      {!podeGerenciar && <p className="aviso-permissao"><LockKeyhole /> Sua conta pode consultar e cadastrar cooperativas, mas não pode editar, inativar ou excluir registros existentes.</p>}
       {erro && <p className="mensagem-erro" role="alert">{erro}</p>}
       <div className="barra-ferramentas"><label className="campo-busca"><Search /><input value={busca} onChange={(evento) => { setBusca(evento.target.value); setPagina(1); }} placeholder="Buscar por cooperativa, responsável ou telefone..." /></label></div>
       <div className="grade-cooperativas">
         {cooperativas.map((item) => (
           <article className="cartao-cooperativa" key={item.uuid}>
-            <header><span>{item.nome.slice(0, 2).toUpperCase()}</span><div className="acoes-cartao">
+            <header><span>{item.nome.slice(0, 2).toUpperCase()}</span>{podeGerenciar && <div className="acoes-cartao">
               <button type="button" className="menu-acoes" onClick={() => abrir(item)} aria-label={`Editar ${item.nome}`}><Pencil /></button>
               <button type="button" className="menu-acoes perigoso" onClick={() => setExcluindo(item)} aria-label={`Excluir ${item.nome}`}><Trash2 /></button>
-            </div></header>
+            </div>}</header>
             <h3>{item.nome}</h3><p>Responsável</p><strong>{item.nome_responsavel}</strong>
             <div><span><b>{item.catadores_ativos}</b> catadores ativos</span><span>{item.telefone ?? "Sem telefone"}</span></div>
           </article>
@@ -105,7 +107,7 @@ export function TelaCooperativas() {
         </form>
         <footer className="rodape-modal"><button type="button" className="botao-secundario" onClick={() => setModal(false)}>Cancelar</button><button type="button" className="botao-primario" onClick={() => void salvar()}>Salvar cooperativa</button></footer>
       </div></div>}
-      <ModalConfirmacao aberto={Boolean(excluindo)} titulo={`Excluir ${excluindo?.nome ?? "cooperativa"}?`} descricao="Os catadores vinculados ficarão sem cooperativa. Esta ação não poderá ser desfeita." textoConfirmar="Excluir cooperativa" perigoso aoFechar={() => setExcluindo(null)} aoConfirmar={() => excluindo && void excluir(excluindo)} />
+      <ModalConfirmacao aberto={podeGerenciar && Boolean(excluindo)} titulo={`Excluir ${excluindo?.nome ?? "cooperativa"}?`} descricao="Os catadores vinculados ficarão sem cooperativa. Esta ação não poderá ser desfeita." textoConfirmar="Excluir cooperativa" perigoso aoFechar={() => setExcluindo(null)} aoConfirmar={() => excluindo && void excluir(excluindo)} />
     </section>
   );
 }

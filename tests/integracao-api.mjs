@@ -44,6 +44,45 @@ async function executar() {
   assert.equal((await chamar("/api/autenticacao/sessao")).dados.autenticado, true);
   const perfilAdministrador = (await chamar("/api/administrador/perfil")).dados;
   assert.equal(perfilAdministrador.email, process.env.ADMIN_EMAIL);
+  assert.equal(perfilAdministrador.perfil, "administrador");
+
+  const cookieAdministradorPermissoes = cookie;
+  const emailRestrito = `cadastro-${Date.now()}-${process.pid}@reciclabelo.local`;
+  const senhaRestrita = `Cadastro!${Date.now()}Aa`;
+  let usuarioRestritoUuid;
+  let cooperativaRestritaUuid;
+  try {
+    usuarioRestritoUuid = (await chamar("/api/usuarios", { method: "POST", body: JSON.stringify({ nome: "Operador de cadastro", email: emailRestrito, senha: senhaRestrita, ativo: true }) })).dados.uuid;
+    const loginRestrito = await chamar("/api/autenticacao/entrar", { method: "POST", body: JSON.stringify({ email: emailRestrito, senha: senhaRestrita }) }, false);
+    const cookieRestrito = (loginRestrito.resposta.headers.get("set-cookie") ?? "").split(";", 1)[0];
+    assert.equal(loginRestrito.dados.usuario.perfil, "operador_cadastro");
+    cookie = cookieRestrito;
+    assert.equal((await chamar("/api/painel")).resposta.status, 200);
+    cooperativaRestritaUuid = (await chamar("/api/cooperativas", { method: "POST", body: JSON.stringify({ nome: `Cadastro restrito ${Date.now()}`, nomeResponsavel: "Equipe operacional", ativa: true }) })).dados.uuid;
+    const acessoUsuarios = await fetch(`${urlApi}/api/usuarios`, { headers: { cookie: cookieRestrito } });
+    assert.equal(acessoUsuarios.status, 403);
+    const alteracaoBloqueada = await fetch(`${urlApi}/api/cooperativas/${cooperativaRestritaUuid}`, { method: "PUT", headers: { "content-type": "application/json", cookie: cookieRestrito }, body: JSON.stringify({ nome: "Tentativa", nomeResponsavel: "Tentativa", ativa: true }) });
+    assert.equal(alteracaoBloqueada.status, 403);
+    const exclusaoBloqueada = await fetch(`${urlApi}/api/cooperativas/${cooperativaRestritaUuid}`, { method: "DELETE", headers: { cookie: cookieRestrito } });
+    assert.equal(exclusaoBloqueada.status, 403);
+    const configuracaoBloqueada = await fetch(`${urlApi}/api/materiais`, { method: "POST", headers: { "content-type": "application/json", cookie: cookieRestrito }, body: JSON.stringify({ nome: "Material indevido", tipoMaterial: "Teste", unidade: "kg", quantidadeReferencia: 1, valorReferencia: 1, metaDiaria: 0, ativo: true }) });
+    assert.equal(configuracaoBloqueada.status, 403);
+    cookie = cookieAdministradorPermissoes;
+    await chamar(`/api/cooperativas/${cooperativaRestritaUuid}`, { method: "DELETE" });
+    cooperativaRestritaUuid = undefined;
+    await chamar(`/api/usuarios/${usuarioRestritoUuid}`, { method: "PATCH", body: JSON.stringify({ nome: "Operador de cadastro", email: emailRestrito, ativo: false }) });
+    const sessaoRevogada = await fetch(`${urlApi}/api/autenticacao/sessao`, { headers: { cookie: cookieRestrito } });
+    assert.equal(sessaoRevogada.status, 200);
+    assert.equal((await sessaoRevogada.json()).autenticado, false);
+  } finally {
+    cookie = cookieAdministradorPermissoes;
+    if (cooperativaRestritaUuid) await bancoTeste.query("DELETE FROM cooperativas WHERE uuid=$1", [cooperativaRestritaUuid]);
+    if (usuarioRestritoUuid) {
+      await bancoTeste.query("DELETE FROM notificacoes WHERE entidade='usuarios' AND entidade_uuid=$1", [usuarioRestritoUuid]);
+      await bancoTeste.query("DELETE FROM auditoria WHERE entidade='usuarios' AND entidade_uuid=$1", [usuarioRestritoUuid]);
+      await bancoTeste.query("DELETE FROM usuarios WHERE uuid=$1", [usuarioRestritoUuid]);
+    }
+  }
   const perfilConfirmado = (await chamar("/api/administrador/perfil", { method: "PATCH", body: JSON.stringify({ nome: perfilAdministrador.nome, email: perfilAdministrador.email, senhaAtual: process.env.ADMIN_SENHA }) })).dados;
   assert.equal(perfilConfirmado.uuid, perfilAdministrador.uuid);
   const senhaTemporariaAdministrador = `Temporaria!${Date.now()}Aa`;
@@ -224,8 +263,8 @@ async function executar() {
 
     const cookieAdministrador = cookie;
     const emailCentralTeste = `notificacoes-${sufixo}@reciclabelo.local`;
-    const usuarioCentral = await bancoTeste.query(`INSERT INTO usuarios (nome,email,senha_hash,administrador,ativo)
-      SELECT 'Teste da central de notificações',$1,senha_hash,TRUE,TRUE FROM usuarios WHERE email=$2 RETURNING uuid`, [emailCentralTeste, process.env.ADMIN_EMAIL]);
+    const usuarioCentral = await bancoTeste.query(`INSERT INTO usuarios (nome,email,senha_hash,administrador,perfil,ativo)
+      SELECT 'Teste da central de notificações',$1,senha_hash,TRUE,'administrador',TRUE FROM usuarios WHERE email=$2 RETURNING uuid`, [emailCentralTeste, process.env.ADMIN_EMAIL]);
     const usuarioCentralUuid = usuarioCentral.rows[0].uuid;
     try {
       await bancoTeste.query("INSERT INTO notificacoes (usuario_uuid,tipo,titulo,mensagem) VALUES ($1,'sistema','Teste temporário','Validação da limpeza coletiva')", [usuarioCentralUuid]);
@@ -387,4 +426,4 @@ async function executar() {
 }
 
 await executar();
-console.log("Integração concluída: conta administrativa, revogação de sessões, metas, buscas, status, caixa, auditoria, relatórios e notificações.");
+console.log("Integração concluída: perfis de acesso, bloqueios de edição, conta administrativa, sessões, metas, caixa, auditoria, relatórios e notificações.");

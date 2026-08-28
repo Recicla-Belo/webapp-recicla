@@ -58,14 +58,15 @@ const opcoesCookieSessao = {
   path: "/",
 };
 
-type AdministradorAtivo = { uuid: string; nome: string; email: string; administrador: boolean; versao_sessao: number };
+type PerfilAcesso = "administrador" | "operador_cadastro";
+type UsuarioAtivo = { uuid: string; nome: string; email: string; administrador: boolean; perfil: PerfilAcesso; versao_sessao: number };
 type ExecutorSql = { query: <R extends QueryResultRow = QueryResultRow>(texto: string, valores?: unknown[]) => Promise<QueryResult<R>> };
 type EnderecoCep = { cep: string; logradouro: string; complemento: string; bairro: string; cidade: string; estado: string };
 const cacheEnderecosCep = new Map<string, { endereco: EnderecoCep; expiraEm: number }>();
 
-async function buscarAdministradorAtivo(usuarioUuid: string) {
-  const resultado = await banco.query<AdministradorAtivo>(
-    "SELECT uuid, nome, email, administrador, versao_sessao FROM usuarios WHERE uuid = $1 AND ativo = TRUE AND administrador = TRUE LIMIT 1",
+async function buscarUsuarioAtivo(usuarioUuid: string) {
+  const resultado = await banco.query<UsuarioAtivo>(
+    "SELECT uuid,nome,email,administrador,perfil,versao_sessao FROM usuarios WHERE uuid=$1 AND ativo=TRUE LIMIT 1",
     [usuarioUuid],
   );
   return resultado.rows[0];
@@ -345,18 +346,38 @@ async function exigirAutenticacao(requisicao: FastifyRequest, resposta: FastifyR
   try {
     await requisicao.jwtVerify();
   } catch {
-    return resposta.code(401).send({ mensagem: "Sessão inválida ou expirada." });
+    await resposta.code(401).send({ mensagem: "Sessão inválida ou expirada." });
+    return null;
   }
-  const usuario = await buscarAdministradorAtivo(requisicao.user.usuarioUuid);
+  const usuario = await buscarUsuarioAtivo(requisicao.user.usuarioUuid);
   if (!usuario || usuario.versao_sessao !== requisicao.user.versaoSessao) {
     resposta.clearCookie("reciclabelo_sessao", opcoesCookieSessao);
-    return resposta.code(401).send({ mensagem: "Sessão inválida ou expirada." });
+    await resposta.code(401).send({ mensagem: "Sessão inválida ou expirada." });
+    return null;
   }
+  return usuario;
+}
+
+function rotaPermitidaAoOperador(requisicao: FastifyRequest) {
+  const metodo = requisicao.method;
+  const rota = requisicao.routeOptions.url ?? requisicao.url.split("?", 1)[0] ?? "";
+  if (["GET", "HEAD", "OPTIONS"].includes(metodo)) {
+    return !rota.startsWith("/api/administrador") && !rota.startsWith("/api/usuarios") && rota !== "/api/configuracoes/meta-geral";
+  }
+  if (metodo === "POST") {
+    return rota === "/api/autenticacao/sair" || rota === "/api/cooperativas" || rota === "/api/catadores" || rota === "/api/catadores/:uuid/foto" || rota === "/api/pesagens";
+  }
+  return rota.startsWith("/api/notificacoes") && ["PATCH", "DELETE"].includes(metodo);
 }
 
 aplicacao.addHook("onRequest", async (requisicao, resposta) => {
   const caminho = requisicao.url.split("?", 1)[0] ?? "";
-  if (caminho.startsWith("/api/") && !rotasPublicas.has(caminho)) return exigirAutenticacao(requisicao, resposta);
+  if (!caminho.startsWith("/api/") || rotasPublicas.has(caminho)) return;
+  const usuario = await exigirAutenticacao(requisicao, resposta);
+  if (!usuario || resposta.sent) return;
+  if (!usuario.administrador && !rotaPermitidaAoOperador(requisicao)) {
+    return resposta.code(403).send({ mensagem: "Sua conta possui permissão somente para consultar e cadastrar informações." });
+  }
 });
 
 aplicacao.addHook("onSend", async (requisicao, resposta, carga) => {
@@ -372,8 +393,8 @@ aplicacao.get("/saude", async () => {
 aplicacao.post("/api/autenticacao/entrar", { config: { rateLimit: { max: 5, timeWindow: "15 minutes" } } }, async (requisicao, resposta) => {
   const entrada = z.object({ email: z.string().trim().max(254).regex(/^[^\s@]+@[^\s@]+$/), senha: z.string().min(1).max(128) }).safeParse(requisicao.body);
   if (!entrada.success) return resposta.code(400).send({ mensagem: "E-mail ou senha inválidos." });
-  const resultado = await banco.query<{ uuid: string; email: string; nome: string; senha_hash: string; administrador: boolean; versao_sessao: number }>(
-    "SELECT uuid, email, nome, senha_hash, administrador, versao_sessao FROM usuarios WHERE email = $1 AND ativo = TRUE AND administrador = TRUE LIMIT 1",
+  const resultado = await banco.query<{ uuid: string; email: string; nome: string; senha_hash: string; administrador: boolean; perfil: PerfilAcesso; versao_sessao: number }>(
+    "SELECT uuid,email,nome,senha_hash,administrador,perfil,versao_sessao FROM usuarios WHERE email=$1 AND ativo=TRUE LIMIT 1",
     [entrada.data.email.toLowerCase()],
   );
   const usuario = resultado.rows[0];
@@ -382,9 +403,9 @@ aplicacao.post("/api/autenticacao/entrar", { config: { rateLimit: { max: 5, time
     return resposta.code(401).send({ mensagem: "E-mail ou senha inválidos." });
   }
   await banco.query("UPDATE usuarios SET ultimo_acesso_em = now() WHERE uuid = $1", [usuario.uuid]);
-  const token = await resposta.jwtSign({ usuarioUuid: usuario.uuid, email: usuario.email, administrador: usuario.administrador, versaoSessao: usuario.versao_sessao });
+  const token = await resposta.jwtSign({ usuarioUuid: usuario.uuid, email: usuario.email, administrador: usuario.administrador, perfil: usuario.perfil, versaoSessao: usuario.versao_sessao });
   resposta.setCookie("reciclabelo_sessao", token, opcoesCookieSessao);
-  return { autenticado: true, usuario: { uuid: usuario.uuid, nome: usuario.nome, email: usuario.email, administrador: usuario.administrador } };
+  return { autenticado: true, usuario: { uuid: usuario.uuid, nome: usuario.nome, email: usuario.email, administrador: usuario.administrador, perfil: usuario.perfil } };
 });
 
 aplicacao.get(rotaConsultarSessao, { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (requisicao, resposta) => {
@@ -395,7 +416,7 @@ aplicacao.get(rotaConsultarSessao, { config: { rateLimit: { max: 60, timeWindow:
     resposta.clearCookie("reciclabelo_sessao", opcoesCookieSessao);
     return { autenticado: false };
   }
-  const usuario = await buscarAdministradorAtivo(requisicao.user.usuarioUuid);
+  const usuario = await buscarUsuarioAtivo(requisicao.user.usuarioUuid);
   if (!usuario || usuario.versao_sessao !== requisicao.user.versaoSessao) {
     resposta.clearCookie("reciclabelo_sessao", opcoesCookieSessao);
     return { autenticado: false };
@@ -409,8 +430,8 @@ aplicacao.post("/api/autenticacao/sair", async (_requisicao, resposta) => {
 });
 
 aplicacao.get("/api/administrador/perfil", async (requisicao) => {
-  const usuario = await buscarAdministradorAtivo(requisicao.user.usuarioUuid);
-  return { uuid: usuario!.uuid, nome: usuario!.nome, email: usuario!.email, administrador: usuario!.administrador };
+  const usuario = await buscarUsuarioAtivo(requisicao.user.usuarioUuid);
+  return { uuid: usuario!.uuid, nome: usuario!.nome, email: usuario!.email, administrador: usuario!.administrador, perfil: usuario!.perfil };
 });
 
 aplicacao.patch("/api/administrador/perfil", { config: { rateLimit: { max: 8, timeWindow: "15 minutes" } } }, async (requisicao, resposta) => {
@@ -426,16 +447,16 @@ aplicacao.patch("/api/administrador/perfil", { config: { rateLimit: { max: 8, ti
   );
   const usuario = atual.rows[0];
   if (!usuario || !(await bcrypt.compare(entrada.data.senhaAtual, usuario.senha_hash))) return resposta.code(403).send({ mensagem: "A senha atual está incorreta." });
-  const atualizado = await banco.query<AdministradorAtivo>(`UPDATE usuarios SET nome=$1,email=$2,atualizado_em=now() WHERE uuid=$3
-    RETURNING uuid,nome,email,administrador,versao_sessao`, [entrada.data.nome, entrada.data.email, usuario.uuid]);
+  const atualizado = await banco.query<UsuarioAtivo>(`UPDATE usuarios SET nome=$1,email=$2,atualizado_em=now() WHERE uuid=$3
+    RETURNING uuid,nome,email,administrador,perfil,versao_sessao`, [entrada.data.nome, entrada.data.email, usuario.uuid]);
   await registrarAuditoria(banco, usuario.uuid, "alteracao_perfil", "usuarios", usuario.uuid, {
     antes: { nome: usuario.nome, email: usuario.email }, depois: { nome: entrada.data.nome, email: entrada.data.email },
   }, requisicao.ip);
   await criarNotificacao(banco, usuario.uuid, "seguranca", "Dados administrativos atualizados", "O nome ou e-mail da conta administrativa foi atualizado.", "usuarios", usuario.uuid);
   const perfil = atualizado.rows[0]!;
-  const token = await resposta.jwtSign({ usuarioUuid: perfil.uuid, email: perfil.email, administrador: perfil.administrador, versaoSessao: perfil.versao_sessao });
+  const token = await resposta.jwtSign({ usuarioUuid: perfil.uuid, email: perfil.email, administrador: perfil.administrador, perfil: perfil.perfil, versaoSessao: perfil.versao_sessao });
   resposta.setCookie("reciclabelo_sessao", token, opcoesCookieSessao);
-  return { uuid: perfil.uuid, nome: perfil.nome, email: perfil.email, administrador: perfil.administrador };
+  return { uuid: perfil.uuid, nome: perfil.nome, email: perfil.email, administrador: perfil.administrador, perfil: perfil.perfil };
 });
 
 aplicacao.patch("/api/administrador/senha", { config: { rateLimit: { max: 5, timeWindow: "15 minutes" } } }, async (requisicao, resposta) => {
@@ -449,14 +470,66 @@ aplicacao.patch("/api/administrador/senha", { config: { rateLimit: { max: 5, tim
   if (!usuario || !(await bcrypt.compare(entrada.data.senhaAtual, usuario.senha_hash))) return resposta.code(403).send({ mensagem: "A senha atual está incorreta." });
   if (await bcrypt.compare(entrada.data.novaSenha, usuario.senha_hash)) return resposta.code(400).send({ mensagem: "A nova senha deve ser diferente da senha atual." });
   const senhaHash = await bcrypt.hash(entrada.data.novaSenha, 12);
-  const atualizado = await banco.query<AdministradorAtivo>(`UPDATE usuarios SET senha_hash=$1,versao_sessao=versao_sessao+1,atualizado_em=now() WHERE uuid=$2
-    RETURNING uuid,nome,email,administrador,versao_sessao`, [senhaHash, usuario.uuid]);
+  const atualizado = await banco.query<UsuarioAtivo>(`UPDATE usuarios SET senha_hash=$1,versao_sessao=versao_sessao+1,atualizado_em=now() WHERE uuid=$2
+    RETURNING uuid,nome,email,administrador,perfil,versao_sessao`, [senhaHash, usuario.uuid]);
   await registrarAuditoria(banco, usuario.uuid, "alteracao_senha", "usuarios", usuario.uuid, { sessoesAnterioresRevogadas: true }, requisicao.ip);
   await criarNotificacao(banco, usuario.uuid, "seguranca", "Senha administrativa alterada", "A senha da conta administrativa foi alterada e as sessões anteriores foram revogadas.", "usuarios", usuario.uuid);
   const perfil = atualizado.rows[0]!;
-  const token = await resposta.jwtSign({ usuarioUuid: perfil.uuid, email: perfil.email, administrador: perfil.administrador, versaoSessao: perfil.versao_sessao });
+  const token = await resposta.jwtSign({ usuarioUuid: perfil.uuid, email: perfil.email, administrador: perfil.administrador, perfil: perfil.perfil, versaoSessao: perfil.versao_sessao });
   resposta.setCookie("reciclabelo_sessao", token, opcoesCookieSessao);
   return { alterada: true };
+});
+
+const esquemaSenhaSegura = z.string().min(12).max(128)
+  .refine((senha) => /[a-z]/.test(senha) && /[A-Z]/.test(senha) && /\d/.test(senha) && /[^A-Za-z0-9]/.test(senha), "Use letra minúscula, maiúscula, número e símbolo.");
+const esquemaUsuarioRestrito = z.object({
+  nome: z.string().trim().min(2).max(160),
+  email: z.string().trim().max(254).regex(/^[^\s@]+@[^\s@]+$/).transform((valor) => valor.toLowerCase()),
+  senha: esquemaSenhaSegura.optional(),
+  ativo: z.boolean().default(true),
+});
+
+aplicacao.get("/api/usuarios", async () => {
+  const usuarios = await banco.query(`SELECT uuid,nome,email,perfil,administrador,ativo,ultimo_acesso_em,criado_em,atualizado_em
+    FROM usuarios ORDER BY administrador DESC,ativo DESC,nome`);
+  return { dados: usuarios.rows };
+});
+
+aplicacao.post("/api/usuarios", { config: { rateLimit: { max: 10, timeWindow: "15 minutes" } } }, async (requisicao, resposta) => {
+  const entrada = esquemaUsuarioRestrito.required({ senha: true }).safeParse(requisicao.body);
+  if (!entrada.success) return resposta.code(400).send({ mensagem: "Revise nome, e-mail e senha. A senha deve ter 12 caracteres, maiúscula, minúscula, número e símbolo.", detalhes: z.treeifyError(entrada.error) });
+  const senhaHash = await bcrypt.hash(entrada.data.senha, 12);
+  try {
+    const criado = await banco.query<{ uuid: string }>(`INSERT INTO usuarios (nome,email,senha_hash,administrador,perfil,ativo)
+      VALUES ($1,$2,$3,FALSE,'operador_cadastro',$4) RETURNING uuid`, [entrada.data.nome, entrada.data.email, senhaHash, entrada.data.ativo]);
+    await registrarAuditoria(banco, requisicao.user.usuarioUuid, "criacao", "usuarios", criado.rows[0]!.uuid, { nome: entrada.data.nome, email: entrada.data.email, perfil: "operador_cadastro", ativo: entrada.data.ativo }, requisicao.ip);
+    await criarNotificacao(banco, requisicao.user.usuarioUuid, "seguranca", "Conta restrita criada", `${entrada.data.nome} recebeu acesso somente para consultas e novos cadastros.`, "usuarios", criado.rows[0]!.uuid);
+    return resposta.code(201).send({ uuid: criado.rows[0]!.uuid });
+  } catch (erro) {
+    if ((erro as { code?: string }).code === "23505") return resposta.code(409).send({ mensagem: "Já existe uma conta com este e-mail." });
+    throw erro;
+  }
+});
+
+aplicacao.patch("/api/usuarios/:uuid", { config: { rateLimit: { max: 12, timeWindow: "15 minutes" } } }, async (requisicao, resposta) => {
+  const uuid = z.uuid().parse((requisicao.params as { uuid: string }).uuid);
+  const entrada = esquemaUsuarioRestrito.safeParse(requisicao.body);
+  if (!entrada.success) return resposta.code(400).send({ mensagem: "Revise os dados da conta restrita.", detalhes: z.treeifyError(entrada.error) });
+  const atual = await banco.query("SELECT uuid,nome,email,perfil,ativo FROM usuarios WHERE uuid=$1", [uuid]);
+  if (!atual.rows[0]) return resposta.code(404).send({ mensagem: "Conta não encontrada." });
+  if (atual.rows[0].perfil !== "operador_cadastro") return resposta.code(403).send({ mensagem: "A conta administrativa não pode ser alterada por esta rota." });
+  const senhaHash = entrada.data.senha ? await bcrypt.hash(entrada.data.senha, 12) : null;
+  try {
+    await banco.query(`UPDATE usuarios SET nome=$1,email=$2,ativo=$3,
+      senha_hash=coalesce($4,senha_hash),versao_sessao=versao_sessao+1,atualizado_em=now() WHERE uuid=$5`,
+    [entrada.data.nome, entrada.data.email, entrada.data.ativo, senhaHash, uuid]);
+  } catch (erro) {
+    if ((erro as { code?: string }).code === "23505") return resposta.code(409).send({ mensagem: "Já existe uma conta com este e-mail." });
+    throw erro;
+  }
+  await registrarAuditoria(banco, requisicao.user.usuarioUuid, "alteracao", "usuarios", uuid, { antes: atual.rows[0], depois: { nome: entrada.data.nome, email: entrada.data.email, ativo: entrada.data.ativo, senhaRedefinida: Boolean(entrada.data.senha) } }, requisicao.ip);
+  await criarNotificacao(banco, requisicao.user.usuarioUuid, "seguranca", "Conta restrita atualizada", `${entrada.data.nome}: acesso ${entrada.data.ativo ? "ativo" : "bloqueado"}; sessões anteriores revogadas.`, "usuarios", uuid);
+  return resposta.code(204).send();
 });
 
 aplicacao.get("/api/painel", async (requisicao) => {
@@ -774,6 +847,10 @@ aplicacao.patch("/api/catadores/:uuid/status", async (requisicao, resposta) => {
 
 aplicacao.post("/api/catadores/:uuid/foto", async (requisicao, resposta) => {
   const catadorUuid = z.uuid().parse((requisicao.params as { uuid: string }).uuid);
+  if (!requisicao.user.administrador) {
+    const fotoExistente = await banco.query("SELECT 1 FROM arquivos_catador WHERE catador_uuid=$1 AND tipo='foto_rosto' LIMIT 1", [catadorUuid]);
+    if (fotoExistente.rows[0]) return resposta.code(403).send({ mensagem: "A conta restrita não pode substituir uma foto já cadastrada." });
+  }
   const arquivo = await requisicao.file();
   if (!arquivo || !["image/jpeg", "image/png", "image/webp"].includes(arquivo.mimetype)) return resposta.code(400).send({ mensagem: "Envie uma foto JPG, PNG ou WebP." });
   const conteudo = await arquivo.toBuffer();
@@ -1343,6 +1420,7 @@ aplicacao.setNotFoundHandler((_requisicao, resposta) => resposta.code(404).send(
 aplicacao.setErrorHandler((erro, requisicao, resposta) => {
   const status = (erro as { statusCode?: number }).statusCode;
   if (status === 401) return resposta.code(401).send({ mensagem: "Sessão inválida ou expirada." });
+  if (status === 403) return resposta.code(403).send({ mensagem: erro instanceof Error ? erro.message : "Você não possui permissão para esta operação." });
   if (status === 429) return resposta.code(429).send({ mensagem: "Muitas requisições. Aguarde alguns instantes e tente novamente." });
   if (status === 415) return resposta.code(415).send({ mensagem: "Formato de conteúdo não aceito." });
   if (status === 409) return resposta.code(409).send({ mensagem: erro instanceof Error ? erro.message : "A operação conflita com o estado atual do registro." });

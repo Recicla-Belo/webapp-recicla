@@ -24,6 +24,10 @@ test("renderiza a experiência do Recicla Belô", async () => {
 });
 
 test("mantém ambiente, banco e instalação documentados", async () => {
+  const [migracaoPerfis, painelUsuarios] = await Promise.all([
+    readFile(new URL("../servidor/migracoes/016_perfis_acesso_usuarios.sql", import.meta.url), "utf8"),
+    readFile(new URL("../app/componentes/painel-usuarios.tsx", import.meta.url), "utf8"),
+  ]);
   const [exemplo, estilos, migracao, migracaoNotificacoes, migracaoAuditoria, migracaoCaixas, migracaoLimpeza, migracaoNotificacoesOrfas, migracaoPagamentoMeta, migracaoMetaGeral, migracaoSessao, migracaoMateriaisMeta, sqlCompleto, instalador, instaladorProducao, composeProducao, dockerfileProducao, supervisor, servidor, estrutura, api, painel, telaLogin, telaPesagem, telaCatadores, telaCooperativas, telaRelatorios, telaConfiguracoes, paginacao, leiaMe, pacote] = await Promise.all([
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
@@ -75,6 +79,9 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(migracaoCaixas, /CREATE TABLE IF NOT EXISTS movimentacoes_caixa_catador/);
   assert.match(migracaoCaixas, /meta_diaria/);
   assert.match(migracaoSessao, /versao_sessao/);
+  assert.match(migracaoPerfis, /perfil_acesso_usuario/);
+  assert.match(migracaoPerfis, /operador_cadastro/);
+  assert.match(sqlCompleto, /perfil perfil_acesso_usuario/);
   assert.match(migracaoMateriaisMeta, /ALTER TABLE materiais[\s\S]*contabiliza_meta/);
   assert.match(migracaoMateriaisMeta, /ALTER TABLE itens_pesagem[\s\S]*contabiliza_meta/);
   assert.match(sqlCompleto, /versao_sessao INTEGER/);
@@ -97,11 +104,15 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(servidor, /httpOnly: true/);
   assert.match(servidor, /sameSite: "strict"/);
   assert.match(servidor, /addHook\("onRequest"/);
+  assert.match(servidor, /rotaPermitidaAoOperador/);
+  assert.match(servidor, /permissão somente para consultar e cadastrar/);
+  assert.match(servidor, /aplicacao\.post\("\/api\/usuarios"/);
+  assert.match(servidor, /aplicacao\.patch\("\/api\/usuarios\/:uuid"/);
   assert.match(servidor, /rateLimit/);
   assert.match(servidor, /methods: \["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"\]/);
   assert.match(servidor, /rotasPublicas = new Set\(\["\/api\/autenticacao\/entrar", rotaConsultarSessao\]\)/);
   assert.match(servidor, /if \(!requisicao\.cookies\.reciclabelo_sessao\) return \{ autenticado: false \}/);
-  assert.match(servidor, /ativo = TRUE AND administrador = TRUE/);
+  assert.match(servidor, /FROM usuarios WHERE uuid=\$1 AND ativo=TRUE LIMIT 1/);
   assert.match(estrutura, /useState<boolean \| null>\(null\)/);
   assert.match(estrutura, /setAutenticado\(dados\.autenticado === true\)/);
   assert.match(estrutura, /aria-controls="painel-notificacoes"/);
@@ -154,6 +165,13 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(telaConfiguracoes, /Material válido para metas/);
   assert.match(telaConfiguracoes, /validoParaMeta/);
   assert.match(telaConfiguracoes, /Conta do administrador/);
+  assert.match(telaConfiguracoes, /Usuários e permissões/);
+  assert.match(painelUsuarios, /Nova conta restrita/);
+  assert.match(painelUsuarios, /Proteção aplicada também no servidor/);
+  assert.match(estrutura, /itensVisiveis/);
+  assert.match(telaCatadores, /podeGerenciar/);
+  assert.match(telaCooperativas, /podeGerenciar/);
+  assert.match(telaRelatorios, /podeGerenciar/);
   assert.match(telaConfiguracoes, /\/api\/administrador\/perfil/);
   assert.match(telaConfiguracoes, /\/api\/administrador\/senha/);
   assert.match(servidor, /alteracao_senha/);

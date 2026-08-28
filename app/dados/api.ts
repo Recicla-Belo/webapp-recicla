@@ -62,7 +62,12 @@ export type ConfiguracaoMetaGeralApi = {
 };
 
 export type AdministradorApi = {
-  uuid: string; nome: string; email: string; administrador: boolean;
+  uuid: string; nome: string; email: string; administrador: boolean; perfil: "administrador" | "operador_cadastro";
+};
+
+export type UsuarioContaApi = {
+  uuid: string; nome: string; email: string; perfil: "administrador" | "operador_cadastro"; administrador: boolean;
+  ativo: boolean; ultimo_acesso_em: string | null; criado_em: string; atualizado_em: string;
 };
 
 export type ResponsavelPesagemApi = {
