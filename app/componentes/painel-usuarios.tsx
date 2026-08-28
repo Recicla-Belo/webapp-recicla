@@ -32,6 +32,7 @@ export function PainelUsuarios() {
     }
   }, []);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- carrega as contas persistidas quando o painel administrativo é aberto
   useEffect(() => { void carregar(); }, [carregar]);
 
   function abrir(usuario?: UsuarioContaApi) {
@@ -85,11 +86,11 @@ export function PainelUsuarios() {
     {modalAberto && <div className="sobreposicao" role="dialog" aria-modal="true" aria-labelledby="titulo-usuario"><div className="modal pequeno modal-usuario">
       <header className="cabecalho-modal"><div><span>ACESSO RESTRITO</span><h2 id="titulo-usuario">{usuarioEdicao ? "Gerenciar conta" : "Criar conta restrita"}</h2><p>Esta conta poderá inserir dados, mas nunca alterar ou excluir registros.</p></div><button type="button" onClick={fechar} aria-label="Fechar"><X /></button></header>
       <form className="formulario" onSubmit={(evento) => evento.preventDefault()}>
-        <label className="campo">Nome completo<input autoFocus value={formulario.nome} maxLength={160} onChange={(evento) => setFormulario((atual) => ({ ...atual, nome: evento.target.value }))} /></label>
+        <label className="campo">Nome completo<input value={formulario.nome} maxLength={160} onChange={(evento) => setFormulario((atual) => ({ ...atual, nome: evento.target.value }))} /></label>
         <label className="campo">E-mail de acesso<input type="email" autoComplete="off" value={formulario.email} maxLength={254} onChange={(evento) => setFormulario((atual) => ({ ...atual, email: evento.target.value }))} /></label>
         <label className="campo">{usuarioEdicao ? "Nova senha (opcional)" : "Senha inicial"}<span className="campo-com-icone"><KeyRound /><input type="password" autoComplete="new-password" value={formulario.senha} minLength={12} maxLength={128} onChange={(evento) => setFormulario((atual) => ({ ...atual, senha: evento.target.value }))} /></span><small className="dica">12 caracteres, com maiúscula, minúscula, número e símbolo.</small></label>
         <label className="campo">Confirmar senha<input type="password" autoComplete="new-password" value={formulario.confirmarSenha} minLength={12} maxLength={128} onChange={(evento) => setFormulario((atual) => ({ ...atual, confirmarSenha: evento.target.value }))} /></label>
-        <label className="interruptor compacto"><input type="checkbox" checked={formulario.ativo} onChange={(evento) => setFormulario((atual) => ({ ...atual, ativo: evento.target.checked }))} /><span /><div><strong>{formulario.ativo ? "Acesso liberado" : "Acesso bloqueado"}</strong><small>Ao bloquear ou salvar alterações, as sessões anteriores serão revogadas.</small></div></label>
+        <label className="interruptor compacto" aria-label="Acesso da conta restrita"><input type="checkbox" checked={formulario.ativo} onChange={(evento) => setFormulario((atual) => ({ ...atual, ativo: evento.target.checked }))} /><span /><div><strong>Acesso da conta restrita</strong><small>{formulario.ativo ? "Liberado" : "Bloqueado"}. Ao salvar, as sessões anteriores serão revogadas.</small></div></label>
       </form>
       {mensagem && <p className="mensagem-configuracao" role="alert">{mensagem}</p>}
       <footer className="rodape-modal"><button type="button" className="botao-secundario" onClick={fechar} disabled={salvando}>Cancelar</button><button type="button" className="botao-primario" onClick={() => void salvar()} disabled={salvando}>{salvando ? "Salvando..." : usuarioEdicao ? "Salvar e revogar sessões" : "Criar conta"}</button></footer>
