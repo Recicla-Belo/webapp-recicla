@@ -223,6 +223,9 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(estilos, /\.usuario\{[^}]*cursor:pointer/);
   assert.match(estilos, /\.campo input,\.campo select,\.campo textarea\{height:58px/);
   assert.match(estilos, /\.conteudo:before\{/);
+  assert.match(estilos, /\.sobreposicao\{z-index:1000;overscroll-behavior:contain\}/);
+  assert.match(estilos, /\.cabecalho-modal\{position:sticky;z-index:5;top:0;background:var\(--cartao\)\}/);
+  assert.match(estilos, /\.aplicacao:has\(\.sobreposicao\) \.conteudo\{z-index:100;overflow:visible\}/);
   assert.match(estilos, /env\(safe-area-inset-bottom/);
   assert.match(estilos, /\.barra-lateral nav\{[^}]*overflow-x:auto!important/);
   assert.match(estilos, /\.erro-notificacoes\{/);
