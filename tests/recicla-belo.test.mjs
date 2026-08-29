@@ -263,6 +263,10 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(estilos, /\.barra-lateral\{position:relative;top:auto;height:auto;min-height:100dvh;max-height:none;align-self:stretch/);
   assert.match(estilos, /\.conteudo-barra-lateral\{position:sticky;top:0;[^}]*height:100dvh;[^}]*overflow-y:auto/);
   assert.match(estilos, /\.modal\.cadastro>\.formulario\{[^}]*overflow-y:auto/);
+  assert.match(estilos, /\.modal-pagamento\{display:flex;flex-direction:column;[^}]*overflow:hidden/);
+  assert.match(estilos, /\.modal-pagamento>\.corpo-pagamento,\.modal-pagamento>\.recibo-pagamento\{[^}]*min-height:0;[^}]*overflow-y:auto/);
+  assert.match(estilos, /\.modal>\.cabecalho-modal\{position:sticky/);
+  assert.match(estilos, /\.modal>\.rodape-modal\{position:sticky/);
   assert.match(estilos, /\.acoes-material\{[^}]*display:flex!important/);
   assert.match(estilos, /titulo-cabecalho h1\{max-width:none;white-space:normal/);
   assert.match(telaCooperativas, /<Paginacao/);
