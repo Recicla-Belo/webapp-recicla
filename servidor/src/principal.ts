@@ -13,6 +13,7 @@ import type { PoolClient, QueryResult, QueryResultRow } from "pg";
 import { z } from "zod";
 import { banco } from "./banco/conexao.js";
 import { ambiente } from "./configuracao/ambiente.js";
+import { gerarPlanilhaCatadores, type CatadorParaExportacao } from "./servicos/gerar-planilha-catadores.js";
 
 const aplicacao = Fastify({
   logger: {
@@ -62,7 +63,7 @@ const opcoesCookieSessao = {
 type PerfilAcesso = "administrador" | "operador_cadastro";
 const chavesPermissao = [
   "painel_visualizar",
-  "catadores_visualizar", "catadores_cadastrar", "catadores_editar", "catadores_excluir", "catadores_gerenciar_caixa",
+  "catadores_visualizar", "catadores_cadastrar", "catadores_editar", "catadores_excluir", "catadores_gerenciar_caixa", "catadores_exportar",
   "cooperativas_visualizar", "cooperativas_cadastrar", "cooperativas_editar", "cooperativas_excluir",
   "pesagens_cadastrar", "relatorios_visualizar", "pesagens_editar", "pesagens_excluir",
   "materiais_gerenciar", "responsaveis_gerenciar", "metas_gerenciar", "identidade_visual_gerenciar",
@@ -378,6 +379,7 @@ function permissoesExigidasPelaRota(requisicao: FastifyRequest): PermissaoUsuari
   if (rota.startsWith("/api/administrador") || rota.startsWith("/api/usuarios") || rota === "/api/permissoes") return "administrador";
   if (metodo === "GET" || metodo === "HEAD") {
     if (rota === "/api/painel") return ["painel_visualizar"];
+    if (rota === "/api/catadores/exportar") return ["catadores_exportar"];
     if (["/api/catadores", "/api/catadores/:uuid/perfil", "/api/catadores/:uuid/foto", "/api/catadores/:uuid/metas"].includes(rota)) return ["catadores_visualizar", "pesagens_cadastrar", "relatorios_visualizar"];
     if (rota === "/api/cooperativas") return ["cooperativas_visualizar", "catadores_visualizar", "catadores_cadastrar", "catadores_editar", "pesagens_cadastrar", "relatorios_visualizar"];
     if (rota === "/api/materiais") return ["materiais_gerenciar", "metas_gerenciar", "pesagens_cadastrar", "relatorios_visualizar"];
@@ -708,6 +710,49 @@ aplicacao.get("/api/catadores", async (requisicao) => {
       @@ consulta_busca_prefixada($1))
       AND ($2::text IS NULL OR c.status::text=$2)`, [consulta.busca, consulta.status ?? null]);
   return { dados: rows, total: total.rows[0]?.total ?? 0, limite: consulta.limite, deslocamento: consulta.deslocamento };
+});
+
+aplicacao.get("/api/catadores/exportar", { config: { rateLimit: { max: 3, timeWindow: "1 hour" } } }, async (requisicao, resposta) => {
+  const resultado = await banco.query<CatadorParaExportacao>(`SELECT
+      c.uuid,c.codigo,c.nome_completo,c.apelido,c.genero,c.raca_cor,c.data_nascimento,c.cpf,c.status,c.criado_em,c.atualizado_em,
+      co.nome AS cooperativa,co.nome_responsavel AS responsavel_cooperativa,
+      e.cep,e.logradouro,e.numero,e.complemento,e.bairro,e.cidade,e.estado,e.referencia,
+      coalesce((SELECT json_agg(json_build_object(
+        'tipo',ct.tipo,'valor',ct.valor,'principal',ct.principal,'observacao',ct.observacao
+      ) ORDER BY ct.principal DESC,ct.criado_em,ct.uuid) FROM contatos_catador ct WHERE ct.catador_uuid=c.uuid),'[]'::json) AS contatos,
+      coalesce((SELECT json_agg(json_build_object(
+        'tipo',cf.tipo,'tipo_chave_pix',cf.tipo_chave_pix,'chave_pix',cf.chave_pix,'banco',cf.banco,
+        'agencia',cf.agencia,'numero_conta',cf.numero_conta,'tipo_conta',cf.tipo_conta,'de_terceiro',cf.de_terceiro,
+        'nome_titular',cf.nome_titular,'cpf_titular',cf.cpf_titular,'relacao_titular',cf.relacao_titular
+      ) ORDER BY cf.criado_em,cf.uuid) FROM contas_financeiras_catador cf WHERE cf.catador_uuid=c.uuid AND cf.ativo),'[]'::json) AS contas_financeiras,
+      EXISTS(SELECT 1 FROM arquivos_catador ar WHERE ar.catador_uuid=c.uuid AND ar.tipo='foto_rosto') AS tem_foto,
+      coalesce(producao.total_quilos,0)::float8 AS total_quilos,
+      coalesce(producao.total_ganhos,0)::float8 AS total_ganhos,
+      coalesce(producao.total_pesagens,0)::int AS total_pesagens
+    FROM catadores c
+    LEFT JOIN cooperativas co ON co.uuid=c.cooperativa_uuid
+    LEFT JOIN enderecos_catador e ON e.catador_uuid=c.uuid
+    LEFT JOIN LATERAL (
+      SELECT sum(p.peso_total) AS total_quilos,sum(p.valor_total) AS total_ganhos,count(*) AS total_pesagens
+      FROM pesagens p WHERE p.catador_uuid=c.uuid AND p.status='concluida' AND p.excluida_em IS NULL
+    ) producao ON TRUE
+    ORDER BY lower(c.nome_completo),c.codigo`);
+  const geradoEm = new Date();
+  const nomeArquivo = `catadores-recicla-belo-${new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bahia" }).format(geradoEm)}.xlsx`;
+  const arquivo = await gerarPlanilhaCatadores(resultado.rows, geradoEm);
+  await registrarAuditoria(banco, requisicao.user.usuarioUuid, "exportacao_excel", "exportacoes_catadores", requisicao.user.usuarioUuid, {
+    formato: "xlsx",
+    nomeArquivo,
+    totalCatadores: resultado.rowCount,
+    incluiDadosPessoais: true,
+    incluiDadosFinanceiros: true,
+  }, requisicao.ip);
+  resposta
+    .header("content-type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    .header("content-disposition", `attachment; filename="${nomeArquivo}"`)
+    .header("content-length", arquivo.byteLength)
+    .header("x-total-registros", String(resultado.rowCount ?? 0));
+  return resposta.send(arquivo);
 });
 
 aplicacao.get("/api/catadores/:uuid/perfil", async (requisicao, resposta) => {

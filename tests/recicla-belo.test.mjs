@@ -24,11 +24,14 @@ test("renderiza a experiência do Recicla Belô", async () => {
 });
 
 test("mantém ambiente, banco e instalação documentados", async () => {
-  const [migracaoPerfis, painelUsuarios, migracaoDescricaoMetas, migracaoRelatorios] = await Promise.all([
+  const [migracaoPerfis, painelUsuarios, migracaoDescricaoMetas, migracaoRelatorios, migracaoExportacao, geradorExcel, pacoteServidor] = await Promise.all([
     readFile(new URL("../servidor/migracoes/016_perfis_acesso_usuarios.sql", import.meta.url), "utf8"),
     readFile(new URL("../app/componentes/painel-usuarios.tsx", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/018_descricao_permissao_metas_materiais.sql", import.meta.url), "utf8"),
     readFile(new URL("../servidor/migracoes/019_relatorios_confiaveis_e_auditoria_imutavel.sql", import.meta.url), "utf8"),
+    readFile(new URL("../servidor/migracoes/020_exportacao_excel_catadores.sql", import.meta.url), "utf8"),
+    readFile(new URL("../servidor/src/servicos/gerar-planilha-catadores.ts", import.meta.url), "utf8"),
+    readFile(new URL("../servidor/package.json", import.meta.url), "utf8"),
   ]);
   const [exemplo, estilos, migracao, migracaoNotificacoes, migracaoAuditoria, migracaoCaixas, migracaoLimpeza, migracaoNotificacoesOrfas, migracaoPagamentoMeta, migracaoMetaGeral, migracaoSessao, migracaoMateriaisMeta, sqlCompleto, instalador, instaladorProducao, composeProducao, dockerfileProducao, supervisor, servidor, estrutura, api, painel, telaLogin, telaPesagem, telaCatadores, telaCooperativas, telaRelatorios, telaConfiguracoes, paginacao, leiaMe, pacote] = await Promise.all([
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
@@ -86,6 +89,11 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(migracaoDescricaoMetas, /Gerenciar metas e materiais participantes/);
   assert.match(migracaoRelatorios, /CREATE OR REPLACE VIEW relatorio_resumo_diario/);
   assert.match(migracaoRelatorios, /CREATE TRIGGER auditoria_imutavel/);
+  assert.match(migracaoExportacao, /catadores_exportar/);
+  assert.match(geradorExcel, /Produção de crachás/);
+  assert.match(geradorExcel, /Cadastro completo/);
+  assert.match(geradorExcel, /Dados de pagamento/);
+  assert.equal(JSON.parse(pacoteServidor).dependencies.exceljs, "4.4.0");
   assert.match(sqlCompleto, /perfil perfil_acesso_usuario/);
   assert.match(migracaoMateriaisMeta, /ALTER TABLE materiais[\s\S]*contabiliza_meta/);
   assert.match(migracaoMateriaisMeta, /ALTER TABLE itens_pesagem[\s\S]*contabiliza_meta/);
@@ -183,6 +191,10 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(estrutura, /itensVisiveis/);
   assert.match(estrutura, /possuiPermissao/);
   assert.match(telaCatadores, /acessos\.gerenciarCaixa/);
+  assert.match(telaCatadores, /Exportar Excel/);
+  assert.match(telaCatadores, /\/api\/catadores\/exportar/);
+  assert.match(servidor, /aplicacao\.get\("\/api\/catadores\/exportar"/);
+  assert.match(servidor, /exportacao_excel/);
   assert.match(telaCooperativas, /acessos\.editar/);
   assert.doesNotMatch(telaRelatorios, /method: "PUT"|method: "DELETE"/);
   assert.match(telaConfiguracoes, /\/api\/administrador\/perfil/);

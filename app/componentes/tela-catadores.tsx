@@ -3,8 +3,8 @@
 /* eslint-disable jsx-a11y/label-has-associated-control, jsx-a11y/no-autofocus, @next/next/no-img-element -- controles aninhados e fotos autenticadas */
 
 import { useCallback, useEffect, useState, type ChangeEvent } from "react";
-import { AlertTriangle, ArrowLeft, Camera, Eye, LockKeyhole, Pencil, Plus, Search, Trash2, UnlockKeyhole, UserCheck, UserX, WalletCards, X } from "lucide-react";
-import { requisitarApi, URL_API, type CatadorApi, type CooperativaApi } from "@/app/dados/api";
+import { AlertTriangle, ArrowLeft, Camera, Eye, FileSpreadsheet, LockKeyhole, Pencil, Plus, Search, Trash2, UnlockKeyhole, UserCheck, UserX, WalletCards, X } from "lucide-react";
+import { baixarArquivoApi, requisitarApi, URL_API, type CatadorApi, type CooperativaApi } from "@/app/dados/api";
 import { Paginacao } from "@/app/componentes/paginacao";
 import { ModalConfirmacao } from "@/app/componentes/modal-confirmacao";
 import { useTermoBusca } from "@/app/utilitarios/use-termo-busca";
@@ -12,7 +12,7 @@ import { useTermoBusca } from "@/app/utilitarios/use-termo-busca";
 const etapas = ["Identificação", "Contato e endereço", "Pagamento", "Foto e revisão"];
 const vazio = { nomeCompleto: "", apelido: "", cooperativaUuid: "", genero: "", racaCor: "", dataNascimento: "", cpf: "", cep: "", logradouro: "", numero: "", complemento: "", bairro: "", cidade: "Belo Horizonte", estado: "MG", tipoPagamento: "pix", tipoChavePix: "CPF", chavePix: "", banco: "", agencia: "", numeroConta: "", tipoConta: "corrente", nomeTitular: "", cpfTitular: "", relacaoTitular: "" };
 
-type AcessosCatadores = { cadastrar: boolean; editar: boolean; excluir: boolean; gerenciarCaixa: boolean };
+type AcessosCatadores = { cadastrar: boolean; editar: boolean; excluir: boolean; gerenciarCaixa: boolean; exportar: boolean };
 
 export function TelaCatadores({ acessos }: { acessos: AcessosCatadores }) {
   const [catadores, setCatadores] = useState<CatadorApi[]>([]);
@@ -30,6 +30,9 @@ export function TelaCatadores({ acessos }: { acessos: AcessosCatadores }) {
   const [total, setTotal] = useState(0);
   const [alterandoStatus, setAlterandoStatus] = useState<CatadorApi | null>(null);
   const [processandoStatus, setProcessandoStatus] = useState(false);
+  const [confirmandoExportacao, setConfirmandoExportacao] = useState(false);
+  const [exportando, setExportando] = useState(false);
+  const [mensagemExportacao, setMensagemExportacao] = useState("");
   const termoBusca = useTermoBusca(busca);
   const carregar = useCallback(async () => {
     try {
@@ -77,13 +80,28 @@ export function TelaCatadores({ acessos }: { acessos: AcessosCatadores }) {
     finally { setProcessandoStatus(false); }
   }
 
+  async function exportarCatadores() {
+    setExportando(true); setErro(""); setMensagemExportacao("");
+    try {
+      const { arquivo, nome } = await baixarArquivoApi("/api/catadores/exportar", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      const url = URL.createObjectURL(arquivo);
+      const link = document.createElement("a");
+      link.href = url; link.download = nome; document.body.appendChild(link); link.click(); link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+      setConfirmandoExportacao(false);
+      setMensagemExportacao(`Arquivo ${nome} gerado com todos os catadores cadastrados.`);
+    } catch (falha) { setErro(falha instanceof Error ? falha.message : "Não foi possível exportar os catadores em Excel."); }
+    finally { setExportando(false); }
+  }
+
   const formularioEdicao = acessos.editar && catadorEdicao && <CadastroCatador cooperativas={cooperativas} edicao={catadorEdicao} onFechar={() => setCatadorEdicao(null)} onSalvo={async () => { await carregar(); if (perfilUuid) setPerfilUuid(null); }} />;
   const modalExclusao = acessos.excluir && catadorExclusao && <ModalExclusaoCatador catador={catadorExclusao} motivo={motivoExclusao} erro={erro} processando={processandoExclusao} aoMudarMotivo={setMotivoExclusao} aoFechar={() => setCatadorExclusao(null)} aoConfirmar={() => void excluirCatador()} />;
   if (perfilUuid) return <><PerfilCatador uuid={perfilUuid} acessos={acessos} onVoltar={() => { setPerfilUuid(null); void carregar(); }} onEditar={() => void abrirEdicao(perfilUuid)} onExcluir={abrirExclusao} />{formularioEdicao}{modalExclusao}</>;
 
   return <section className="pagina-interna">
-    <div className="resumo-pagina"><div><h2>{total} catadores cadastrados</h2><p>Somente o nome completo é obrigatório; os demais dados são opcionais e vêm do PostgreSQL.</p></div>{acessos.cadastrar && <button className="botao-primario" onClick={() => setCadastroAberto(true)}><Plus /> Cadastrar catador</button>}</div>
+    <div className="resumo-pagina"><div><h2>{total} catadores cadastrados</h2><p>Somente o nome completo é obrigatório; os demais dados são opcionais e vêm do PostgreSQL.</p></div><div className="acoes-resumo-catadores">{acessos.exportar && <button className="botao-secundario" type="button" onClick={() => { setConfirmandoExportacao(true); setErro(""); setMensagemExportacao(""); }}><FileSpreadsheet /> Exportar Excel</button>}{acessos.cadastrar && <button className="botao-primario" onClick={() => setCadastroAberto(true)}><Plus /> Cadastrar catador</button>}</div></div>
     {erro && <p className="mensagem-erro" role="alert">{erro}</p>}
+    {mensagemExportacao && <p className="mensagem-sucesso" role="status">{mensagemExportacao}</p>}
     <div className="barra-ferramentas"><label className="campo-busca"><Search /><input value={busca} onChange={(evento) => { setBusca(evento.target.value); setPagina(1); }} placeholder="Buscar por nome, apelido ou código..." /></label></div>
     <div className="tabela-responsiva"><table><thead><tr><th>Catador</th><th>Código</th><th>Cooperativa</th><th>Contato e endereço</th><th>Coletado e ganho</th><th>Meta / caixa hoje</th><th>Ações</th></tr></thead><tbody>{catadores.map((catador) => <tr key={catador.uuid} className={catador.status === "inativo" ? "registro-inativo" : ""}><td><div className="pessoa">{catador.tem_foto ? <img className="foto-lista" src={`${URL_API}/api/catadores/${catador.uuid}/foto`} alt={`Foto de ${catador.nome_completo}`} /> : <span>{iniciais(catador.nome_completo)}</span>}<div><strong>{catador.nome_completo}</strong><small>{catador.apelido ? `Prefere: ${catador.apelido}` : "Sem apelido informado"}</small><em className={catador.status === "ativo" ? "status ativo" : "status"}>● {catador.status}</em></div></div></td><td><code>{catador.codigo}</code></td><td>{catador.cooperativa ?? "Sem vínculo"}</td><td><strong>{catador.contatos.map((item) => item.valor).join(" · ") || "Contato não informado"}</strong><small className="texto-bloco">{catador.endereco_resumo || "Endereço não informado"}</small></td><td><strong>{Number(catador.total_quilos).toLocaleString("pt-BR")} kg</strong><small className="texto-bloco valor-verde">{Number(catador.total_ganhos).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</small></td><td><BarraMeta percentual={Number(catador.percentual_meta_hoje)} texto={`${Number(catador.peso_hoje).toLocaleString("pt-BR")} / ${Number(catador.meta_hoje).toLocaleString("pt-BR")} kg`} /><span className={`status-caixa ${catador.status_caixa_hoje}`}>Caixa {catador.status_caixa_hoje}</span></td><td><div className="acoes-catador"><button type="button" onClick={() => setPerfilUuid(catador.uuid)} aria-label={`Ver ficha de ${catador.nome_completo}`} title="Ver ficha"><Eye /></button>{acessos.editar && <><button type="button" onClick={() => void abrirEdicao(catador.uuid)} aria-label={`Editar ${catador.nome_completo}`} title="Editar"><Pencil /></button><button type="button" onClick={() => setAlterandoStatus(catador)} aria-label={`${catador.status === "ativo" ? "Inativar" : "Ativar"} ${catador.nome_completo}`} title={catador.status === "ativo" ? "Inativar" : "Ativar"}>{catador.status === "ativo" ? <UserX /> : <UserCheck />}</button></>}{acessos.excluir && <button type="button" className="perigoso" onClick={() => abrirExclusao(catador)} aria-label={`Excluir ${catador.nome_completo}`} title="Excluir"><Trash2 /></button>}</div></td></tr>)}</tbody></table>{catadores.length === 0 && <p className="estado-vazio">Nenhum catador encontrado.</p>}</div>
     <Paginacao pagina={pagina} total={total} itensPorPagina={itensPorPagina} aoMudarPagina={setPagina} aoMudarQuantidade={(quantidade) => { setItensPorPagina(quantidade); setPagina(1); }} rotulo="catadores" />
@@ -91,6 +109,7 @@ export function TelaCatadores({ acessos }: { acessos: AcessosCatadores }) {
     {formularioEdicao}
     {modalExclusao}
     <ModalConfirmacao aberto={acessos.editar && Boolean(alterandoStatus)} titulo={`${alterandoStatus?.status === "ativo" ? "Inativar" : "Ativar"} ${alterandoStatus?.nome_completo ?? "catador"}?`} descricao={alterandoStatus?.status === "ativo" ? "O cadastro e o histórico serão preservados, mas o catador não poderá ser selecionado em novas pesagens." : "O catador voltará a aparecer nas buscas de novas pesagens."} textoConfirmar={alterandoStatus?.status === "ativo" ? "Inativar catador" : "Ativar catador"} perigoso={alterandoStatus?.status === "ativo"} processando={processandoStatus} aoFechar={() => setAlterandoStatus(null)} aoConfirmar={() => void confirmarAlteracaoStatus()} />
+    <ModalConfirmacao aberto={acessos.exportar && confirmandoExportacao} titulo="Exportar todos os catadores em Excel?" descricao="O arquivo terá uma aba para produção de crachás e abas com cadastro completo, contatos e dados de pagamento. Como contém informações pessoais e financeiras, mantenha-o somente com pessoas autorizadas." textoConfirmar="Gerar arquivo Excel" processando={exportando} aoFechar={() => setConfirmandoExportacao(false)} aoConfirmar={() => void exportarCatadores()} />
   </section>;
 }
 

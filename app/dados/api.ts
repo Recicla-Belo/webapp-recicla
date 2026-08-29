@@ -25,10 +25,10 @@ export async function requisitarApi<T>(caminho: string, opcoes: RequestInit = {}
   return resposta.json() as Promise<T>;
 }
 
-export async function baixarArquivoApi(caminho: string): Promise<{ arquivo: Blob; nome: string }> {
+export async function baixarArquivoApi(caminho: string, tipoAceito = "text/csv"): Promise<{ arquivo: Blob; nome: string }> {
   let resposta: Response;
   try {
-    resposta = await fetch(`${URL_API}${caminho}`, { method: "GET", credentials: "include", headers: { accept: "text/csv" } });
+    resposta = await fetch(`${URL_API}${caminho}`, { method: "GET", credentials: "include", headers: { accept: tipoAceito } });
   } catch {
     throw new ErroApi("Não foi possível conectar ao servidor para gerar a exportação.", 0);
   }
@@ -80,7 +80,7 @@ export type ConfiguracaoMetaGeralApi = {
 
 export type PermissaoUsuario =
   | "painel_visualizar"
-  | "catadores_visualizar" | "catadores_cadastrar" | "catadores_editar" | "catadores_excluir" | "catadores_gerenciar_caixa"
+  | "catadores_visualizar" | "catadores_cadastrar" | "catadores_editar" | "catadores_excluir" | "catadores_gerenciar_caixa" | "catadores_exportar"
   | "cooperativas_visualizar" | "cooperativas_cadastrar" | "cooperativas_editar" | "cooperativas_excluir"
   | "pesagens_cadastrar" | "relatorios_visualizar" | "pesagens_editar" | "pesagens_excluir"
   | "materiais_gerenciar" | "responsaveis_gerenciar" | "metas_gerenciar" | "identidade_visual_gerenciar";

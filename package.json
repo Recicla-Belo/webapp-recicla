@@ -11,7 +11,7 @@
     "dev:backend": "npm --prefix servidor run desenvolver",
     "build": "vinext build",
     "start": "vinext start",
-    "test": "npm run build && node --test tests/recicla-belo.test.mjs",
+    "test": "npm run build && node --test tests/recicla-belo.test.mjs && npm --prefix servidor run testar",
     "test:integracao": "node --env-file=.env tests/integracao-api.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "servidor:dev": "npm --prefix servidor run desenvolver",

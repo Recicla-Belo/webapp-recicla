@@ -28,6 +28,7 @@ WebApp responsivo para gestão de cooperativas de reciclagem, catadores, produç
 - atividade recente limitada aos últimos 30 dias e a 100 eventos no dashboard, sem apagar o livro permanente de auditoria;
 - relatórios somente leitura com resumo diário, pesagens completas e livro imutável de auditoria, todos paginados e filtráveis;
 - exportação CSV de todos os registros do período filtrado, permitindo escolher individualmente as colunas e protegendo contra fórmulas maliciosas em planilhas.
+- exportação Excel completa dos catadores, com aba própria para produção de crachás e abas organizadas de cadastro, contatos e pagamento; o download exige permissão específica e gera registro de auditoria.
 - contas operacionais com permissões granulares escolhidas pelo administrador e validadas no backend para painel, catadores, cooperativas, pesagens, relatórios, caixas e configurações.
 
 ## Arquitetura

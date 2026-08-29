@@ -12,6 +12,7 @@
     "iniciar:producao": "node dist/principal.js",
     "compilar": "tsc -p tsconfig.producao.json",
     "verificar": "tsc --noEmit",
+    "testar": "node --import tsx --test src/servicos/gerar-planilha-catadores.test.ts",
     "migrar": "tsx src/banco/migrar.ts",
     "seed": "tsx src/banco/seed.ts"
   },
@@ -24,6 +25,7 @@
     "@fastify/rate-limit": "11.2.0",
     "bcrypt": "6.0.0",
     "dotenv": "17.4.2",
+    "exceljs": "4.4.0",
     "fastify": "5.12.1",
     "pg": "8.23.0",
     "zod": "4.4.3"

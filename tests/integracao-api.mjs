@@ -62,6 +62,7 @@ async function executar() {
   const catalogoPermissoes = (await chamar("/api/permissoes")).dados.dados;
   assert.ok(catalogoPermissoes.length >= 18);
   assert.ok(catalogoPermissoes.some((item) => item.chave === "cooperativas_editar"));
+  assert.ok(catalogoPermissoes.some((item) => item.chave === "catadores_exportar"));
 
   const materiaisAntesDaSelecao = (await chamar("/api/materiais")).dados.dados;
   const materiaisSelecionadosOriginais = materiaisAntesDaSelecao.filter((material) => material.contabiliza_meta).map((material) => material.uuid);
@@ -110,6 +111,7 @@ async function executar() {
     const selecaoMetaBloqueada = await fetch(`${urlApi}/api/materiais/participacao-meta`, { method: "PATCH", headers: { "content-type": "application/json", cookie: cookieRestrito }, body: JSON.stringify({ materiaisUuids: [] }) });
     assert.equal(selecaoMetaBloqueada.status, 403);
     assert.equal((await fetch(`${urlApi}/api/catadores`, { headers: { cookie: cookieRestrito } })).status, 403);
+    assert.equal((await fetch(`${urlApi}/api/catadores/exportar`, { headers: { cookie: cookieRestrito } })).status, 403);
     cookie = cookieAdministradorPermissoes;
     const permissoesComEdicao = [...permissoesRestritas, "cooperativas_editar"];
     await chamar(`/api/usuarios/${usuarioRestritoUuid}`, { method: "PATCH", body: JSON.stringify({ nome: "Operador de cadastro", email: emailRestrito, ativo: true, permissoes: permissoesComEdicao }) });
@@ -304,6 +306,13 @@ async function executar() {
     const csv = await exportacao.text();
     assert.match(csv, /Protocolo UUID/);
     assert.match(csv, new RegExp(pesagem.codigo));
+    const exportacaoCatadores = await fetch(`${urlApi}/api/catadores/exportar`, { headers: { cookie } });
+    assert.equal(exportacaoCatadores.status, 200);
+    assert.match(exportacaoCatadores.headers.get("content-type") ?? "", /^application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet/);
+    assert.match(exportacaoCatadores.headers.get("content-disposition") ?? "", /catadores-recicla-belo-\d{4}-\d{2}-\d{2}\.xlsx/);
+    assert.ok(Number(exportacaoCatadores.headers.get("x-total-registros")) >= 1);
+    const bytesExcel = new Uint8Array(await exportacaoCatadores.arrayBuffer());
+    assert.deepEqual([...bytesExcel.slice(0, 2)], [0x50, 0x4b]);
     const perfil = (await chamar(`/api/catadores/${catadorUuid}/perfil`)).dados;
     assert.equal(perfil.catador.uuid, catadorUuid);
     assert.ok(perfil.caixas.some((item) => String(item.data_caixa).slice(0, 10) === dataCaixa && item.reaberto_em));
@@ -480,6 +489,7 @@ async function executar() {
       if (responsavelUuid) await cliente.query("DELETE FROM responsaveis_pesagem WHERE uuid=$1", [responsavelUuid]);
       await cliente.query("UPDATE configuracoes_meta_geral SET ativa=$1,meta_diaria=$2,valor_premio=$3,unidade=$4,atualizado_em=now() WHERE chave='principal'", [configuracaoMetaOriginal.ativa, configuracaoMetaOriginal.meta_diaria, configuracaoMetaOriginal.valor_premio, configuracaoMetaOriginal.unidade]);
       await cliente.query("DELETE FROM auditoria WHERE entidade='configuracoes_meta_geral' AND criado_em >= $1", [inicioTeste]);
+      await cliente.query("DELETE FROM auditoria WHERE entidade='exportacoes_catadores' AND criado_em >= $1", [inicioTeste]);
       await cliente.query("DELETE FROM notificacoes WHERE entidade='usuarios' AND entidade_uuid=$1 AND criado_em >= $2", [perfilAdministrador.uuid, inicioTeste]);
       await cliente.query("DELETE FROM auditoria WHERE entidade='usuarios' AND entidade_uuid=$1 AND criado_em >= $2", [perfilAdministrador.uuid, inicioTeste]);
       await cliente.query("ALTER TABLE auditoria ENABLE TRIGGER auditoria_imutavel");

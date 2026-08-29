@@ -6,6 +6,6 @@
     "rootDir": "src",
     "sourceMap": true,
     "declaration": false
-  }
+  },
+  "exclude": ["src/**/*.test.ts"]
 }
-
