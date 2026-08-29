@@ -20,7 +20,10 @@ export type ReciboPagamento = {
 
 const nomesTipo = { pix: "Pix", dinheiro: "Dinheiro", transferencia_bancaria: "Transferência bancária", outro: "Outro" } as const;
 const moeda = (valor: number) => Number(valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-const cpf = (valor: string | null) => valor ? valor.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, "$1.$2.$3-$4") : "Não informado";
+const cpf = (valor: string | null | undefined) => {
+  const digitos = valor?.replace(/\D/g, "") ?? "";
+  return digitos.length === 11 ? digitos.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, "$1.$2.$3-$4") : "Não informado";
+};
 
 export function ModalPagamentoCatador({ catador, saldo, contas, aoFechar, aoPago }: {
   catador: { uuid: string; codigo: string; nome_completo: string; cpf: string | null; cooperativa: string | null };

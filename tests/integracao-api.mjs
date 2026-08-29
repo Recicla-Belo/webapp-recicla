@@ -175,6 +175,7 @@ async function executar() {
   await chamar("/api/configuracoes/meta-geral", { method: "PUT", body: JSON.stringify({ ativa: false, metaDiaria: 0, valorPremio: 0, unidade: "kg" }) });
   const sufixo = `${Date.now()}-${process.pid}`;
   const cpfCatador = String(Date.now()).slice(-11).padStart(11, "7");
+  const cpfCatadorMeta = String(Date.now() + 2).slice(-11).padStart(11, "6");
   const cpfTitular = String(Date.now() + 1).slice(-11).padStart(11, "8");
   let cooperativaUuid;
   let materialUuid;
@@ -394,7 +395,7 @@ async function executar() {
     assert.equal(configuracaoMetaAtiva.ativa, true);
     assert.equal(Number(configuracaoMetaAtiva.meta_diaria), 10);
     assert.equal(Number(configuracaoMetaAtiva.valor_premio), 200);
-    catadorMetaGeralUuid = (await chamar("/api/catadores", { method: "POST", body: JSON.stringify({ nomeCompleto: `Meta Geral ${sufixo}`, cooperativaUuid, contatos: [], ativo: true }) })).dados.uuid;
+    catadorMetaGeralUuid = (await chamar("/api/catadores", { method: "POST", body: JSON.stringify({ nomeCompleto: `Meta Geral ${sufixo}`, cpf: cpfCatadorMeta, cooperativaUuid, contatos: [], ativo: true }) })).dados.uuid;
     entidadesCriadas.add(catadorMetaGeralUuid);
     const materialConfiguradoFora = (await chamar("/api/pesagens", { method: "POST", body: JSON.stringify({ catadorUuid: catadorMetaGeralUuid, cooperativaUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsavelPadrao.uuid, materialUuid: materialForaMetaUuid, contabilizarNaMeta: true, peso: 5, dataHora: new Date(new Date(dataHoraPesagem).getTime() + 3000).toISOString(), status: "concluida" }) })).dados;
     pesagensMetaGeral.push(materialConfiguradoFora.uuid); entidadesCriadas.add(materialConfiguradoFora.uuid);
@@ -448,6 +449,7 @@ async function executar() {
     entidadesCriadas.add(pagamento.uuid);
     assert.match(pagamento.codigo, /^PAG-[A-F0-9]{8}$/);
     assert.equal(Number(pagamento.valor), 417);
+    assert.equal(pagamento.cpf_catador, cpfCatadorMeta);
     assert.equal(pagamento.pagador_email, process.env.ADMIN_EMAIL);
     assert.equal(pagamento.itens.reduce((total, item) => total + Number(item.valor), 0), 417);
     const pagamentoRepetido = (await chamar(`/api/catadores/${catadorMetaGeralUuid}/pagamentos`, { method: "POST", body: JSON.stringify({ valor: 417, tipo: "transferencia_bancaria", observacao: "Pagamento integrado temporário", chaveIdempotencia: chaveIdempotenciaPagamento }) })).dados;
@@ -457,6 +459,7 @@ async function executar() {
     assert.equal(Number(perfilAposPagamento.resumo.valor_pago), 417);
     assert.equal(Number(perfilAposPagamento.resumo.saldo_pendente), 0);
     assert.equal(perfilAposPagamento.pagamentos[0].pagador_email, process.env.ADMIN_EMAIL);
+    assert.equal(perfilAposPagamento.pagamentos[0].cpf_catador, cpfCatadorMeta);
     await assert.rejects(
       bancoTeste.query("UPDATE pagamentos_catador SET valor=1 WHERE uuid=$1", [pagamento.uuid]),
       (erro) => erro?.code === "55000",

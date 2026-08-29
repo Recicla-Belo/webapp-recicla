@@ -214,6 +214,7 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(servidor, /aplicacao\.get\("\/api\/catadores\/exportar"/);
   assert.match(servidor, /aplicacao\.post\("\/api\/catadores\/:uuid\/pagamentos"/);
   assert.match(servidor, /pg_advisory_xact_lock\(hashtextextended\('pagamento-catador:/);
+  assert.match(servidor, /coalesce\(pc\.cpf_catador,c\.cpf\) AS cpf_catador/);
   assert.match(servidor, /exportacao_excel/);
   assert.match(telaCooperativas, /acessos\.editar/);
   assert.match(telaRelatorios, /\/api\/administrador\/pesagens/);

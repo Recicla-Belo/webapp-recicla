@@ -987,12 +987,14 @@ aplicacao.get("/api/catadores/:uuid/perfil", async (requisicao, resposta) => {
   const historico = await banco.query(`SELECT p.uuid,p.codigo,p.data_hora,p.status,p.peso_total::float8,p.valor_total::float8,p.excluida_em,ip.contabiliza_meta,m.nome AS material,pa.nome AS ponto_apoio,co.nome AS cooperativa,coalesce(rp.nome,p.responsavel_outro) AS responsavel
     FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN materiais m ON m.uuid=ip.material_uuid JOIN pontos_apoio pa ON pa.uuid=p.ponto_apoio_uuid LEFT JOIN cooperativas co ON co.uuid=p.cooperativa_uuid LEFT JOIN responsaveis_pesagem rp ON rp.uuid=p.responsavel_pesagem_uuid
     WHERE p.catador_uuid=$1 ORDER BY p.data_hora DESC LIMIT 100`, [uuid]);
-  const pagamentos = await banco.query(`SELECT pc.uuid,pc.codigo,pc.valor::float8,pc.tipo,pc.observacao,pc.pago_em,
-      u.nome AS pagador,u.email AS pagador_email,pc.dados_recebimento,
+  const pagamentos = await banco.query(`SELECT pc.uuid,pc.codigo,pc.codigo_catador,pc.nome_catador,
+      coalesce(pc.cpf_catador,c.cpf) AS cpf_catador,coalesce(pc.cooperativa_catador,co.nome) AS cooperativa_catador,
+      pc.valor::float8,pc.tipo,pc.observacao,pc.pago_em,u.nome AS pagador,u.email AS pagador_email,pc.dados_recebimento,
       coalesce(json_agg(json_build_object('codigo_pesagem',ipc.codigo_pesagem,'material',ipc.material,'data_hora',ipc.data_hora,'peso',ipc.peso::float8,'valor',ipc.valor::float8) ORDER BY ipc.data_hora,ipc.codigo_pesagem) FILTER (WHERE ipc.uuid IS NOT NULL),'[]'::json) AS itens
     FROM pagamentos_catador pc JOIN usuarios u ON u.uuid=pc.pagador_uuid
+    LEFT JOIN catadores c ON c.uuid=pc.catador_uuid LEFT JOIN cooperativas co ON co.uuid=c.cooperativa_uuid
     LEFT JOIN itens_pagamento_catador ipc ON ipc.pagamento_uuid=pc.uuid
-    WHERE pc.catador_uuid=$1 GROUP BY pc.uuid,u.nome,u.email ORDER BY pc.pago_em DESC LIMIT 100`, [uuid]);
+    WHERE pc.catador_uuid=$1 GROUP BY pc.uuid,u.nome,u.email,c.cpf,co.nome ORDER BY pc.pago_em DESC LIMIT 100`, [uuid]);
   return { catador: catador.rows[0], resumo: resumo.rows[0], materiais: materiais.rows, metas: metas.rows, caixas: caixas.rows, historico: historico.rows, pagamentos: pagamentos.rows };
 });
 
@@ -1005,12 +1007,14 @@ const esquemaPagamentoCatador = z.object({
 }).strict();
 
 async function buscarReciboPagamento(executor: ExecutorSql, pagamentoUuid: string) {
-  const recibo = await executor.query(`SELECT pc.uuid,pc.codigo,pc.codigo_catador,pc.nome_catador,pc.cpf_catador,pc.cooperativa_catador,
+  const recibo = await executor.query(`SELECT pc.uuid,pc.codigo,pc.codigo_catador,pc.nome_catador,
+      coalesce(pc.cpf_catador,c.cpf) AS cpf_catador,coalesce(pc.cooperativa_catador,co.nome) AS cooperativa_catador,
       pc.valor::float8,pc.tipo,pc.dados_recebimento,pc.observacao,pc.pago_em,u.nome AS pagador,u.email AS pagador_email,
       coalesce(json_agg(json_build_object('codigo_pesagem',ipc.codigo_pesagem,'material',ipc.material,'data_hora',ipc.data_hora,'peso',ipc.peso::float8,'valor',ipc.valor::float8) ORDER BY ipc.data_hora,ipc.codigo_pesagem) FILTER (WHERE ipc.uuid IS NOT NULL),'[]'::json) AS itens
     FROM pagamentos_catador pc JOIN usuarios u ON u.uuid=pc.pagador_uuid
+    LEFT JOIN catadores c ON c.uuid=pc.catador_uuid LEFT JOIN cooperativas co ON co.uuid=c.cooperativa_uuid
     LEFT JOIN itens_pagamento_catador ipc ON ipc.pagamento_uuid=pc.uuid
-    WHERE pc.uuid=$1 GROUP BY pc.uuid,u.nome,u.email`, [pagamentoUuid]);
+    WHERE pc.uuid=$1 GROUP BY pc.uuid,u.nome,u.email,c.cpf,co.nome`, [pagamentoUuid]);
   return recibo.rows[0];
 }
 
