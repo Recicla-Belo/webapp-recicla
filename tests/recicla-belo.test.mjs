@@ -102,6 +102,9 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(migracaoPagamentos, /pagador_uuid UUID NOT NULL REFERENCES usuarios/);
   assert.match(modalPagamento, /Confirmar e gerar recibo/);
   assert.match(modalPagamento, /window\.print\(\)/);
+  assert.match(modalPagamento, /createPortal/);
+  assert.match(modalPagamento, /area-impressao-recibo/);
+  assert.match(modalPagamento, /Assinatura do catador/);
   assert.match(geradorExcel, /Produção de crachás/);
   assert.match(geradorExcel, /Cadastro completo/);
   assert.match(geradorExcel, /Dados de pagamento/);
@@ -265,6 +268,8 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(estilos, /\.modal\.cadastro>\.formulario\{[^}]*overflow-y:auto/);
   assert.match(estilos, /\.modal-pagamento\{display:flex;flex-direction:column;[^}]*overflow:hidden/);
   assert.match(estilos, /\.modal-pagamento>\.corpo-pagamento,\.modal-pagamento>\.recibo-pagamento\{[^}]*min-height:0;[^}]*overflow-y:auto/);
+  assert.match(estilos, /body>\*:not\(\.area-impressao-recibo\)\{display:none!important\}/);
+  assert.doesNotMatch(estilos, /body \*\{visibility:hidden!important\}/);
   assert.match(estilos, /\.modal>\.cabecalho-modal\{position:sticky/);
   assert.match(estilos, /\.modal>\.rodape-modal\{position:sticky/);
   assert.match(estilos, /\.acoes-material\{[^}]*display:flex!important/);

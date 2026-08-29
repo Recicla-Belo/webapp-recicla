@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { Banknote, LoaderCircle, Printer, ReceiptText, ShieldCheck, X } from "lucide-react";
 import { requisitarApi } from "@/app/dados/api";
 
@@ -80,13 +81,19 @@ export function ModalPagamentoCatador({ catador, saldo, contas, aoFechar, aoPago
 }
 
 export function ModalReciboPagamento({ recibo, aoFechar }: { recibo: ReciboPagamento; aoFechar: () => void }) {
-  return <div className="sobreposicao sobreposicao-pagamento" role="dialog" aria-modal="true" aria-labelledby="titulo-recibo">
+  return <>
+  <div className="sobreposicao sobreposicao-pagamento" role="dialog" aria-modal="true" aria-labelledby="titulo-recibo">
     <div className="modal modal-pagamento">
       <header className="cabecalho-modal nao-imprimir"><div><span>PAGAMENTO CONFIRMADO</span><h2 id="titulo-recibo">Recibo gerado com segurança</h2><p>O pagamento e o usuário pagador foram registrados no livro de auditoria.</p></div><button type="button" onClick={aoFechar} aria-label="Fechar recibo"><X /></button></header>
       <Recibo recibo={recibo} />
       <footer className="rodape-modal nao-imprimir"><button className="botao-secundario" type="button" onClick={aoFechar}>Concluir</button><button className="botao-primario" type="button" onClick={() => window.print()}><Printer /> Imprimir recibo</button></footer>
     </div>
-  </div>;
+  </div>
+  {typeof document !== "undefined" && createPortal(
+    <div className="area-impressao-recibo" aria-hidden="true"><Recibo recibo={recibo} /></div>,
+    document.body,
+  )}
+  </>;
 }
 
 function Recibo({ recibo }: { recibo: ReciboPagamento }) {
@@ -95,6 +102,13 @@ function Recibo({ recibo }: { recibo: ReciboPagamento }) {
     <div className="grade-recibo"><div><small>Catador</small><strong>{recibo.nome_catador}</strong><span>{recibo.codigo_catador} · CPF {cpf(recibo.cpf_catador)}</span></div><div><small>Valor pago</small><strong>{moeda(recibo.valor)}</strong><span>{nomesTipo[recibo.tipo]}</span></div><div><small>Data e hora</small><strong>{new Date(recibo.pago_em).toLocaleString("pt-BR")}</strong><span>{recibo.cooperativa_catador || "Sem cooperativa"}</span></div><div><small>Pagador(a) responsável</small><strong>{recibo.pagador}</strong><span>{recibo.pagador_email}</span></div></div>
     <section><h2>Valores que compõem o pagamento</h2><div className="tabela-responsiva"><table><thead><tr><th>Pesagem</th><th>Data</th><th>Material</th><th>Peso</th><th>Valor pago</th></tr></thead><tbody>{recibo.itens.map((item, indice) => <tr key={`${item.codigo_pesagem}-${indice}`}><td><code>{item.codigo_pesagem}</code></td><td>{new Date(item.data_hora).toLocaleString("pt-BR")}</td><td>{item.material}</td><td>{Number(item.peso).toLocaleString("pt-BR")} kg</td><td>{moeda(item.valor)}</td></tr>)}</tbody></table></div></section>
     {recibo.observacao && <p><strong>Observação:</strong> {recibo.observacao}</p>}
+    <section className="assinatura-recibo">
+      <p>Declaro que recebi o valor indicado neste recibo.</p>
+      <p className="data-assinatura">Belo Horizonte, ____ de __________________ de ______.</p>
+      <div className="linha-assinatura" aria-label="Espaço para assinatura do catador" />
+      <strong>Assinatura do catador</strong>
+      <span>{recibo.nome_catador} · {recibo.codigo_catador}</span>
+    </section>
     <footer><span>Pagamento registrado eletronicamente no Recicla Belô.</span><strong>Total: {moeda(recibo.valor)}</strong></footer>
   </article>;
 }
