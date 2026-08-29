@@ -3,9 +3,10 @@
 /* eslint-disable @next/next/no-img-element -- fotos privadas são servidas pela API autenticada */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Gauge, Recycle, Scale, Target, UsersRound, WalletCards, type LucideIcon } from "lucide-react";
+import { Gauge, Recycle, Scale, Target, Trash2, UsersRound, WalletCards, type LucideIcon } from "lucide-react";
 import { requisitarApi, URL_API } from "@/app/dados/api";
 import { Paginacao } from "@/app/componentes/paginacao";
+import { ModalExclusaoAdministrativa } from "@/app/componentes/modal-exclusao-administrativa";
 
 type DadosAuditoria = { motivo?: string; antes?: Record<string, unknown>; depois?: Record<string, unknown> };
 type AtividadeApi = {
@@ -32,12 +33,15 @@ function rotuloDia(valor: string) {
   return Number.isNaN(data.getTime()) ? "—" : data.toLocaleDateString("pt-BR", { weekday: "short" }).replace(".", "");
 }
 
-export function PainelPrincipal({ onNovaPesagem, podeNovaPesagem = true }: { onNovaPesagem: () => void; podeNovaPesagem?: boolean }) {
+export function PainelPrincipal({ onNovaPesagem, podeNovaPesagem = true, administrador = false }: { onNovaPesagem: () => void; podeNovaPesagem?: boolean; administrador?: boolean }) {
   const [dados, setDados] = useState<DadosPainel>(estadoVazio);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState("");
   const [paginaAtividades, setPaginaAtividades] = useState(1);
   const [limiteAtividades, setLimiteAtividades] = useState(5);
+  const [atividadeExcluir, setAtividadeExcluir] = useState<AtividadeApi | null>(null);
+  const [excluindo, setExcluindo] = useState(false);
+  const [erroExclusao, setErroExclusao] = useState("");
 
   const carregar = useCallback(async () => {
     try { setDados(await requisitarApi<DadosPainel>(`/api/painel?paginaAtividades=${paginaAtividades}&limiteAtividades=${limiteAtividades}`)); setErro(""); }
@@ -46,6 +50,18 @@ export function PainelPrincipal({ onNovaPesagem, podeNovaPesagem = true }: { onN
   }, [limiteAtividades, paginaAtividades]);
   // eslint-disable-next-line react-hooks/set-state-in-effect -- sincroniza a página de atividades com a API
   useEffect(() => { void carregar(); }, [carregar]);
+
+  async function excluirAtividade(dadosConfirmacao: { senhaAtual: string; confirmacao: string; motivo: string }) {
+    if (!atividadeExcluir || !administrador) return;
+    setExcluindo(true); setErroExclusao("");
+    try {
+      await requisitarApi(`/api/administrador/auditoria/${atividadeExcluir.uuid}`, { method: "DELETE", body: JSON.stringify(dadosConfirmacao) });
+      setAtividadeExcluir(null);
+      if (dados.atividades.length === 1 && paginaAtividades > 1) setPaginaAtividades((paginaAtual) => paginaAtual - 1);
+      else await carregar();
+    } catch (falha) { setErroExclusao(falha instanceof Error ? falha.message : "Não foi possível apagar a atividade."); }
+    finally { setExcluindo(false); }
+  }
 
   const indicadores = useMemo<Array<{ rotulo: string; valor: string; icone: LucideIcon }>>(() => [
     { rotulo: "Catadores ativos", valor: dados.indicadores.catadores_ativos.toLocaleString("pt-BR"), icone: UsersRound },
@@ -69,14 +85,15 @@ export function PainelPrincipal({ onNovaPesagem, podeNovaPesagem = true }: { onN
       <section className="painel"><div className="titulo-secao"><div><h2>Produção dos últimos 7 dias</h2><p>Volume confirmado no banco de dados</p></div></div><div className="grafico" aria-label="Gráfico de produção dos últimos sete dias">{dados.producaoSemanal.map((item) => <div className="barra-grupo" key={item.data}><div className="barra" title={`${Number(item.peso).toLocaleString("pt-BR")} kg`} style={{ height: `${Math.max((Number(item.peso) / maiorPeso) * 100, Number(item.peso) > 0 ? 6 : 1)}%` }} /><span>{rotuloDia(item.data)}</span></div>)}</div></section>
       <section className="painel atividade">
         <div className="titulo-secao"><div><h2>Atividade recente</h2><p>Últimos 30 dias, limitada a 100 eventos; o livro completo fica em Relatórios</p></div>{podeNovaPesagem && <button type="button" onClick={onNovaPesagem}>Registrar nova</button>}</div>
-        {dados.atividades.length === 0 ? <p className="estado-vazio">Nenhuma movimentação registrada.</p> : dados.atividades.map((atividade) => <AtividadeRecente atividade={atividade} key={atividade.uuid} />)}
+        {dados.atividades.length === 0 ? <p className="estado-vazio">Nenhuma movimentação registrada.</p> : dados.atividades.map((atividade) => <AtividadeRecente atividade={atividade} key={atividade.uuid} podeExcluir={administrador} aoExcluir={() => { setErroExclusao(""); setAtividadeExcluir(atividade); }} />)}
         <Paginacao pagina={paginaAtividades} total={dados.paginacaoAtividades.total} itensPorPagina={limiteAtividades} aoMudarPagina={setPaginaAtividades} aoMudarQuantidade={(quantidade) => { setLimiteAtividades(quantidade); setPaginaAtividades(1); }} opcoesQuantidade={[5, 10, 20]} rotulo="atividades" />
       </section>
     </div>
+    <ModalExclusaoAdministrativa aberto={Boolean(atividadeExcluir)} titulo="Apagar item da Atividade recente?" descricao="Somente este evento deixará de aparecer no painel e no livro de auditoria." itensApagados={[atividadeExcluir ? `${rotuloAtividade(atividadeExcluir.acao, atividadeExcluir.entidade)} — ${new Date(atividadeExcluir.criado_em).toLocaleString("pt-BR")}` : "Evento selecionado"]} itensPreservados={["Catadores e seus dados", "Cooperativas e associações", "Pesagens e valores vinculados", "Usuários e permissões"]} fraseConfirmacao="EXCLUIR DEFINITIVAMENTE" processando={excluindo} erro={erroExclusao} aoConfirmar={(dadosConfirmacao) => void excluirAtividade(dadosConfirmacao)} aoFechar={() => { if (!excluindo) { setAtividadeExcluir(null); setErroExclusao(""); } }} />
   </section>;
 }
 
-function AtividadeRecente({ atividade }: { atividade: AtividadeApi }) {
+function AtividadeRecente({ atividade, podeExcluir, aoExcluir }: { atividade: AtividadeApi; podeExcluir: boolean; aoExcluir: () => void }) {
   const caixa = atividade.entidade === "caixas_catador";
   const alteracoes = atividade.acao === "alteracao" ? resumirAlteracoes(atividade.dados) : [];
   return <article className="linha-atividade atividade-detalhada">
@@ -97,7 +114,7 @@ function AtividadeRecente({ atividade }: { atividade: AtividadeApi }) {
       {(atividade.motivo || atividade.dados?.motivo) && <em className="motivo-atividade">Motivo: {atividade.motivo || atividade.dados.motivo}</em>}
       <time dateTime={atividade.criado_em}>{new Date(atividade.criado_em).toLocaleString("pt-BR")}</time>
     </div>
-    <b className="selo-acao">{atividade.acao.replaceAll("_", " ")}</b>
+    <div className="acoes-atividade-recente"><b className="selo-acao">{atividade.acao.replaceAll("_", " ")}</b>{podeExcluir && <button type="button" className="acao-apagar-atividade" onClick={aoExcluir} aria-label="Apagar este item da Atividade recente" title="Apagar atividade"><Trash2 /></button>}</div>
   </article>;
 }
 

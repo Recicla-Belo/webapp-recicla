@@ -63,7 +63,7 @@ const opcoesCookieSessao = {
 type PerfilAcesso = "administrador" | "operador_cadastro";
 const chavesPermissao = [
   "painel_visualizar",
-  "catadores_visualizar", "catadores_cadastrar", "catadores_editar", "catadores_excluir", "catadores_gerenciar_caixa", "catadores_exportar",
+  "catadores_visualizar", "catadores_cadastrar", "catadores_editar", "catadores_excluir", "catadores_gerenciar_caixa", "catadores_exportar", "catadores_pagar",
   "cooperativas_visualizar", "cooperativas_cadastrar", "cooperativas_editar", "cooperativas_excluir",
   "pesagens_cadastrar", "relatorios_visualizar", "pesagens_editar", "pesagens_excluir",
   "materiais_gerenciar", "responsaveis_gerenciar", "metas_gerenciar", "identidade_visual_gerenciar",
@@ -389,6 +389,7 @@ function permissoesExigidasPelaRota(requisicao: FastifyRequest): PermissaoUsuari
     if (rota === "/api/enderecos/cep/:cep") return ["catadores_cadastrar", "catadores_editar"];
     if (rota.startsWith("/api/relatorios/")) return ["relatorios_visualizar"];
   }
+  if (metodo === "POST" && rota === "/api/catadores/:uuid/pagamentos") return ["catadores_pagar"];
   if (metodo === "POST" && rota === "/api/catadores") return ["catadores_cadastrar"];
   if (metodo === "POST" && rota === "/api/catadores/:uuid/foto") return ["catadores_cadastrar", "catadores_editar"];
   if ((metodo === "PUT" && rota === "/api/catadores/:uuid") || (metodo === "PATCH" && rota === "/api/catadores/:uuid/status")) return ["catadores_editar"];
@@ -519,13 +520,196 @@ aplicacao.patch("/api/administrador/senha", { config: { rateLimit: { max: 5, tim
   return { alterada: true };
 });
 
+const esquemaExclusaoAdministrativa = z.object({
+  senhaAtual: z.string().min(1).max(128),
+  confirmacao: z.string().trim().max(80),
+  motivo: z.string().trim().min(3).max(500),
+});
+
+async function validarConfirmacaoAdministrativa(
+  requisicao: FastifyRequest,
+  resposta: FastifyReply,
+  fraseEsperada: string,
+) {
+  const entrada = esquemaExclusaoAdministrativa.safeParse(requisicao.body);
+  if (!entrada.success || entrada.data.confirmacao !== fraseEsperada) {
+    await resposta.code(400).send({ mensagem: `Digite exatamente “${fraseEsperada}” para confirmar.` });
+    return null;
+  }
+  const resultado = await banco.query<{ uuid: string; senha_hash: string }>(
+    "SELECT uuid,senha_hash FROM usuarios WHERE uuid=$1 AND ativo=TRUE AND administrador=TRUE LIMIT 1",
+    [requisicao.user.usuarioUuid],
+  );
+  const administrador = resultado.rows[0];
+  const senhaCorreta = await bcrypt.compare(entrada.data.senhaAtual, administrador?.senha_hash ?? senhaFicticiaHash);
+  if (!administrador || !senhaCorreta) {
+    await resposta.code(403).send({ mensagem: "A senha atual do administrador está incorreta." });
+    return null;
+  }
+  return { administradorUuid: administrador.uuid, motivo: entrada.data.motivo };
+}
+
+async function registrarLimpezaAdministrativa(
+  cliente: PoolClient,
+  administradorUuid: string,
+  tipo: "excluir_evento_auditoria" | "excluir_pesagem_definitivamente" | "excluir_dia_operacional" | "limpar_dados_operacionais",
+  motivo: string,
+  contagens: Record<string, unknown>,
+  enderecoIp: string,
+  alvoUuid?: string,
+) {
+  await cliente.query(
+    `INSERT INTO historico_limpezas_administrativas
+      (administrador_uuid,tipo,alvo_uuid,motivo,contagens,endereco_ip)
+     VALUES ($1,$2,$3,$4,$5,$6)`,
+    [administradorUuid, tipo, alvoUuid ?? null, motivo, contagens, enderecoIp],
+  );
+}
+
+aplicacao.delete("/api/administrador/auditoria/:uuid", { config: { rateLimit: { max: 8, timeWindow: "15 minutes" } } }, async (requisicao, resposta) => {
+  const parametro = z.object({ uuid: z.uuid() }).safeParse(requisicao.params);
+  if (!parametro.success) return resposta.code(400).send({ mensagem: "Protocolo de auditoria inválido." });
+  const confirmacao = await validarConfirmacaoAdministrativa(requisicao, resposta, "EXCLUIR DEFINITIVAMENTE");
+  if (!confirmacao || resposta.sent) return;
+  const cliente = await banco.connect();
+  try {
+    await cliente.query("BEGIN");
+    await cliente.query("SELECT pg_advisory_xact_lock(hashtextextended('limpeza-administrativa',0))");
+    const evento = await cliente.query<{ uuid: string; acao: string; entidade: string; entidade_uuid: string | null; criado_em: string }>(
+      "SELECT uuid,acao,entidade,entidade_uuid,criado_em FROM auditoria WHERE uuid=$1 FOR UPDATE",
+      [parametro.data.uuid],
+    );
+    if (!evento.rows[0]) {
+      await cliente.query("ROLLBACK");
+      return resposta.code(404).send({ mensagem: "Evento de auditoria não encontrado." });
+    }
+    await cliente.query("SELECT set_config('reciclabelo.limpeza_administrativa','autorizada',TRUE)");
+    await cliente.query("DELETE FROM auditoria WHERE uuid=$1", [parametro.data.uuid]);
+    await registrarLimpezaAdministrativa(cliente, confirmacao.administradorUuid, "excluir_evento_auditoria", confirmacao.motivo, { evento: evento.rows[0] }, requisicao.ip, parametro.data.uuid);
+    await cliente.query("COMMIT");
+    return { removido: true };
+  } catch (erro) { await cliente.query("ROLLBACK"); throw erro; } finally { cliente.release(); }
+});
+
+aplicacao.delete("/api/administrador/pesagens/:uuid", { config: { rateLimit: { max: 6, timeWindow: "15 minutes" } } }, async (requisicao, resposta) => {
+  const parametro = z.object({ uuid: z.uuid() }).safeParse(requisicao.params);
+  if (!parametro.success) return resposta.code(400).send({ mensagem: "Protocolo de pesagem inválido." });
+  const confirmacao = await validarConfirmacaoAdministrativa(requisicao, resposta, "EXCLUIR DEFINITIVAMENTE");
+  if (!confirmacao || resposta.sent) return;
+  const cliente = await banco.connect();
+  try {
+    await cliente.query("BEGIN");
+    await cliente.query("SELECT pg_advisory_xact_lock(hashtextextended('limpeza-administrativa',0))");
+    const registro = await cliente.query<{ uuid: string; codigo: string; catador_uuid: string; data_hora: string; material_uuid: string; caixa_uuid: string | null }>(`SELECT p.uuid,p.codigo,p.catador_uuid,p.data_hora,ip.material_uuid,mc.caixa_uuid
+      FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid
+      LEFT JOIN movimentacoes_caixa_catador mc ON mc.pesagem_uuid=p.uuid
+      WHERE p.uuid=$1 FOR UPDATE OF p,ip`, [parametro.data.uuid]);
+    const pesagem = registro.rows[0];
+    if (!pesagem) {
+      await cliente.query("ROLLBACK");
+      return resposta.code(404).send({ mensagem: "Pesagem não encontrada." });
+    }
+    await cliente.query("SELECT set_config('reciclabelo.limpeza_administrativa','autorizada',TRUE)");
+    const auditorias = await cliente.query("DELETE FROM auditoria WHERE entidade='pesagens' AND entidade_uuid=$1 RETURNING uuid", [pesagem.uuid]);
+    await cliente.query("DELETE FROM notificacoes WHERE entidade='pesagens' AND entidade_uuid=$1", [pesagem.uuid]);
+    await cliente.query("DELETE FROM movimentacoes_caixa_catador WHERE pesagem_uuid=$1", [pesagem.uuid]);
+    await cliente.query("DELETE FROM pesagens WHERE uuid=$1", [pesagem.uuid]);
+    let caixaRemovido = false;
+    if (pesagem.caixa_uuid) {
+      const movimentos = await cliente.query<{ total: number }>("SELECT count(*)::int AS total FROM movimentacoes_caixa_catador WHERE caixa_uuid=$1", [pesagem.caixa_uuid]);
+      if (Number(movimentos.rows[0]?.total ?? 0) === 0) {
+        await cliente.query("DELETE FROM notificacoes WHERE entidade='caixas_catador' AND entidade_uuid=$1", [pesagem.caixa_uuid]);
+        await cliente.query("DELETE FROM auditoria WHERE entidade='caixas_catador' AND entidade_uuid=$1", [pesagem.caixa_uuid]);
+        await cliente.query("DELETE FROM caixas_catador WHERE uuid=$1", [pesagem.caixa_uuid]);
+        caixaRemovido = true;
+      }
+    }
+    await recalcularPagamentoMetaDiaria(cliente, pesagem.catador_uuid, pesagem.material_uuid, pesagem.data_hora);
+    await registrarLimpezaAdministrativa(cliente, confirmacao.administradorUuid, "excluir_pesagem_definitivamente", confirmacao.motivo, {
+      codigo: pesagem.codigo, auditoriasRemovidas: auditorias.rowCount ?? 0, caixaVazioRemovido: caixaRemovido,
+    }, requisicao.ip, pesagem.uuid);
+    await cliente.query("COMMIT");
+    return { removido: true, codigo: pesagem.codigo };
+  } catch (erro) { await cliente.query("ROLLBACK"); throw erro; } finally { cliente.release(); }
+});
+
+aplicacao.delete("/api/administrador/dados-operacionais/dia/:data", { config: { rateLimit: { max: 4, timeWindow: "30 minutes" } } }, async (requisicao, resposta) => {
+  const parametro = z.object({ data: z.iso.date() }).safeParse(requisicao.params);
+  if (!parametro.success) return resposta.code(400).send({ mensagem: "Data operacional inválida." });
+  const confirmacao = await validarConfirmacaoAdministrativa(requisicao, resposta, "EXCLUIR DEFINITIVAMENTE");
+  if (!confirmacao || resposta.sent) return;
+  const cliente = await banco.connect();
+  try {
+    await cliente.query("BEGIN");
+    await cliente.query("SELECT pg_advisory_xact_lock(hashtextextended('limpeza-administrativa',0))");
+    await cliente.query("LOCK TABLE caixas_catador,pesagens,itens_pesagem,movimentacoes_caixa_catador,auditoria,notificacoes IN ACCESS EXCLUSIVE MODE");
+    const pesagens = await cliente.query<{ uuid: string; catador_uuid: string }>(`SELECT uuid,catador_uuid FROM pesagens
+      WHERE (data_hora AT TIME ZONE 'America/Bahia')::date=$1::date FOR UPDATE`, [parametro.data.data]);
+    if (!pesagens.rowCount) {
+      await cliente.query("ROLLBACK");
+      return resposta.code(404).send({ mensagem: "Não há dados operacionais nessa data." });
+    }
+    const caixas = await cliente.query<{ uuid: string; catador_uuid: string }>("SELECT uuid,catador_uuid FROM caixas_catador WHERE data_caixa=$1::date FOR UPDATE", [parametro.data.data]);
+    const pesagensUuids = pesagens.rows.map((item) => item.uuid);
+    const caixasUuids = caixas.rows.map((item) => item.uuid);
+    await cliente.query("SELECT set_config('reciclabelo.limpeza_administrativa','autorizada',TRUE)");
+    const auditorias = await cliente.query(`DELETE FROM auditoria WHERE
+      (entidade='pesagens' AND entidade_uuid=ANY($1::uuid[])) OR
+      (entidade='caixas_catador' AND entidade_uuid=ANY($2::uuid[])) RETURNING uuid`, [pesagensUuids, caixasUuids]);
+    await cliente.query(`DELETE FROM notificacoes WHERE
+      (entidade='pesagens' AND entidade_uuid=ANY($1::uuid[])) OR
+      (entidade='caixas_catador' AND entidade_uuid=ANY($2::uuid[]))`, [pesagensUuids, caixasUuids]);
+    await cliente.query("DELETE FROM movimentacoes_caixa_catador WHERE pesagem_uuid=ANY($1::uuid[])", [pesagensUuids]);
+    await cliente.query("DELETE FROM pesagens WHERE uuid=ANY($1::uuid[])", [pesagensUuids]);
+    await cliente.query("DELETE FROM caixas_catador WHERE uuid=ANY($1::uuid[])", [caixasUuids]);
+    for (const catadorUuid of new Set(pesagens.rows.map((item) => item.catador_uuid))) await recalcularMetasGeraisCatador(cliente, catadorUuid);
+    const contagens = { pesagens: pesagens.rowCount ?? 0, caixas: caixas.rowCount ?? 0, auditorias: auditorias.rowCount ?? 0 };
+    await registrarLimpezaAdministrativa(cliente, confirmacao.administradorUuid, "excluir_dia_operacional", confirmacao.motivo, { data: parametro.data.data, ...contagens }, requisicao.ip);
+    await cliente.query("COMMIT");
+    return { removido: true, contagens };
+  } catch (erro) { await cliente.query("ROLLBACK"); throw erro; } finally { cliente.release(); }
+});
+
+aplicacao.delete("/api/administrador/dados-operacionais", { config: { rateLimit: { max: 2, timeWindow: "1 hour" } } }, async (requisicao, resposta) => {
+  const confirmacao = await validarConfirmacaoAdministrativa(requisicao, resposta, "LIMPAR DADOS DE TESTE");
+  if (!confirmacao || resposta.sent) return;
+  const cliente = await banco.connect();
+  try {
+    await cliente.query("BEGIN");
+    await cliente.query("SELECT pg_advisory_xact_lock(hashtextextended('limpeza-administrativa',0))");
+    await cliente.query("LOCK TABLE pagamentos_catador,itens_pagamento_catador,caixas_catador,pesagens,itens_pesagem,movimentacoes_caixa_catador,auditoria,notificacoes IN ACCESS EXCLUSIVE MODE");
+    const contagensResultado = await cliente.query<{ pesagens: number; pagamentos: number; caixas: number; movimentacoes: number; auditorias: number }>(`SELECT
+      (SELECT count(*)::int FROM pesagens) AS pesagens,
+      (SELECT count(*)::int FROM pagamentos_catador) AS pagamentos,
+      (SELECT count(*)::int FROM caixas_catador) AS caixas,
+      (SELECT count(*)::int FROM movimentacoes_caixa_catador) AS movimentacoes,
+      (SELECT count(*)::int FROM auditoria) AS auditorias`);
+    const contagens = contagensResultado.rows[0]!;
+    await cliente.query("SELECT set_config('reciclabelo.limpeza_administrativa','autorizada',TRUE)");
+    await cliente.query("DELETE FROM notificacoes WHERE entidade IN ('pesagens','caixas_catador') OR tipo='pagamento'");
+    await cliente.query("DELETE FROM itens_pagamento_catador");
+    await cliente.query("DELETE FROM pagamentos_catador");
+    await cliente.query("DELETE FROM movimentacoes_caixa_catador");
+    await cliente.query("DELETE FROM pesagens");
+    await cliente.query("DELETE FROM caixas_catador");
+    await cliente.query("DELETE FROM auditoria");
+    await registrarLimpezaAdministrativa(cliente, confirmacao.administradorUuid, "limpar_dados_operacionais", confirmacao.motivo, contagens, requisicao.ip);
+    await cliente.query("COMMIT");
+    return {
+      removido: true,
+      contagens,
+      preservados: ["catadores", "cooperativas", "usuarios", "permissoes", "materiais", "responsaveis_pesagem", "pontos_apoio", "configuracoes"],
+    };
+  } catch (erro) { await cliente.query("ROLLBACK"); throw erro; } finally { cliente.release(); }
+});
+
 const esquemaSenhaSegura = z.string().min(12).max(128)
   .refine((senha) => /[a-z]/.test(senha) && /[A-Z]/.test(senha) && /\d/.test(senha) && /[^A-Za-z0-9]/.test(senha), "Use letra minúscula, maiúscula, número e símbolo.");
 const esquemaPermissoes = z.array(z.enum(chavesPermissao)).min(1).max(chavesPermissao.length)
   .refine((permissoes) => new Set(permissoes).size === permissoes.length, "Não repita permissões.")
   .superRefine((permissoes, contexto) => {
     const dependencias: Partial<Record<PermissaoUsuario, PermissaoUsuario>> = {
-      catadores_cadastrar: "catadores_visualizar", catadores_editar: "catadores_visualizar", catadores_excluir: "catadores_visualizar", catadores_gerenciar_caixa: "catadores_visualizar",
+      catadores_cadastrar: "catadores_visualizar", catadores_editar: "catadores_visualizar", catadores_excluir: "catadores_visualizar", catadores_gerenciar_caixa: "catadores_visualizar", catadores_pagar: "catadores_visualizar",
       cooperativas_cadastrar: "cooperativas_visualizar", cooperativas_editar: "cooperativas_visualizar", cooperativas_excluir: "cooperativas_visualizar",
       pesagens_editar: "relatorios_visualizar", pesagens_excluir: "relatorios_visualizar",
     };
@@ -631,7 +815,7 @@ aplicacao.get("/api/painel", async (requisicao) => {
       GROUP BY p.catador_uuid,ip.material_uuid HAVING max(ip.meta_diaria)>0 AND sum(ip.peso) >= max(ip.meta_diaria)
     ) meta) AS catadores_meta_atingida,
     coalesce(sum(p.peso_total), 0)::float8 AS total_coletado,
-    coalesce(sum(p.valor_total), 0)::float8 AS valor_total_pagar,
+    coalesce(sum(greatest(p.valor_total-coalesce((SELECT sum(ipc.valor) FROM itens_pagamento_catador ipc WHERE ipc.pesagem_uuid=p.uuid),0),0)), 0)::float8 AS valor_total_pagar,
     count(p.uuid)::int AS coletas_realizadas,
     coalesce(sum(p.peso_total) / nullif(count(DISTINCT p.catador_uuid), 0), 0)::float8 AS media_por_catador
     FROM pesagens p WHERE p.status = 'concluida' AND p.excluida_em IS NULL
@@ -641,9 +825,10 @@ aplicacao.get("/api/painel", async (requisicao) => {
     LEFT JOIN pesagens p ON p.status='concluida' AND p.excluida_em IS NULL AND p.data_hora >= dia AND p.data_hora < dia + interval '1 day'
     GROUP BY dia ORDER BY dia`);
   const atividades = await banco.query(`SELECT a.uuid,a.acao,a.entidade,a.criado_em,a.dados,
-      p.codigo,p.peso_total::float8,p.valor_total::float8,p.status,p.excluida_em,
-      c.uuid AS catador_uuid,coalesce(c.codigo,a.dados->>'codigo') AS codigo_catador,
-      coalesce(c.nome_completo,CASE WHEN a.acao='exclusao_definitiva' THEN 'Cadastro de catador excluído' END) AS catador,
+      coalesce(p.codigo,pc.codigo) AS codigo,p.peso_total::float8,coalesce(p.valor_total,pc.valor)::float8 AS valor_total,
+      coalesce(p.status::text,CASE WHEN pc.uuid IS NOT NULL THEN 'pago' END) AS status,p.excluida_em,
+      c.uuid AS catador_uuid,coalesce(c.codigo,pc.codigo_catador,a.dados->>'codigo') AS codigo_catador,
+      coalesce(c.nome_completo,pc.nome_catador,CASE WHEN a.acao='exclusao_definitiva' THEN 'Cadastro de catador excluído' END) AS catador,
       EXISTS(SELECT 1 FROM arquivos_catador ar WHERE ar.catador_uuid=c.uuid AND ar.tipo='foto_rosto') AS tem_foto,
       (SELECT ct.valor FROM contatos_catador ct WHERE ct.catador_uuid=c.uuid ORDER BY ct.principal DESC,ct.criado_em LIMIT 1) AS contato_catador,
       concat_ws(', ',ec.logradouro,ec.numero,ec.bairro,ec.cidade,ec.estado) AS endereco_catador,
@@ -656,8 +841,9 @@ aplicacao.get("/api/painel", async (requisicao) => {
       coalesce(a.dados->>'motivo',cx.motivo_reabertura) AS motivo
     FROM auditoria a
     LEFT JOIN pesagens p ON a.entidade='pesagens' AND p.uuid=a.entidade_uuid
+    LEFT JOIN pagamentos_catador pc ON a.entidade='pagamentos_catador' AND pc.uuid=a.entidade_uuid
     LEFT JOIN caixas_catador cx ON a.entidade='caixas_catador' AND cx.uuid=a.entidade_uuid
-    LEFT JOIN catadores c ON c.uuid=coalesce(p.catador_uuid,cx.catador_uuid,CASE WHEN a.entidade='catadores' THEN a.entidade_uuid END)
+    LEFT JOIN catadores c ON c.uuid=coalesce(p.catador_uuid,pc.catador_uuid,cx.catador_uuid,CASE WHEN a.entidade='catadores' THEN a.entidade_uuid END)
     LEFT JOIN enderecos_catador ec ON ec.catador_uuid=c.uuid
     LEFT JOIN cooperativas co_catador ON co_catador.uuid=c.cooperativa_uuid
     LEFT JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid
@@ -712,7 +898,7 @@ aplicacao.get("/api/catadores", async (requisicao) => {
   return { dados: rows, total: total.rows[0]?.total ?? 0, limite: consulta.limite, deslocamento: consulta.deslocamento };
 });
 
-aplicacao.get("/api/catadores/exportar", { config: { rateLimit: { max: 3, timeWindow: "1 hour" } } }, async (requisicao, resposta) => {
+aplicacao.get("/api/catadores/exportar", { config: { rateLimit: { max: 12, timeWindow: "10 minutes" } } }, async (requisicao, resposta) => {
   const resultado = await banco.query<CatadorParaExportacao>(`SELECT
       c.uuid,c.codigo,c.nome_completo,c.apelido,c.genero,c.raca_cor,c.data_nascimento,c.cpf,c.status,c.criado_em,c.atualizado_em,
       co.nome AS cooperativa,co.nome_responsavel AS responsavel_cooperativa,
@@ -760,12 +946,15 @@ aplicacao.get("/api/catadores/:uuid/perfil", async (requisicao, resposta) => {
   const catador = await banco.query(`SELECT c.*,co.nome AS cooperativa,
       coalesce((SELECT json_agg(json_build_object('tipo',ct.tipo,'valor',ct.valor,'principal',ct.principal) ORDER BY ct.criado_em) FROM contatos_catador ct WHERE ct.catador_uuid=c.uuid),'[]'::json) AS contatos,
       (SELECT row_to_json(e) FROM (SELECT cep,logradouro,numero,complemento,bairro,cidade,estado,referencia FROM enderecos_catador WHERE catador_uuid=c.uuid) e) AS endereco,
-      coalesce((SELECT json_agg(json_build_object('tipo',cf.tipo,'tipo_chave_pix',cf.tipo_chave_pix,'chave_pix',cf.chave_pix,'banco',cf.banco,'agencia',cf.agencia,'numero_conta',cf.numero_conta,'tipo_conta',cf.tipo_conta,'de_terceiro',cf.de_terceiro,'nome_titular',cf.nome_titular,'cpf_titular',cf.cpf_titular,'relacao_titular',cf.relacao_titular)) FROM contas_financeiras_catador cf WHERE cf.catador_uuid=c.uuid AND cf.ativo),'[]'::json) AS contas_financeiras,
+      coalesce((SELECT json_agg(json_build_object('uuid',cf.uuid,'tipo',cf.tipo,'tipo_chave_pix',cf.tipo_chave_pix,'chave_pix',cf.chave_pix,'banco',cf.banco,'agencia',cf.agencia,'numero_conta',cf.numero_conta,'tipo_conta',cf.tipo_conta,'de_terceiro',cf.de_terceiro,'nome_titular',cf.nome_titular,'cpf_titular',cf.cpf_titular,'relacao_titular',cf.relacao_titular)) FROM contas_financeiras_catador cf WHERE cf.catador_uuid=c.uuid AND cf.ativo),'[]'::json) AS contas_financeiras,
       EXISTS(SELECT 1 FROM arquivos_catador ar WHERE ar.catador_uuid=c.uuid AND ar.tipo='foto_rosto') AS tem_foto
     FROM catadores c LEFT JOIN cooperativas co ON co.uuid=c.cooperativa_uuid WHERE c.uuid=$1`, [uuid]);
   if (!catador.rows[0]) return resposta.code(404).send({ mensagem: "Catador não encontrado." });
-  const resumo = await banco.query(`SELECT coalesce(sum(p.peso_total),0)::float8 AS peso_total,coalesce(sum(p.valor_total),0)::float8 AS ganho_total,count(p.uuid)::int AS pesagens
-    FROM pesagens p WHERE p.catador_uuid=$1 AND p.status='concluida' AND p.excluida_em IS NULL`, [uuid]);
+  const resumo = await banco.query(`SELECT producao.peso_total,producao.ganho_total,producao.pesagens,
+      pagamentos.valor_pago,greatest(producao.ganho_total-pagamentos.valor_pago,0)::float8 AS saldo_pendente
+    FROM (SELECT coalesce(sum(p.peso_total),0)::float8 AS peso_total,coalesce(sum(p.valor_total),0)::float8 AS ganho_total,count(p.uuid)::int AS pesagens
+      FROM pesagens p WHERE p.catador_uuid=$1 AND p.status='concluida' AND p.excluida_em IS NULL) producao
+    CROSS JOIN (SELECT coalesce(sum(pc.valor),0)::float8 AS valor_pago FROM pagamentos_catador pc WHERE pc.catador_uuid=$1) pagamentos`, [uuid]);
   const materiais = await banco.query(`SELECT m.uuid,m.nome,coalesce(sum(ip.peso),0)::float8 AS peso_total,
       coalesce(sum(p.valor_total),0)::float8 AS ganho_total,count(*)::int AS pesagens
     FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN materiais m ON m.uuid=ip.material_uuid
@@ -798,7 +987,99 @@ aplicacao.get("/api/catadores/:uuid/perfil", async (requisicao, resposta) => {
   const historico = await banco.query(`SELECT p.uuid,p.codigo,p.data_hora,p.status,p.peso_total::float8,p.valor_total::float8,p.excluida_em,ip.contabiliza_meta,m.nome AS material,pa.nome AS ponto_apoio,co.nome AS cooperativa,coalesce(rp.nome,p.responsavel_outro) AS responsavel
     FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN materiais m ON m.uuid=ip.material_uuid JOIN pontos_apoio pa ON pa.uuid=p.ponto_apoio_uuid LEFT JOIN cooperativas co ON co.uuid=p.cooperativa_uuid LEFT JOIN responsaveis_pesagem rp ON rp.uuid=p.responsavel_pesagem_uuid
     WHERE p.catador_uuid=$1 ORDER BY p.data_hora DESC LIMIT 100`, [uuid]);
-  return { catador: catador.rows[0], resumo: resumo.rows[0], materiais: materiais.rows, metas: metas.rows, caixas: caixas.rows, historico: historico.rows };
+  const pagamentos = await banco.query(`SELECT pc.uuid,pc.codigo,pc.valor::float8,pc.tipo,pc.observacao,pc.pago_em,
+      u.nome AS pagador,u.email AS pagador_email,pc.dados_recebimento,
+      coalesce(json_agg(json_build_object('codigo_pesagem',ipc.codigo_pesagem,'material',ipc.material,'data_hora',ipc.data_hora,'peso',ipc.peso::float8,'valor',ipc.valor::float8) ORDER BY ipc.data_hora,ipc.codigo_pesagem) FILTER (WHERE ipc.uuid IS NOT NULL),'[]'::json) AS itens
+    FROM pagamentos_catador pc JOIN usuarios u ON u.uuid=pc.pagador_uuid
+    LEFT JOIN itens_pagamento_catador ipc ON ipc.pagamento_uuid=pc.uuid
+    WHERE pc.catador_uuid=$1 GROUP BY pc.uuid,u.nome,u.email ORDER BY pc.pago_em DESC LIMIT 100`, [uuid]);
+  return { catador: catador.rows[0], resumo: resumo.rows[0], materiais: materiais.rows, metas: metas.rows, caixas: caixas.rows, historico: historico.rows, pagamentos: pagamentos.rows };
+});
+
+const esquemaPagamentoCatador = z.object({
+  valor: z.number().positive().max(999999999.99).refine((valor) => Math.round(valor * 100) / 100 === valor, "Use no máximo duas casas decimais."),
+  tipo: z.enum(["pix", "dinheiro", "transferencia_bancaria", "outro"]),
+  contaFinanceiraUuid: z.uuid().optional(),
+  observacao: z.string().trim().max(1000).optional(),
+  chaveIdempotencia: z.uuid(),
+}).strict();
+
+async function buscarReciboPagamento(executor: ExecutorSql, pagamentoUuid: string) {
+  const recibo = await executor.query(`SELECT pc.uuid,pc.codigo,pc.codigo_catador,pc.nome_catador,pc.cpf_catador,pc.cooperativa_catador,
+      pc.valor::float8,pc.tipo,pc.dados_recebimento,pc.observacao,pc.pago_em,u.nome AS pagador,u.email AS pagador_email,
+      coalesce(json_agg(json_build_object('codigo_pesagem',ipc.codigo_pesagem,'material',ipc.material,'data_hora',ipc.data_hora,'peso',ipc.peso::float8,'valor',ipc.valor::float8) ORDER BY ipc.data_hora,ipc.codigo_pesagem) FILTER (WHERE ipc.uuid IS NOT NULL),'[]'::json) AS itens
+    FROM pagamentos_catador pc JOIN usuarios u ON u.uuid=pc.pagador_uuid
+    LEFT JOIN itens_pagamento_catador ipc ON ipc.pagamento_uuid=pc.uuid
+    WHERE pc.uuid=$1 GROUP BY pc.uuid,u.nome,u.email`, [pagamentoUuid]);
+  return recibo.rows[0];
+}
+
+aplicacao.post("/api/catadores/:uuid/pagamentos", { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (requisicao, resposta) => {
+  const catadorUuid = z.uuid().parse((requisicao.params as { uuid: string }).uuid);
+  const entrada = esquemaPagamentoCatador.safeParse(requisicao.body);
+  if (!entrada.success) return resposta.code(400).send({ mensagem: "Revise o valor e a forma do pagamento.", detalhes: z.treeifyError(entrada.error) });
+  const cliente = await banco.connect();
+  try {
+    await cliente.query("BEGIN");
+    await cliente.query("SELECT pg_advisory_xact_lock(hashtextextended('pagamento-catador:' || $1,0))", [catadorUuid]);
+    const repetido = await cliente.query<{ uuid: string; catador_uuid: string; pagador_uuid: string }>("SELECT uuid,catador_uuid,pagador_uuid FROM pagamentos_catador WHERE chave_idempotencia=$1", [entrada.data.chaveIdempotencia]);
+    if (repetido.rows[0]) {
+      if (repetido.rows[0].catador_uuid !== catadorUuid || repetido.rows[0].pagador_uuid !== requisicao.user.usuarioUuid) {
+        await cliente.query("ROLLBACK");
+        return resposta.code(409).send({ mensagem: "Esta confirmação de pagamento já foi utilizada." });
+      }
+      const pagamento = await buscarReciboPagamento(cliente, repetido.rows[0].uuid);
+      await cliente.query("COMMIT");
+      return resposta.send({ pagamento, repetido: true });
+    }
+    const catador = await cliente.query<{ codigo: string; nome_completo: string; cpf: string | null; cooperativa: string | null }>(`SELECT c.codigo,c.nome_completo,c.cpf,co.nome AS cooperativa
+      FROM catadores c LEFT JOIN cooperativas co ON co.uuid=c.cooperativa_uuid WHERE c.uuid=$1 FOR SHARE OF c`, [catadorUuid]);
+    if (!catador.rows[0]) { await cliente.query("ROLLBACK"); return resposta.code(404).send({ mensagem: "Catador não encontrado." }); }
+    let dadosRecebimento: Record<string, unknown> | null = null;
+    if (entrada.data.contaFinanceiraUuid) {
+      const conta = await cliente.query(`SELECT uuid,tipo,tipo_chave_pix,chave_pix,banco,agencia,numero_conta,tipo_conta,de_terceiro,nome_titular,cpf_titular,relacao_titular
+        FROM contas_financeiras_catador WHERE uuid=$1 AND catador_uuid=$2 AND ativo=TRUE`, [entrada.data.contaFinanceiraUuid, catadorUuid]);
+      if (!conta.rows[0]) { await cliente.query("ROLLBACK"); return resposta.code(400).send({ mensagem: "Os dados de recebimento selecionados não pertencem a este catador." }); }
+      const tipoContaEsperado = entrada.data.tipo === "pix" ? "pix" : entrada.data.tipo === "transferencia_bancaria" ? "conta_bancaria" : null;
+      if (tipoContaEsperado && conta.rows[0].tipo !== tipoContaEsperado) { await cliente.query("ROLLBACK"); return resposta.code(400).send({ mensagem: "Os dados de recebimento não correspondem à forma de pagamento escolhida." }); }
+      dadosRecebimento = conta.rows[0];
+    }
+    const pesagens = await cliente.query<{ uuid: string; codigo: string; data_hora: string; peso_total: number; valor_total: number; material: string; valor_pago: number }>(`SELECT p.uuid,p.codigo,p.data_hora,p.peso_total::float8,p.valor_total::float8,m.nome AS material,
+        coalesce((SELECT sum(ipc.valor) FROM itens_pagamento_catador ipc WHERE ipc.pesagem_uuid=p.uuid),0)::float8 AS valor_pago
+      FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN materiais m ON m.uuid=ip.material_uuid
+      WHERE p.catador_uuid=$1 AND p.status='concluida' AND p.excluida_em IS NULL AND p.valor_total>0
+        AND p.valor_total>coalesce((SELECT sum(ipc.valor) FROM itens_pagamento_catador ipc WHERE ipc.pesagem_uuid=p.uuid),0)
+      ORDER BY p.data_hora,p.criado_em,p.uuid FOR UPDATE OF p`, [catadorUuid]);
+    const saldoCentavos = pesagens.rows.reduce((total, item) => total + Math.max(0, Math.round((Number(item.valor_total) - Number(item.valor_pago)) * 100)), 0);
+    const valorCentavos = Math.round(entrada.data.valor * 100);
+    if (valorCentavos > saldoCentavos) {
+      await cliente.query("ROLLBACK");
+      return resposta.code(409).send({ mensagem: `O valor excede o saldo pendente de ${(saldoCentavos / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}. Atualize a ficha e confira novamente.` });
+    }
+    const pagamentoUuid = randomUUID();
+    const codigoPagamento = `PAG-${pagamentoUuid.slice(0, 8).toUpperCase()}`;
+    await cliente.query(`INSERT INTO pagamentos_catador (uuid,codigo,chave_idempotencia,catador_uuid,codigo_catador,nome_catador,cpf_catador,cooperativa_catador,valor,tipo,conta_financeira_uuid,dados_recebimento,observacao,pagador_uuid)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14)`, [pagamentoUuid, codigoPagamento, entrada.data.chaveIdempotencia, catadorUuid, catador.rows[0].codigo, catador.rows[0].nome_completo, catador.rows[0].cpf, catador.rows[0].cooperativa, entrada.data.valor, entrada.data.tipo, entrada.data.contaFinanceiraUuid ?? null, dadosRecebimento ? JSON.stringify(dadosRecebimento) : null, entrada.data.observacao || null, requisicao.user.usuarioUuid]);
+    let restanteCentavos = valorCentavos;
+    for (const pesagem of pesagens.rows) {
+      if (restanteCentavos <= 0) break;
+      const disponivelCentavos = Math.max(0, Math.round((Number(pesagem.valor_total) - Number(pesagem.valor_pago)) * 100));
+      const alocadoCentavos = Math.min(disponivelCentavos, restanteCentavos);
+      if (alocadoCentavos <= 0) continue;
+      await cliente.query(`INSERT INTO itens_pagamento_catador (pagamento_uuid,pesagem_uuid,codigo_pesagem,material,data_hora,peso,valor)
+        VALUES ($1,$2,$3,$4,$5,$6,$7)`, [pagamentoUuid, pesagem.uuid, pesagem.codigo, pesagem.material, pesagem.data_hora, pesagem.peso_total, alocadoCentavos / 100]);
+      restanteCentavos -= alocadoCentavos;
+    }
+    await registrarAuditoria(cliente, requisicao.user.usuarioUuid, "pagamento", "pagamentos_catador", pagamentoUuid, { codigo: codigoPagamento, catadorUuid, codigoCatador: catador.rows[0].codigo, valor: entrada.data.valor, tipo: entrada.data.tipo }, requisicao.ip);
+    await criarNotificacao(cliente, requisicao.user.usuarioUuid, "pagamento", "Pagamento registrado", `${codigoPagamento}: ${catador.rows[0].nome_completo} recebeu ${entrada.data.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}.`, "catadores", catadorUuid);
+    const pagamento = await buscarReciboPagamento(cliente, pagamentoUuid);
+    await cliente.query("COMMIT");
+    return resposta.code(201).send({ pagamento });
+  } catch (erro) {
+    await cliente.query("ROLLBACK");
+    if ((erro as { code?: string }).code === "23505") return resposta.code(409).send({ mensagem: "Este pagamento já foi registrado. Atualize a ficha antes de tentar novamente." });
+    throw erro;
+  } finally { cliente.release(); }
 });
 
 const esquemaCooperativa = z.object({ nome: z.string().trim().min(2).max(160), nomeResponsavel: z.string().trim().min(2).max(160), telefone: z.string().trim().max(30).optional(), observacao: z.string().trim().max(1000).optional(), ativa: z.boolean().default(true) });
@@ -1002,8 +1283,9 @@ aplicacao.delete("/api/catadores/:uuid", async (requisicao, resposta) => {
       return resposta.code(404).send({ mensagem: "Catador não encontrado." });
     }
     chavesArquivos = (await cliente.query<{ chave_armazenamento: string }>("SELECT chave_armazenamento FROM arquivos_catador WHERE catador_uuid=$1", [uuid])).rows.map((arquivo) => arquivo.chave_armazenamento);
-    const totais = await cliente.query<{ pesagens: number; caixas: number; contatos: number }>(`SELECT
+    const totais = await cliente.query<{ pesagens: number; pagamentos: number; caixas: number; contatos: number }>(`SELECT
       (SELECT count(*)::int FROM pesagens WHERE catador_uuid=$1) AS pesagens,
+      (SELECT count(*)::int FROM pagamentos_catador WHERE catador_uuid=$1) AS pagamentos,
       (SELECT count(*)::int FROM caixas_catador WHERE catador_uuid=$1) AS caixas,
       (SELECT count(*)::int FROM contatos_catador WHERE catador_uuid=$1) AS contatos`, [uuid]);
     await cliente.query(`DELETE FROM notificacoes n WHERE
@@ -1013,7 +1295,11 @@ aplicacao.delete("/api/catadores/:uuid", async (requisicao, resposta) => {
     const auditoriasPreservadas = await cliente.query<{ total: number }>(`SELECT count(*)::int AS total FROM auditoria a WHERE
       (a.entidade='catadores' AND a.entidade_uuid=$1) OR
       (a.entidade='pesagens' AND a.entidade_uuid IN (SELECT p.uuid FROM pesagens p WHERE p.catador_uuid=$1)) OR
-      (a.entidade='caixas_catador' AND a.entidade_uuid IN (SELECT cx.uuid FROM caixas_catador cx WHERE cx.catador_uuid=$1))`, [uuid]);
+      (a.entidade='caixas_catador' AND a.entidade_uuid IN (SELECT cx.uuid FROM caixas_catador cx WHERE cx.catador_uuid=$1)) OR
+      (a.entidade='pagamentos_catador' AND a.dados->>'catadorUuid'=$1::text)`, [uuid]);
+    await cliente.query("SELECT set_config('reciclabelo.limpeza_administrativa','autorizada',TRUE)");
+    await cliente.query("DELETE FROM itens_pagamento_catador WHERE pagamento_uuid IN (SELECT uuid FROM pagamentos_catador WHERE catador_uuid=$1)", [uuid]);
+    await cliente.query("DELETE FROM pagamentos_catador WHERE catador_uuid=$1", [uuid]);
     await cliente.query("DELETE FROM movimentacoes_caixa_catador WHERE caixa_uuid IN (SELECT uuid FROM caixas_catador WHERE catador_uuid=$1) OR pesagem_uuid IN (SELECT uuid FROM pesagens WHERE catador_uuid=$1)", [uuid]);
     await cliente.query("DELETE FROM pesagens WHERE catador_uuid=$1", [uuid]);
     await cliente.query("DELETE FROM caixas_catador WHERE catador_uuid=$1", [uuid]);

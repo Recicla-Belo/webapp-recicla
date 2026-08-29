@@ -3,14 +3,15 @@
 /* eslint-disable jsx-a11y/label-has-associated-control, @next/next/no-img-element, react-hooks/set-state-in-effect -- controles compostos e carregamentos persistidos ao montar */
 
 import { useCallback, useEffect, useState, type ChangeEvent } from "react";
-import { Ban, CheckCircle2, KeyRound, Pencil, Plus, ShieldCheck, Target, Trash2, UserRound, X } from "lucide-react";
+import { Ban, CheckCircle2, DatabaseZap, KeyRound, Pencil, Plus, ShieldCheck, Target, Trash2, UserRound, X } from "lucide-react";
 import { requisitarApi, type AdministradorApi, type ConfiguracaoMetaGeralApi, type MaterialApi, type ResponsavelPesagemApi } from "@/app/dados/api";
 import { useIdentidadeVisual, type IdentidadeVisual } from "@/app/configuracao/identidade-visual";
 import { ModalConfirmacao } from "@/app/componentes/modal-confirmacao";
 import { Paginacao } from "@/app/componentes/paginacao";
 import { PainelUsuarios } from "@/app/componentes/painel-usuarios";
+import { ModalExclusaoAdministrativa } from "@/app/componentes/modal-exclusao-administrativa";
 
-type AbaConfiguracao = "materiais" | "responsaveis" | "identidade" | "usuarios" | "conta";
+type AbaConfiguracao = "materiais" | "responsaveis" | "identidade" | "usuarios" | "conta" | "limpeza";
 
 async function lerImagem(evento: ChangeEvent<HTMLInputElement>) {
   const arquivo = evento.target.files?.[0];
@@ -54,6 +55,10 @@ export function TelaConfiguracoes({ administrador, onAdministradorAtualizado }: 
   const [dadosConta, setDadosConta] = useState({ nome: administrador.nome, email: administrador.email, senhaAtual: "" });
   const [dadosSenha, setDadosSenha] = useState({ senhaAtual: "", novaSenha: "", confirmarSenha: "" });
   const [salvandoConta, setSalvandoConta] = useState(false);
+  const [modalLimpeza, setModalLimpeza] = useState(false);
+  const [limpandoDados, setLimpandoDados] = useState(false);
+  const [erroLimpeza, setErroLimpeza] = useState("");
+  const [resultadoLimpeza, setResultadoLimpeza] = useState("");
   const itensPorPagina = 6;
   const carregarMateriais = useCallback(async () => { try { const dados = await requisitarApi<{ dados: MaterialApi[] }>("/api/materiais"); setMateriais(dados.dados); setMateriaisMetaSelecionados(dados.dados.filter((material) => material.contabiliza_meta).map((material) => material.uuid)); setPaginaMateriais((paginaAtual) => Math.min(paginaAtual, Math.max(1, Math.ceil(dados.dados.length / itensPorPagina)))); } catch (erro) { setMensagem(erro instanceof Error ? erro.message : "Não foi possível carregar os materiais."); } }, []);
   const carregarResponsaveis = useCallback(async () => { try { const dados = await requisitarApi<{ dados: ResponsavelPesagemApi[] }>("/api/responsaveis-pesagem?incluirInativos=true"); setResponsaveis(dados.dados); setPaginaResponsaveis((paginaAtual) => Math.min(paginaAtual, Math.max(1, Math.ceil(dados.dados.length / itensPorPagina)))); } catch (erro) { setMensagem(erro instanceof Error ? erro.message : "Não foi possível carregar os responsáveis."); } }, []);
@@ -214,6 +219,17 @@ export function TelaConfiguracoes({ administrador, onAdministradorAtualizado }: 
     finally { setSalvandoConta(false); }
   }
 
+  async function limparDadosOperacionais(dadosConfirmacao: { senhaAtual: string; confirmacao: string; motivo: string }) {
+    if (!administrador.administrador) return;
+    setLimpandoDados(true); setErroLimpeza(""); setResultadoLimpeza("");
+    try {
+      const resultado = await requisitarApi<{ contagens: { pesagens: number; caixas: number; movimentacoes: number; auditorias: number } }>("/api/administrador/dados-operacionais", { method: "DELETE", body: JSON.stringify(dadosConfirmacao) });
+      setModalLimpeza(false);
+      setResultadoLimpeza(`Limpeza concluída: ${resultado.contagens.pesagens} pesagem(ns), ${resultado.contagens.caixas} caixa(s), ${resultado.contagens.movimentacoes} movimentação(ões) e ${resultado.contagens.auditorias} evento(s) removidos. Os cadastros foram preservados.`);
+    } catch (erro) { setErroLimpeza(erro instanceof Error ? erro.message : "Não foi possível limpar os dados operacionais."); }
+    finally { setLimpandoDados(false); }
+  }
+
   const materiaisPaginados = materiais.slice((paginaMateriais - 1) * itensPorPagina, paginaMateriais * itensPorPagina);
   const selecaoMateriaisAlterada = materiais.some((material) => materiaisMetaSelecionados.includes(material.uuid) !== material.contabiliza_meta);
   const responsaveisPaginados = responsaveis.slice((paginaResponsaveis - 1) * itensPorPagina, paginaResponsaveis * itensPorPagina);
@@ -225,10 +241,17 @@ export function TelaConfiguracoes({ administrador, onAdministradorAtualizado }: 
       {podeIdentidade && <button className={aba === "identidade" ? "ativo" : ""} onClick={() => setAba("identidade")} role="tab" aria-selected={aba === "identidade"}>Identidade visual</button>}
       {administrador.administrador && <button className={aba === "usuarios" ? "ativo" : ""} onClick={() => setAba("usuarios")} role="tab" aria-selected={aba === "usuarios"}>Usuários e permissões</button>}
       {administrador.administrador && <button className={aba === "conta" ? "ativo" : ""} onClick={() => { setAba("conta"); cancelarConta(); }} role="tab" aria-selected={aba === "conta"}>Conta do administrador</button>}
+      {administrador.administrador && <button className={aba === "limpeza" ? "ativo aba-perigosa" : "aba-perigosa"} onClick={() => { setAba("limpeza"); setErroLimpeza(""); }} role="tab" aria-selected={aba === "limpeza"}>Limpeza de dados</button>}
       {administrador.administrador && <button disabled title="Disponível em uma próxima etapa">Pontos de apoio</button>}
     </div>
 
-    {aba === "usuarios" ? <PainelUsuarios /> : aba === "conta" ? <section className="painel conta-administrador">
+    {aba === "limpeza" ? <section className="painel painel-limpeza-dados">
+      <header><span><DatabaseZap /></span><div><small>ZONA DE SEGURANÇA</small><h2>Limpar dados operacionais de teste</h2><p>Use esta função somente depois de conferir que os cadastros reais já estão corretos.</p></div></header>
+      <div className="escopo-limpeza"><section><h3>Será apagado definitivamente</h3><ul><li>Todas as pesagens e itens de pesagem</li><li>Todos os caixas individuais e movimentações</li><li>Toda a Atividade recente e o livro de auditoria visível</li><li>Notificações vinculadas a pesagens e caixas</li><li>Os valores usados nos indicadores do dashboard</li></ul></section><section className="preservado"><h3>Será preservado</h3><ul><li>Catadores, fotos, contatos, endereços e dados de pagamento</li><li>Cooperativas e associações</li><li>Usuários e permissões</li><li>Materiais, metas, responsáveis, pontos de apoio e identidade visual</li></ul></section></div>
+      <div className="indicadores-zerados"><strong>Após a limpeza, serão recalculados como zero:</strong><p>Total coletado · Valor total a pagar · Média por catador · Coletas realizadas · Catadores que bateram meta hoje.</p></div>
+      {resultadoLimpeza && <p className="mensagem-configuracao sucesso-limpeza" role="status">{resultadoLimpeza}</p>}
+      <button type="button" className="botao-perigo botao-limpeza-total" onClick={() => { setErroLimpeza(""); setModalLimpeza(true); }}><DatabaseZap /> Apagar todos os dados operacionais</button>
+    </section> : aba === "usuarios" ? <PainelUsuarios /> : aba === "conta" ? <section className="painel conta-administrador">
       <header className="cabecalho-conta"><span><ShieldCheck /></span><div><small>CONTA PROTEGIDA</small><h2>Administrador da plataforma</h2><p>Os campos permanecem bloqueados até você escolher o que deseja alterar.</p></div></header>
       <div className="resumo-conta"><div><small>Nome</small><strong>{administrador.nome}</strong></div><div><small>E-mail de acesso</small><strong>{administrador.email}</strong></div><div><small>Nível de acesso</small><strong>Administrador único</strong></div></div>
       {modoConta === "nenhum" ? <div className="acoes-conta"><button type="button" className="botao-secundario" onClick={() => { setModoConta("dados"); setMensagem(""); }}><UserRound /> Alterar nome ou e-mail</button><button type="button" className="botao-secundario" onClick={() => { setModoConta("senha"); setMensagem(""); }}><KeyRound /> Alterar senha</button></div> : <form className="formulario-conta" onSubmit={(evento) => evento.preventDefault()}>
@@ -287,6 +310,7 @@ export function TelaConfiguracoes({ administrador, onAdministradorAtualizado }: 
 
     {modal && <div className="sobreposicao" role="dialog" aria-modal="true" aria-labelledby="titulo-material"><div className="modal pequeno"><header className="cabecalho-modal"><div><span>CONFIGURAÇÃO</span><h2 id="titulo-material">{materialEdicao ? "Editar material" : "Novo material"}</h2><p>Pagamento e meta serão preservados em cada pesagem.</p></div><button onClick={() => setModal(false)} aria-label="Fechar">×</button></header><form className="formulario" onSubmit={(e) => e.preventDefault()}><div className="grade-formulario"><label className="campo campo-largo">Nome do material<input value={formMaterial.nome} onChange={(e) => setFormMaterial((f) => ({ ...f, nome: e.target.value }))} /></label><label className="campo">Tipo<select value={formMaterial.tipoMaterial} onChange={(e) => setFormMaterial((f) => ({ ...f, tipoMaterial: e.target.value }))}><option>Plástico</option><option>Metal</option><option>Papel</option><option>Vidro</option><option>Misto</option><option>Outro</option></select></label><label className="campo">Unidade<select value={formMaterial.unidade} onChange={(e) => setFormMaterial((f) => ({ ...f, unidade: e.target.value }))}><option>kg</option><option>unidade</option><option>fardo</option><option>litro</option></select></label><label className="campo">Quantidade de referência<input value={formMaterial.quantidadeReferencia} inputMode="decimal" onChange={(e) => setFormMaterial((f) => ({ ...f, quantidadeReferencia: e.target.value }))} /></label><label className="campo">Valor pago na referência<input value={formMaterial.valorReferencia} inputMode="decimal" onChange={(e) => setFormMaterial((f) => ({ ...f, valorReferencia: e.target.value }))} /></label><label className="campo campo-largo">Meta diária por catador<input value={formMaterial.metaDiaria} disabled={!formMaterial.validoParaMeta} inputMode="decimal" placeholder="Sem meta específica" onChange={(e) => setFormMaterial((f) => ({ ...f, metaDiaria: e.target.value }))} /><small className="dica">Deixe vazio ou informe 0 para usar apenas a meta geral, quando estiver ativa.</small></label></div><label className="interruptor compacto opcao-meta-material"><input type="checkbox" checked={formMaterial.validoParaMeta} onChange={(e) => setFormMaterial((f) => ({ ...f, validoParaMeta: e.target.checked, metaDiaria: e.target.checked ? f.metaDiaria : "" }))} /><span /><div><strong>Material válido para metas</strong><small>{formMaterial.validoParaMeta ? "Pode compor a meta geral ou a meta específica." : "Sempre será pago imediatamente e não aumentará nenhuma meta."}</small></div></label><label className="interruptor compacto"><input type="checkbox" checked={formMaterial.ativo} onChange={(e) => setFormMaterial((f) => ({ ...f, ativo: e.target.checked }))} /><span /><div><strong>Material ativo para novas pesagens</strong></div></label></form><footer className="rodape-modal"><button className="botao-secundario" onClick={() => setModal(false)}>Cancelar</button><button className="botao-primario" onClick={() => void salvarMaterial()}>Salvar material</button></footer></div></div>}
     {modalResponsavel && <div className="sobreposicao" role="dialog" aria-modal="true" aria-labelledby="titulo-responsavel"><div className="modal pequeno"><header className="cabecalho-modal"><div><span>EQUIPE DE PESAGEM</span><h2 id="titulo-responsavel">{responsavelEdicao ? "Editar responsável" : "Novo responsável"}</h2><p>O nome ativo aparecerá no formulário de pesagem e produção.</p></div><button onClick={() => setModalResponsavel(false)} aria-label="Fechar">×</button></header><form className="formulario" onSubmit={(e) => e.preventDefault()}><label className="campo">Nome completo<input value={formResponsavel.nome} onChange={(e) => setFormResponsavel((atual) => ({ ...atual, nome: e.target.value }))} /></label><label className="interruptor compacto"><input type="checkbox" checked={formResponsavel.ativo} onChange={(e) => setFormResponsavel((atual) => ({ ...atual, ativo: e.target.checked }))} /><span /><div><strong>Disponível para novas pesagens</strong></div></label>{mensagem && <p className="mensagem-configuracao" role="status">{mensagem}</p>}</form><footer className="rodape-modal"><button className="botao-secundario" onClick={() => setModalResponsavel(false)}>Cancelar</button><button className="botao-primario" onClick={() => void salvarResponsavel()} disabled={formResponsavel.nome.trim().length < 2}>Salvar responsável</button></footer></div></div>}
+    <ModalExclusaoAdministrativa aberto={modalLimpeza} titulo="Apagar todos os dados operacionais?" descricao="Esta limpeza zera os indicadores e remove definitivamente os dados de teste, sem excluir os cadastros reais." itensApagados={["Pesagens, itens e caixas individuais", "Atividade recente, relatórios e auditoria visível", "Movimentações e notificações operacionais", "Totais e metas atingidas calculados no dashboard"]} itensPreservados={["Catadores e todos os seus dados cadastrais", "Cooperativas e associações", "Usuários e permissões", "Materiais, metas, responsáveis, pontos de apoio e identidade visual"]} fraseConfirmacao="LIMPAR DADOS DE TESTE" processando={limpandoDados} erro={erroLimpeza} aoConfirmar={(dadosConfirmacao) => void limparDadosOperacionais(dadosConfirmacao)} aoFechar={() => { if (!limpandoDados) { setModalLimpeza(false); setErroLimpeza(""); } }} />
     <ModalConfirmacao aberto={Boolean(confirmacaoExclusao)} titulo={confirmacaoExclusao?.tipo === "material" ? `Excluir ${(confirmacaoExclusao.item as MaterialApi | undefined)?.nome}?` : `Excluir ${(confirmacaoExclusao?.item as ResponsavelPesagemApi | undefined)?.nome}?`} descricao={confirmacaoExclusao?.tipo === "material" ? "A exclusão só será permitida quando o material não possuir pesagens vinculadas." : "O cadastro será excluído definitivamente. Nas pesagens antigas, somente o nome do responsável continuará preservado para auditoria."} textoConfirmar="Confirmar exclusão" perigoso aoFechar={() => setConfirmacaoExclusao(null)} aoConfirmar={() => void confirmarExclusao()} />
   </section>;
 }

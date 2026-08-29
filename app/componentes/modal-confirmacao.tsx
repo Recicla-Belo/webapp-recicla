@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, X } from "lucide-react";
+import { AlertTriangle, LoaderCircle, X } from "lucide-react";
 
 type Propriedades = {
   aberto: boolean;
@@ -25,7 +25,7 @@ export function ModalConfirmacao({ aberto, titulo, descricao, textoConfirmar = "
     <div className="modal pequeno modal-confirmacao-generica">
       <header className="cabecalho-modal"><div><span>CONFIRMAÇÃO</span><h2 id="titulo-confirmacao-generica">{titulo}</h2><p>{descricao}</p></div><button type="button" onClick={aoFechar} aria-label="Fechar"><X /></button></header>
       <div className="corpo-confirmacao-generica"><AlertTriangle aria-hidden="true" />{rotuloCampo && <label className="campo">{rotuloCampo}<textarea value={valorCampo} onChange={(evento) => aoMudarCampo?.(evento.target.value)} placeholder={placeholderCampo} /></label>}</div>
-      <footer className="rodape-modal"><button type="button" className="botao-secundario" onClick={aoFechar} disabled={processando}>Cancelar</button><button type="button" className={perigoso ? "botao-perigo" : "botao-primario"} onClick={aoConfirmar} disabled={processando || campoInvalido}>{processando ? "Processando..." : textoConfirmar}</button></footer>
+      <footer className="rodape-modal"><button type="button" className="botao-secundario" onClick={aoFechar} disabled={processando}>Cancelar</button><button type="button" className={perigoso ? "botao-perigo" : "botao-primario"} onClick={aoConfirmar} disabled={processando || campoInvalido}>{processando ? <><LoaderCircle className="icone-carregando" /> Processando...</> : textoConfirmar}</button></footer>
     </div>
   </div>;
 }

@@ -28,7 +28,7 @@ export type CatadorParaExportacao = {
   apelido: string | null;
   genero: string | null;
   raca_cor: string | null;
-  data_nascimento: string | null;
+  data_nascimento: string | Date | null;
   cpf: string | null;
   status: "ativo" | "inativo";
   cooperativa: string | null;
@@ -82,9 +82,10 @@ function formatarCep(valor: string | null) {
   return numeros.length === 8 ? numeros.replace(/(\d{5})(\d{3})/, "$1-$2") : valor;
 }
 
-function dataSomenteDia(valor: string | null) {
+function dataSomenteDia(valor: string | Date | null) {
   if (!valor) return null;
-  const [ano, mes, dia] = valor.slice(0, 10).split("-").map(Number);
+  if (valor instanceof Date && !Number.isNaN(valor.getTime())) return new Date(valor.getFullYear(), valor.getMonth(), valor.getDate(), 12);
+  const [ano, mes, dia] = String(valor).slice(0, 10).split("-").map(Number);
   return ano && mes && dia ? new Date(ano, mes - 1, dia, 12) : null;
 }
 

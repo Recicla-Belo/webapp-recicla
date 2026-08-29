@@ -59,10 +59,16 @@ async function executar() {
   const perfilAdministrador = (await chamar("/api/administrador/perfil")).dados;
   assert.equal(perfilAdministrador.email, process.env.ADMIN_EMAIL);
   assert.equal(perfilAdministrador.perfil, "administrador");
+  const uuidInexistente = "00000000-0000-4000-8000-000000000000";
+  const confirmacaoDestrutivaInvalida = await fetch(`${urlApi}/api/administrador/auditoria/${uuidInexistente}`, { method: "DELETE", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ senhaAtual: process.env.ADMIN_SENHA, confirmacao: "CONFIRMAÇÃO ERRADA", motivo: "Teste de validação sem alteração" }) });
+  assert.equal(confirmacaoDestrutivaInvalida.status, 400);
+  const senhaDestrutivaInvalida = await fetch(`${urlApi}/api/administrador/auditoria/${uuidInexistente}`, { method: "DELETE", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ senhaAtual: "Senha-incorreta!123", confirmacao: "EXCLUIR DEFINITIVAMENTE", motivo: "Teste de validação sem alteração" }) });
+  assert.equal(senhaDestrutivaInvalida.status, 403);
   const catalogoPermissoes = (await chamar("/api/permissoes")).dados.dados;
   assert.ok(catalogoPermissoes.length >= 18);
   assert.ok(catalogoPermissoes.some((item) => item.chave === "cooperativas_editar"));
   assert.ok(catalogoPermissoes.some((item) => item.chave === "catadores_exportar"));
+  assert.ok(catalogoPermissoes.some((item) => item.chave === "catadores_pagar"));
 
   const materiaisAntesDaSelecao = (await chamar("/api/materiais")).dados.dados;
   const materiaisSelecionadosOriginais = materiaisAntesDaSelecao.filter((material) => material.contabiliza_meta).map((material) => material.uuid);
@@ -110,6 +116,8 @@ async function executar() {
     assert.equal(configuracaoBloqueada.status, 403);
     const selecaoMetaBloqueada = await fetch(`${urlApi}/api/materiais/participacao-meta`, { method: "PATCH", headers: { "content-type": "application/json", cookie: cookieRestrito }, body: JSON.stringify({ materiaisUuids: [] }) });
     assert.equal(selecaoMetaBloqueada.status, 403);
+    const limpezaAdministrativaBloqueada = await fetch(`${urlApi}/api/administrador/dados-operacionais`, { method: "DELETE", headers: { "content-type": "application/json", cookie: cookieRestrito }, body: JSON.stringify({ senhaAtual: senhaRestrita, confirmacao: "LIMPAR DADOS DE TESTE", motivo: "Tentativa sem permissão" }) });
+    assert.equal(limpezaAdministrativaBloqueada.status, 403);
     assert.equal((await fetch(`${urlApi}/api/catadores`, { headers: { cookie: cookieRestrito } })).status, 403);
     assert.equal((await fetch(`${urlApi}/api/catadores/exportar`, { headers: { cookie: cookieRestrito } })).status, 403);
     cookie = cookieAdministradorPermissoes;
@@ -434,6 +442,25 @@ async function executar() {
     assert.equal(Number(perfilMetaGeral.materiais.find((item) => item.uuid === materialUuid).ganho_total), 2);
     assert.equal(Number(perfilMetaGeral.materiais.find((item) => item.uuid === materialSemMetaUuid).ganho_total), 400);
     assert.equal(Number(perfilMetaGeral.materiais.find((item) => item.uuid === materialForaMetaUuid).ganho_total), 15);
+    assert.equal(Number(perfilMetaGeral.resumo.saldo_pendente), 417);
+    const chaveIdempotenciaPagamento = crypto.randomUUID();
+    const pagamento = (await chamar(`/api/catadores/${catadorMetaGeralUuid}/pagamentos`, { method: "POST", body: JSON.stringify({ valor: 417, tipo: "transferencia_bancaria", observacao: "Pagamento integrado temporário", chaveIdempotencia: chaveIdempotenciaPagamento }) })).dados.pagamento;
+    entidadesCriadas.add(pagamento.uuid);
+    assert.match(pagamento.codigo, /^PAG-[A-F0-9]{8}$/);
+    assert.equal(Number(pagamento.valor), 417);
+    assert.equal(pagamento.pagador_email, process.env.ADMIN_EMAIL);
+    assert.equal(pagamento.itens.reduce((total, item) => total + Number(item.valor), 0), 417);
+    const pagamentoRepetido = (await chamar(`/api/catadores/${catadorMetaGeralUuid}/pagamentos`, { method: "POST", body: JSON.stringify({ valor: 417, tipo: "transferencia_bancaria", observacao: "Pagamento integrado temporário", chaveIdempotencia: chaveIdempotenciaPagamento }) })).dados;
+    assert.equal(pagamentoRepetido.repetido, true);
+    assert.equal(pagamentoRepetido.pagamento.uuid, pagamento.uuid);
+    const perfilAposPagamento = (await chamar(`/api/catadores/${catadorMetaGeralUuid}/perfil`)).dados;
+    assert.equal(Number(perfilAposPagamento.resumo.valor_pago), 417);
+    assert.equal(Number(perfilAposPagamento.resumo.saldo_pendente), 0);
+    assert.equal(perfilAposPagamento.pagamentos[0].pagador_email, process.env.ADMIN_EMAIL);
+    await assert.rejects(
+      bancoTeste.query("UPDATE pagamentos_catador SET valor=1 WHERE uuid=$1", [pagamento.uuid]),
+      (erro) => erro?.code === "55000",
+    );
     const relatorioGeral = (await chamar(`/api/relatorios/pesagens?catadorUuid=${catadorMetaGeralUuid}&busca=${encodeURIComponent("Meta Ger")}&limite=10&deslocamento=0`)).dados;
     assert.equal(relatorioGeral.total, 7);
     assert.equal(relatorioGeral.dados.filter((item) => item.tipo_meta === "fora_meta").length, 2);
@@ -504,4 +531,4 @@ async function executar() {
 }
 
 await executar();
-console.log("Integração concluída: perfis de acesso, bloqueios de edição, conta administrativa, sessões, metas, caixa, auditoria, relatórios e notificações.");
+console.log("Integração concluída: perfis de acesso, pagamentos idempotentes, recibos, sessões, metas, caixa, auditoria, relatórios e notificações.");

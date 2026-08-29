@@ -80,7 +80,7 @@ export type ConfiguracaoMetaGeralApi = {
 
 export type PermissaoUsuario =
   | "painel_visualizar"
-  | "catadores_visualizar" | "catadores_cadastrar" | "catadores_editar" | "catadores_excluir" | "catadores_gerenciar_caixa" | "catadores_exportar"
+  | "catadores_visualizar" | "catadores_cadastrar" | "catadores_editar" | "catadores_excluir" | "catadores_gerenciar_caixa" | "catadores_exportar" | "catadores_pagar"
   | "cooperativas_visualizar" | "cooperativas_cadastrar" | "cooperativas_editar" | "cooperativas_excluir"
   | "pesagens_cadastrar" | "relatorios_visualizar" | "pesagens_editar" | "pesagens_excluir"
   | "materiais_gerenciar" | "responsaveis_gerenciar" | "metas_gerenciar" | "identidade_visual_gerenciar";

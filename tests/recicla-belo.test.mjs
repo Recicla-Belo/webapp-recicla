@@ -24,6 +24,12 @@ test("renderiza a experiência do Recicla Belô", async () => {
 });
 
 test("mantém ambiente, banco e instalação documentados", async () => {
+  const [migracaoLimpezaAdministrativa, modalExclusaoAdministrativa, migracaoPagamentos, modalPagamento] = await Promise.all([
+    readFile(new URL("../servidor/migracoes/021_limpeza_administrativa_controlada.sql", import.meta.url), "utf8"),
+    readFile(new URL("../app/componentes/modal-exclusao-administrativa.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../servidor/migracoes/022_pagamentos_catadores.sql", import.meta.url), "utf8"),
+    readFile(new URL("../app/componentes/modal-pagamento-catador.tsx", import.meta.url), "utf8"),
+  ]);
   const [migracaoPerfis, painelUsuarios, migracaoDescricaoMetas, migracaoRelatorios, migracaoExportacao, geradorExcel, pacoteServidor] = await Promise.all([
     readFile(new URL("../servidor/migracoes/016_perfis_acesso_usuarios.sql", import.meta.url), "utf8"),
     readFile(new URL("../app/componentes/painel-usuarios.tsx", import.meta.url), "utf8"),
@@ -90,10 +96,17 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(migracaoRelatorios, /CREATE OR REPLACE VIEW relatorio_resumo_diario/);
   assert.match(migracaoRelatorios, /CREATE TRIGGER auditoria_imutavel/);
   assert.match(migracaoExportacao, /catadores_exportar/);
+  assert.match(migracaoPagamentos, /catadores_pagar/);
+  assert.match(migracaoPagamentos, /CREATE TABLE IF NOT EXISTS pagamentos_catador/);
+  assert.match(migracaoPagamentos, /chave_idempotencia UUID NOT NULL UNIQUE/);
+  assert.match(migracaoPagamentos, /pagador_uuid UUID NOT NULL REFERENCES usuarios/);
+  assert.match(modalPagamento, /Confirmar e gerar recibo/);
+  assert.match(modalPagamento, /window\.print\(\)/);
   assert.match(geradorExcel, /Produção de crachás/);
   assert.match(geradorExcel, /Cadastro completo/);
   assert.match(geradorExcel, /Dados de pagamento/);
   assert.equal(JSON.parse(pacoteServidor).dependencies.exceljs, "4.4.0");
+  assert.equal(JSON.parse(pacoteServidor).overrides.exceljs.uuid, "11.1.1");
   assert.match(sqlCompleto, /perfil perfil_acesso_usuario/);
   assert.match(migracaoMateriaisMeta, /ALTER TABLE materiais[\s\S]*contabiliza_meta/);
   assert.match(migracaoMateriaisMeta, /ALTER TABLE itens_pesagem[\s\S]*contabiliza_meta/);
@@ -193,10 +206,28 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(telaCatadores, /acessos\.gerenciarCaixa/);
   assert.match(telaCatadores, /Exportar Excel/);
   assert.match(telaCatadores, /\/api\/catadores\/exportar/);
+  assert.match(telaCatadores, /acessos\.pagar/);
+  assert.match(telaCatadores, /Preparando Excel/);
   assert.match(servidor, /aplicacao\.get\("\/api\/catadores\/exportar"/);
+  assert.match(servidor, /aplicacao\.post\("\/api\/catadores\/:uuid\/pagamentos"/);
+  assert.match(servidor, /pg_advisory_xact_lock\(hashtextextended\('pagamento-catador:/);
   assert.match(servidor, /exportacao_excel/);
   assert.match(telaCooperativas, /acessos\.editar/);
-  assert.doesNotMatch(telaRelatorios, /method: "PUT"|method: "DELETE"/);
+  assert.match(telaRelatorios, /\/api\/administrador\/pesagens/);
+  assert.match(telaRelatorios, /\/api\/administrador\/auditoria/);
+  assert.match(telaRelatorios, /dados-operacionais\/dia/);
+  assert.match(telaRelatorios, /EXCLUIR DEFINITIVAMENTE/);
+  assert.match(painel, /\/api\/administrador\/auditoria/);
+  assert.match(telaConfiguracoes, /\/api\/administrador\/dados-operacionais/);
+  assert.match(telaConfiguracoes, /LIMPAR DADOS DE TESTE/);
+  assert.match(modalExclusaoAdministrativa, /Senha atual do administrador/);
+  assert.match(modalExclusaoAdministrativa, /Esta operação não pode ser desfeita/);
+  assert.match(migracaoLimpezaAdministrativa, /CREATE TABLE IF NOT EXISTS historico_limpezas_administrativas/);
+  assert.match(migracaoLimpezaAdministrativa, /reciclabelo\.limpeza_administrativa/);
+  assert.match(migracaoLimpezaAdministrativa, /historico_limpezas_imutavel/);
+  assert.match(servidor, /validarConfirmacaoAdministrativa/);
+  assert.match(servidor, /DELETE FROM movimentacoes_caixa_catador/);
+  assert.match(servidor, /preservados: \["catadores", "cooperativas", "usuarios", "permissoes"/);
   assert.match(telaConfiguracoes, /\/api\/administrador\/perfil/);
   assert.match(telaConfiguracoes, /\/api\/administrador\/senha/);
   assert.match(servidor, /alteracao_senha/);
@@ -236,7 +267,7 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(estilos, /titulo-cabecalho h1\{max-width:none;white-space:normal/);
   assert.match(telaCooperativas, /<Paginacao/);
   assert.match(telaCooperativas, /ModalConfirmacao/);
-  assert.match(telaRelatorios, /Histórico completo, somente leitura/);
+  assert.match(telaRelatorios, /Histórico completo e reproduzível/);
   assert.match(telaRelatorios, /Livro de auditoria/);
   assert.match(telaRelatorios, /Escolha as informações/);
   assert.match(telaRelatorios, /\/api\/relatorios\/exportar/);

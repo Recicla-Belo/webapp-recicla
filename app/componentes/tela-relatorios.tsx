@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Download, Eye, LockKeyhole, Search, ShieldCheck, X } from "lucide-react";
+import { Download, Eye, LockKeyhole, Search, ShieldCheck, Trash2, X } from "lucide-react";
 import { baixarArquivoApi, requisitarApi, type CooperativaApi, type MaterialApi } from "@/app/dados/api";
 import { Paginacao } from "@/app/componentes/paginacao";
+import { ModalExclusaoAdministrativa } from "@/app/componentes/modal-exclusao-administrativa";
 import { useTermoBusca } from "@/app/utilitarios/use-termo-busca";
 
 type AbaRelatorio = "resumo" | "pesagens" | "auditoria";
@@ -22,6 +23,7 @@ type PesagemRelatorio = {
 type ResumoDiario = { data_operacao: string; total_coletado: number; valor_total_pagar: number; media_por_catador: number; coletas_realizadas: number; catadores_atendidos: number; catadores_meta_atingida: number };
 type EventoAuditoria = { uuid: string; acao: string; entidade: string; entidade_uuid: string | null; dados: Record<string, unknown>; endereco_ip: string | null; criado_em: string; usuario: string | null; usuario_email: string | null };
 type OpcaoCampo = { chave: string; rotulo: string };
+type AlvoExclusao = { tipo: "dia"; item: ResumoDiario } | { tipo: "pesagem"; item: PesagemRelatorio } | { tipo: "auditoria"; item: EventoAuditoria };
 
 const hoje = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bahia" }).format(new Date());
 const inicioMes = () => `${hoje().slice(0, 8)}01`;
@@ -41,7 +43,7 @@ const camposExportacao: Record<AbaRelatorio, OpcaoCampo[]> = {
   auditoria: criarCampos([["protocolo", "Protocolo UUID"], ["criado_em", "Data e hora"], ["usuario", "Usuário"], ["usuario_email", "E-mail do usuário"], ["acao", "Ação"], ["entidade", "Entidade"], ["entidade_uuid", "UUID da entidade"], ["endereco_ip", "Endereço IP"], ["dados", "Dados completos do evento"]]),
 };
 
-export function TelaRelatorios() {
+export function TelaRelatorios({ administrador = false }: { administrador?: boolean }) {
   const [aba, setAba] = useState<AbaRelatorio>("resumo");
   const [inicio, setInicio] = useState(inicioMes);
   const [fim, setFim] = useState(hoje);
@@ -68,6 +70,9 @@ export function TelaRelatorios() {
   const [exportando, setExportando] = useState(false);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState("");
+  const [alvoExclusao, setAlvoExclusao] = useState<AlvoExclusao | null>(null);
+  const [excluindo, setExcluindo] = useState(false);
+  const [erroExclusao, setErroExclusao] = useState("");
   const termoBusca = useTermoBusca(busca);
 
   useEffect(() => {
@@ -136,9 +141,37 @@ export function TelaRelatorios() {
     finally { setExportando(false); }
   }
 
+  async function excluirRegistro(dadosConfirmacao: { senhaAtual: string; confirmacao: string; motivo: string }) {
+    if (!alvoExclusao || !administrador) return;
+    const caminho = alvoExclusao.tipo === "dia"
+      ? `/api/administrador/dados-operacionais/dia/${alvoExclusao.item.data_operacao}`
+      : alvoExclusao.tipo === "pesagem"
+        ? `/api/administrador/pesagens/${alvoExclusao.item.uuid}`
+        : `/api/administrador/auditoria/${alvoExclusao.item.uuid}`;
+    setExcluindo(true); setErroExclusao("");
+    try {
+      await requisitarApi(caminho, { method: "DELETE", body: JSON.stringify(dadosConfirmacao) });
+      setAlvoExclusao(null); setDetalhePesagem(null); setDetalheAuditoria(null);
+      if (total === 1 && pagina > 1) setPagina((paginaAtual) => paginaAtual - 1);
+      else await carregar();
+    } catch (falha) { setErroExclusao(falha instanceof Error ? falha.message : "Não foi possível apagar o registro."); }
+    finally { setExcluindo(false); }
+  }
+
+  const descricaoExclusao = alvoExclusao?.tipo === "dia"
+    ? `Todas as pesagens, caixas e movimentações de ${new Date(`${alvoExclusao.item.data_operacao}T12:00:00`).toLocaleDateString("pt-BR")} serão removidas.`
+    : alvoExclusao?.tipo === "pesagem"
+      ? `A pesagem ${alvoExclusao.item.codigo} e seus vínculos operacionais serão removidos fisicamente.`
+      : "Somente este evento será removido do livro de auditoria e da Atividade recente.";
+  const itensExclusao = alvoExclusao?.tipo === "dia"
+    ? [`${alvoExclusao.item.coletas_realizadas} pesagem(ns) do dia`, "Caixas individuais do dia", "Movimentações, notificações operacionais e eventos vinculados"]
+    : alvoExclusao?.tipo === "pesagem"
+      ? [`Pesagem ${alvoExclusao.item.codigo}`, `${alvoExclusao.item.catador} · ${alvoExclusao.item.material} · ${numero(alvoExclusao.item.peso_total)} ${alvoExclusao.item.unidade}`, "Movimentação de caixa, notificação e auditoria vinculadas"]
+      : [alvoExclusao ? `Evento ${alvoExclusao.item.uuid}` : "Evento selecionado"];
+
   return <section className="pagina-interna pagina-relatorios">
-    <div className="resumo-pagina"><div><h2>Relatórios e auditoria</h2><p>Histórico completo, somente leitura e reproduzível diretamente do PostgreSQL.</p></div><button type="button" className="botao-secundario" onClick={() => { setCamposSelecionados(camposExportacao[aba].map((campo) => campo.chave)); setExportacaoAberta(true); setErro(""); }}><Download /> Exportar informações</button></div>
-    <div className="aviso-relatorio-imutavel"><ShieldCheck /><div><strong>Registros protegidos</strong><p>Nada pode ser alterado nesta página. Correções operacionais geram novos eventos e preservam os valores anteriores no livro de auditoria.</p></div></div>
+    <div className="resumo-pagina"><div><h2>Relatórios e auditoria</h2><p>Histórico completo e reproduzível diretamente do PostgreSQL.</p></div><button type="button" className="botao-secundario" onClick={() => { setCamposSelecionados(camposExportacao[aba].map((campo) => campo.chave)); setExportacaoAberta(true); setErro(""); }}><Download /> Exportar informações</button></div>
+    <div className="aviso-relatorio-imutavel"><ShieldCheck /><div><strong>{administrador ? "Exclusão administrativa protegida" : "Registros protegidos"}</strong><p>{administrador ? "Os relatórios não permitem edição direta. Exclusões definitivas exigem motivo, frase de confirmação e a senha atual do administrador." : "Sua conta possui acesso somente para consulta e exportação destes registros."}</p></div></div>
     <nav className="abas-relatorios" aria-label="Tipos de relatório">{(["resumo", "pesagens", "auditoria"] as AbaRelatorio[]).map((item) => <button type="button" className={aba === item ? "ativo" : ""} onClick={() => mudarAba(item)} key={item}>{item === "resumo" ? "Resumo diário" : item === "pesagens" ? "Pesagens detalhadas" : "Livro de auditoria"}</button>)}</nav>
     {erro && <p className="mensagem-erro" role="alert">{erro}</p>}
     {aba === "pesagens" && <div className="grade-resumo-relatorio grade-resumo-completa"><article><span>KG</span><div><small>Peso no período</small><strong>{numero(totais.peso)} kg</strong></div></article><article><span>R$</span><div><small>Valor liberado</small><strong>{dinheiro(totais.valor)}</strong></div></article><article><span>№</span><div><small>Coletas concluídas</small><strong>{totais.coletas}</strong></div></article><article><span>CT</span><div><small>Catadores atendidos</small><strong>{totais.catadores}</strong></div></article><article><span>Ø</span><div><small>Média por catador</small><strong>{numero(totais.media)} kg</strong></div></article></div>}
@@ -157,27 +190,28 @@ export function TelaRelatorios() {
       </>}
     </div>
     {carregando ? <div className="painel estado-pagina" role="status">Carregando relatório...</div> : <>
-      {aba === "resumo" && <TabelaResumo dados={resumos} />}
-      {aba === "pesagens" && <TabelaPesagens dados={pesagens} aoDetalhar={setDetalhePesagem} />}
-      {aba === "auditoria" && <TabelaAuditoria dados={auditorias} aoDetalhar={setDetalheAuditoria} />}
+      {aba === "resumo" && <TabelaResumo dados={resumos} administrador={administrador} aoExcluir={(item) => { setErroExclusao(""); setAlvoExclusao({ tipo: "dia", item }); }} />}
+      {aba === "pesagens" && <TabelaPesagens dados={pesagens} administrador={administrador} aoDetalhar={setDetalhePesagem} aoExcluir={(item) => { setErroExclusao(""); setAlvoExclusao({ tipo: "pesagem", item }); }} />}
+      {aba === "auditoria" && <TabelaAuditoria dados={auditorias} administrador={administrador} aoDetalhar={setDetalheAuditoria} aoExcluir={(item) => { setErroExclusao(""); setAlvoExclusao({ tipo: "auditoria", item }); }} />}
       <Paginacao pagina={pagina} total={total} itensPorPagina={itensPorPagina} aoMudarPagina={setPagina} aoMudarQuantidade={(quantidade) => { setItensPorPagina(quantidade); setPagina(1); }} opcoesQuantidade={[5, 10, 20, 50]} rotulo={aba === "resumo" ? "dias" : aba === "pesagens" ? "pesagens" : "eventos"} />
     </>}
     {detalhePesagem && <ModalPesagem pesagem={detalhePesagem} aoFechar={() => setDetalhePesagem(null)} />}
     {detalheAuditoria && <ModalAuditoria evento={detalheAuditoria} aoFechar={() => setDetalheAuditoria(null)} />}
+    <ModalExclusaoAdministrativa aberto={Boolean(alvoExclusao)} titulo={alvoExclusao?.tipo === "dia" ? "Apagar todo o movimento deste dia?" : alvoExclusao?.tipo === "pesagem" ? "Apagar esta pesagem definitivamente?" : "Apagar este evento de auditoria?"} descricao={descricaoExclusao} itensApagados={itensExclusao} itensPreservados={["Catadores e suas fichas", "Cooperativas e associações", "Usuários e permissões", "Materiais e configurações"]} fraseConfirmacao="EXCLUIR DEFINITIVAMENTE" processando={excluindo} erro={erroExclusao} aoConfirmar={(dadosConfirmacao) => void excluirRegistro(dadosConfirmacao)} aoFechar={() => { if (!excluindo) { setAlvoExclusao(null); setErroExclusao(""); } }} />
     {exportacaoAberta && <div className="sobreposicao" role="dialog" aria-modal="true" aria-labelledby="titulo-exportacao"><div className="modal exportacao-relatorio"><header className="cabecalho-modal"><div><span>EXPORTAÇÃO SEGURA</span><h2 id="titulo-exportacao">Escolha as informações</h2><p>Serão exportados todos os registros filtrados do período, não apenas esta página.</p></div><button type="button" onClick={() => setExportacaoAberta(false)} aria-label="Fechar"><X /></button></header><div className="corpo-exportacao"><div className="acoes-selecao-campos"><button type="button" onClick={() => setCamposSelecionados(camposExportacao[aba].map((campo) => campo.chave))}>Selecionar todas</button><button type="button" onClick={() => setCamposSelecionados([])}>Limpar seleção</button></div><div className="grade-campos-exportacao">{camposExportacao[aba].map((campo) => <label key={campo.chave}><input type="checkbox" checked={camposSelecionados.includes(campo.chave)} onChange={(e) => setCamposSelecionados((atuais) => e.target.checked ? [...atuais, campo.chave] : atuais.filter((item) => item !== campo.chave))} /><span>{campo.rotulo}</span></label>)}</div></div><footer className="rodape-modal"><span>{camposSelecionados.length} campo(s) selecionado(s)</span><button type="button" className="botao-secundario" onClick={() => setExportacaoAberta(false)}>Cancelar</button><button type="button" className="botao-primario" disabled={exportando || !camposSelecionados.length} onClick={() => void exportar()}>{exportando ? "Gerando..." : "Baixar CSV completo"}</button></footer></div></div>}
   </section>;
 }
 
-function TabelaResumo({ dados }: { dados: ResumoDiario[] }) {
-  return <div className="tabela-responsiva"><table><thead><tr><th>Data</th><th>Total coletado</th><th>Valor a pagar</th><th>Média / catador</th><th>Coletas</th><th>Catadores</th><th>Metas batidas</th></tr></thead><tbody>{dados.map((item) => <tr key={item.data_operacao}><td><strong>{new Date(`${item.data_operacao}T12:00:00`).toLocaleDateString("pt-BR")}</strong></td><td>{numero(item.total_coletado)} kg</td><td className="valor-verde">{dinheiro(item.valor_total_pagar)}</td><td>{numero(item.media_por_catador)} kg</td><td>{item.coletas_realizadas}</td><td>{item.catadores_atendidos}</td><td>{item.catadores_meta_atingida}</td></tr>)}</tbody></table>{!dados.length && <p className="estado-vazio">Nenhuma operação concluída no período.</p>}</div>;
+function TabelaResumo({ dados, administrador, aoExcluir }: { dados: ResumoDiario[]; administrador: boolean; aoExcluir: (item: ResumoDiario) => void }) {
+  return <div className="tabela-responsiva"><table><thead><tr><th>Data</th><th>Total coletado</th><th>Valor a pagar</th><th>Média / catador</th><th>Coletas</th><th>Catadores</th><th>Metas batidas</th>{administrador && <th>Ações</th>}</tr></thead><tbody>{dados.map((item) => <tr key={item.data_operacao}><td><strong>{new Date(`${item.data_operacao}T12:00:00`).toLocaleDateString("pt-BR")}</strong></td><td>{numero(item.total_coletado)} kg</td><td className="valor-verde">{dinheiro(item.valor_total_pagar)}</td><td>{numero(item.media_por_catador)} kg</td><td>{item.coletas_realizadas}</td><td>{item.catadores_atendidos}</td><td>{item.catadores_meta_atingida}</td>{administrador && <td><button type="button" className="menu-acoes perigoso" onClick={() => aoExcluir(item)} aria-label={`Apagar operações de ${item.data_operacao}`} title="Apagar operações deste dia"><Trash2 /></button></td>}</tr>)}</tbody></table>{!dados.length && <p className="estado-vazio">Nenhuma operação concluída no período.</p>}</div>;
 }
 
-function TabelaPesagens({ dados, aoDetalhar }: { dados: PesagemRelatorio[]; aoDetalhar: (item: PesagemRelatorio) => void }) {
-  return <div className="tabela-responsiva"><table><thead><tr><th>Protocolo</th><th>Catador</th><th>Material</th><th>Operação</th><th>Meta e pagamento</th><th>Situação</th><th>Detalhes</th></tr></thead><tbody>{dados.map((p) => <tr key={p.uuid} className={p.excluida_em ? "registro-excluido" : ""}><td><code>{p.codigo}</code><small className="texto-bloco">{new Date(p.data_hora).toLocaleString("pt-BR")}</small><small className="texto-bloco protocolo-curto" title={p.uuid}>{p.uuid}</small></td><td><strong>{p.catador}</strong><small className="texto-bloco">{p.codigo_catador}</small><small className="texto-bloco">{p.contatos_catador || "Sem contato"}</small></td><td><strong>{p.material}</strong><small className="texto-bloco">{p.tipo_material} · {p.unidade}</small></td><td>{p.cooperativa ?? "—"}<small className="texto-bloco">{p.ponto_apoio}</small><small className="texto-bloco">Por {p.responsavel}</small></td><td><strong>{numero(p.peso_total)} {p.unidade}</strong><small className="texto-bloco valor-verde">{dinheiro(p.valor_total)}</small><small className="texto-bloco">{p.contabiliza_meta ? `Meta ${p.tipo_meta === "geral" ? "geral" : "do material"} · ${Math.round(Number(p.percentual_meta))}%` : "Fora da meta · pagamento imediato"}</small></td><td><span className={`status-pesagem ${p.excluida_em ? "excluida" : p.status}`}>{p.excluida_em ? "Excluída" : rotulosStatus[p.status]}</span><small className="texto-bloco">Caixa {p.status_caixa ?? "não aberto"}</small>{p.historico.some((evento) => evento.acao === "alteracao") && <small className="texto-bloco aviso-auditoria">Alterada · histórico preservado</small>}</td><td><button type="button" className="menu-acoes" onClick={() => aoDetalhar(p)} aria-label={`Ver ficha completa de ${p.codigo}`} title="Ver ficha completa"><Eye /></button></td></tr>)}</tbody></table>{!dados.length && <p className="estado-vazio">Nenhuma pesagem encontrada.</p>}</div>;
+function TabelaPesagens({ dados, administrador, aoDetalhar, aoExcluir }: { dados: PesagemRelatorio[]; administrador: boolean; aoDetalhar: (item: PesagemRelatorio) => void; aoExcluir: (item: PesagemRelatorio) => void }) {
+  return <div className="tabela-responsiva"><table><thead><tr><th>Protocolo</th><th>Catador</th><th>Material</th><th>Operação</th><th>Meta e pagamento</th><th>Situação</th><th>Ações</th></tr></thead><tbody>{dados.map((p) => <tr key={p.uuid} className={p.excluida_em ? "registro-excluido" : ""}><td><code>{p.codigo}</code><small className="texto-bloco">{new Date(p.data_hora).toLocaleString("pt-BR")}</small><small className="texto-bloco protocolo-curto" title={p.uuid}>{p.uuid}</small></td><td><strong>{p.catador}</strong><small className="texto-bloco">{p.codigo_catador}</small><small className="texto-bloco">{p.contatos_catador || "Sem contato"}</small></td><td><strong>{p.material}</strong><small className="texto-bloco">{p.tipo_material} · {p.unidade}</small></td><td>{p.cooperativa ?? "—"}<small className="texto-bloco">{p.ponto_apoio}</small><small className="texto-bloco">Por {p.responsavel}</small></td><td><strong>{numero(p.peso_total)} {p.unidade}</strong><small className="texto-bloco valor-verde">{dinheiro(p.valor_total)}</small><small className="texto-bloco">{p.contabiliza_meta ? `Meta ${p.tipo_meta === "geral" ? "geral" : "do material"} · ${Math.round(Number(p.percentual_meta))}%` : "Fora da meta · pagamento imediato"}</small></td><td><span className={`status-pesagem ${p.excluida_em ? "excluida" : p.status}`}>{p.excluida_em ? "Excluída" : rotulosStatus[p.status]}</span><small className="texto-bloco">Caixa {p.status_caixa ?? "não aberto"}</small>{p.historico.some((evento) => evento.acao === "alteracao") && <small className="texto-bloco aviso-auditoria">Alterada · histórico preservado</small>}</td><td><div className="acoes-tabela"><button type="button" onClick={() => aoDetalhar(p)} aria-label={`Ver ficha completa de ${p.codigo}`} title="Ver ficha completa"><Eye /></button>{administrador && <button type="button" className="perigoso" onClick={() => aoExcluir(p)} aria-label={`Apagar definitivamente ${p.codigo}`} title="Apagar definitivamente"><Trash2 /></button>}</div></td></tr>)}</tbody></table>{!dados.length && <p className="estado-vazio">Nenhuma pesagem encontrada.</p>}</div>;
 }
 
-function TabelaAuditoria({ dados, aoDetalhar }: { dados: EventoAuditoria[]; aoDetalhar: (item: EventoAuditoria) => void }) {
-  return <div className="tabela-responsiva"><table><thead><tr><th>Data e protocolo</th><th>Usuário</th><th>Ação</th><th>Entidade</th><th>Origem</th><th>Detalhes</th></tr></thead><tbody>{dados.map((item) => <tr key={item.uuid}><td><strong>{new Date(item.criado_em).toLocaleString("pt-BR")}</strong><small className="texto-bloco protocolo-curto" title={item.uuid}>{item.uuid}</small></td><td>{item.usuario ?? "Usuário removido"}<small className="texto-bloco">{item.usuario_email ?? "—"}</small></td><td><span className="selo-auditoria">{item.acao.replaceAll("_", " ")}</span></td><td>{item.entidade.replaceAll("_", " ")}<small className="texto-bloco protocolo-curto">{item.entidade_uuid ?? "Sem vínculo"}</small></td><td>{item.endereco_ip ?? "Não informado"}</td><td><button type="button" className="menu-acoes" onClick={() => aoDetalhar(item)} aria-label="Ver dados completos do evento" title="Ver evento"><Eye /></button></td></tr>)}</tbody></table>{!dados.length && <p className="estado-vazio">Nenhum evento de auditoria encontrado.</p>}</div>;
+function TabelaAuditoria({ dados, administrador, aoDetalhar, aoExcluir }: { dados: EventoAuditoria[]; administrador: boolean; aoDetalhar: (item: EventoAuditoria) => void; aoExcluir: (item: EventoAuditoria) => void }) {
+  return <div className="tabela-responsiva"><table><thead><tr><th>Data e protocolo</th><th>Usuário</th><th>Ação</th><th>Entidade</th><th>Origem</th><th>Ações</th></tr></thead><tbody>{dados.map((item) => <tr key={item.uuid}><td><strong>{new Date(item.criado_em).toLocaleString("pt-BR")}</strong><small className="texto-bloco protocolo-curto" title={item.uuid}>{item.uuid}</small></td><td>{item.usuario ?? "Usuário removido"}<small className="texto-bloco">{item.usuario_email ?? "—"}</small></td><td><span className="selo-auditoria">{item.acao.replaceAll("_", " ")}</span></td><td>{item.entidade.replaceAll("_", " ")}<small className="texto-bloco protocolo-curto">{item.entidade_uuid ?? "Sem vínculo"}</small></td><td>{item.endereco_ip ?? "Não informado"}</td><td><div className="acoes-tabela"><button type="button" onClick={() => aoDetalhar(item)} aria-label="Ver dados completos do evento" title="Ver evento"><Eye /></button>{administrador && <button type="button" className="perigoso" onClick={() => aoExcluir(item)} aria-label="Apagar evento de auditoria" title="Apagar evento"><Trash2 /></button>}</div></td></tr>)}</tbody></table>{!dados.length && <p className="estado-vazio">Nenhum evento de auditoria encontrado.</p>}</div>;
 }
 
 function ModalPesagem({ pesagem, aoFechar }: { pesagem: PesagemRelatorio; aoFechar: () => void }) {

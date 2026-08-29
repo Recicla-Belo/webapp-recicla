@@ -9,7 +9,7 @@ import { Paginacao } from "@/app/componentes/paginacao";
 
 const formularioInicial = { nome: "", email: "", senha: "", confirmarSenha: "", ativo: true, permissoes: [] as PermissaoUsuario[] };
 const dependencias: Partial<Record<PermissaoUsuario, PermissaoUsuario>> = {
-  catadores_cadastrar: "catadores_visualizar", catadores_editar: "catadores_visualizar", catadores_excluir: "catadores_visualizar", catadores_gerenciar_caixa: "catadores_visualizar",
+  catadores_cadastrar: "catadores_visualizar", catadores_editar: "catadores_visualizar", catadores_excluir: "catadores_visualizar", catadores_gerenciar_caixa: "catadores_visualizar", catadores_pagar: "catadores_visualizar",
   cooperativas_cadastrar: "cooperativas_visualizar", cooperativas_editar: "cooperativas_visualizar", cooperativas_excluir: "cooperativas_visualizar",
   pesagens_editar: "relatorios_visualizar", pesagens_excluir: "relatorios_visualizar",
 };

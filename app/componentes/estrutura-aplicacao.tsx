@@ -298,11 +298,11 @@ export function EstruturaAplicacao() {
           </div>
         </header>
 
-        {pagina === "painel" && podeAcessarPagina(administrador, "painel") && <PainelPrincipal onNovaPesagem={() => navegar("pesagem")} podeNovaPesagem={possuiPermissao(administrador, "pesagens_cadastrar")} />}
-        {pagina === "catadores" && podeAcessarPagina(administrador, "catadores") && <TelaCatadores acessos={{ cadastrar: possuiPermissao(administrador, "catadores_cadastrar"), editar: possuiPermissao(administrador, "catadores_editar"), excluir: possuiPermissao(administrador, "catadores_excluir"), gerenciarCaixa: possuiPermissao(administrador, "catadores_gerenciar_caixa"), exportar: possuiPermissao(administrador, "catadores_exportar") }} />}
+        {pagina === "painel" && podeAcessarPagina(administrador, "painel") && <PainelPrincipal onNovaPesagem={() => navegar("pesagem")} podeNovaPesagem={possuiPermissao(administrador, "pesagens_cadastrar")} administrador={Boolean(administrador?.administrador)} />}
+        {pagina === "catadores" && podeAcessarPagina(administrador, "catadores") && <TelaCatadores acessos={{ cadastrar: possuiPermissao(administrador, "catadores_cadastrar"), editar: possuiPermissao(administrador, "catadores_editar"), excluir: possuiPermissao(administrador, "catadores_excluir"), gerenciarCaixa: possuiPermissao(administrador, "catadores_gerenciar_caixa"), exportar: possuiPermissao(administrador, "catadores_exportar"), pagar: possuiPermissao(administrador, "catadores_pagar") }} />}
         {pagina === "cooperativas" && podeAcessarPagina(administrador, "cooperativas") && <TelaCooperativas acessos={{ cadastrar: possuiPermissao(administrador, "cooperativas_cadastrar"), editar: possuiPermissao(administrador, "cooperativas_editar"), excluir: possuiPermissao(administrador, "cooperativas_excluir") }} />}
         {pagina === "pesagem" && possuiPermissao(administrador, "pesagens_cadastrar") && <TelaPesagem />}
-        {pagina === "relatorios" && podeAcessarPagina(administrador, "relatorios") && <TelaRelatorios />}
+        {pagina === "relatorios" && podeAcessarPagina(administrador, "relatorios") && <TelaRelatorios administrador={Boolean(administrador?.administrador)} />}
         {pagina === "configuracoes" && podeAcessarPagina(administrador, "configuracoes") && <TelaConfiguracoes administrador={administrador!} onAdministradorAtualizado={setAdministrador} />}
       </section>
     </main>

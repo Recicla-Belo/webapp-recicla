@@ -25,11 +25,13 @@ WebApp responsivo para gestão de cooperativas de reciclagem, catadores, produç
 - API autenticada, PostgreSQL com UUID, auditoria, índices e pesquisa textual em português.
 - conta administrativa editável sob demanda: nome/e-mail e senha ficam ocultos até a ação escolhida, exigem a senha atual, geram auditoria e a troca de senha revoga as sessões anteriores.
 - dashboard operacional diário: peso, pagamentos, média e coletas são reiniciados visualmente a cada dia e permanecem disponíveis no relatório histórico;
-- atividade recente limitada aos últimos 30 dias e a 100 eventos no dashboard, sem apagar o livro permanente de auditoria;
-- relatórios somente leitura com resumo diário, pesagens completas e livro imutável de auditoria, todos paginados e filtráveis;
+- atividade recente limitada aos últimos 30 dias e a 100 eventos no dashboard, com exclusão individual disponível somente ao administrador mediante senha, motivo e confirmação explícita;
+- relatórios sem edição direta, com resumo diário, pesagens completas e livro de auditoria, todos paginados e filtráveis; exclusões definitivas são exclusivas do administrador e possuem confirmação reforçada;
+- limpeza administrativa transacional dos dados operacionais de teste, preservando catadores, cooperativas, usuários, permissões, materiais e configurações e zerando automaticamente os indicadores calculados;
 - exportação CSV de todos os registros do período filtrado, permitindo escolher individualmente as colunas e protegendo contra fórmulas maliciosas em planilhas.
 - exportação Excel completa dos catadores, com aba própria para produção de crachás e abas organizadas de cadastro, contatos e pagamento; o download exige permissão específica e gera registro de auditoria.
 - contas operacionais com permissões granulares escolhidas pelo administrador e validadas no backend para painel, catadores, cooperativas, pesagens, relatórios, caixas e configurações.
+- pagamento transacional ao catador com permissão específica de **Pagador(a)**, confirmação do valor e da forma de pagamento, identificação automática do usuário autenticado, proteção contra duplicidade e recibo imprimível.
 
 ## Arquitetura
 
@@ -173,9 +175,7 @@ Não existe tela pública de cadastro. A senha solicitada para o ambiente local 
 
 ### Contas restritas para a equipe
 
-O administrador pode abrir **Configurações → Usuários e permissões** e criar uma ou mais contas operacionais. Para cada conta, ele escolhe individualmente as permissões de consulta, cadastro, edição, exclusão, caixa, relatórios e configurações. A API nega por padrão qualquer operação não concedida; rotas de administração de usuários e da conta principal nunca podem ser delegadas. Cada conta também possui nome, e-mail, senha forte e situação ativa/bloqueada. Alterar permissões, senha ou situação revoga imediatamente todas as sessões anteriores, e a mudança fica registrada na auditoria.
-
-A conta restrita pode consultar dados e cadastrar catadores, cooperativas/associações e novas pesagens. Ela não pode editar, inativar ou excluir registros existentes, fechar ou reabrir caixas, gerenciar materiais, responsáveis, metas, identidade visual, outras contas ou os dados do administrador. Esses bloqueios são validados pelo servidor com resposta HTTP `403`, mesmo que alguém tente chamar a API diretamente.
+O administrador pode abrir **Configurações → Usuários e permissões** e criar uma ou mais contas operacionais. Para cada conta, ele escolhe individualmente as permissões de consulta, cadastro, edição, exclusão, caixa, pagamentos, relatórios e configurações. A permissão **Efetuar pagamentos (Pagador(a))** autoriza registrar pagamentos aos catadores e emitir recibos; ela exige também a permissão de consulta dos catadores. A API nega por padrão qualquer operação não concedida; rotas de administração de usuários e da conta principal nunca podem ser delegadas. Cada conta também possui nome, e-mail, senha forte e situação ativa/bloqueada. Alterar permissões, senha ou situação revoga imediatamente todas as sessões anteriores, e a mudança fica registrada na auditoria.
 
 ## Variáveis de ambiente
 
@@ -191,7 +191,9 @@ O `.env` real é ignorado pelo Git. Apenas o `.env.example`, sem segredos de pro
 
 ## Banco de dados
 
-As tabelas e colunas usam nomes claros em português do Brasil. A estrutura cobre usuários, cooperativas, catadores, contatos, endereços, contas financeiras, fotos, pontos de apoio, responsáveis, materiais, pesagens, itens de pesagem, caixas individuais, movimentações financeiras, notificações e auditoria.
+As tabelas e colunas usam nomes claros em português do Brasil. A estrutura cobre usuários, cooperativas, catadores, contatos, endereços, contas financeiras, fotos, pontos de apoio, responsáveis, materiais, pesagens, itens de pesagem, caixas individuais, pagamentos e seus itens de origem, movimentações financeiras, notificações, auditoria e o histórico permanente de limpezas administrativas.
+
+Em **Configurações → Limpeza de dados**, somente o administrador pode remover todos os dados operacionais de teste. A operação exige motivo, a frase exata exibida na modal e a senha atual. Pesagens, caixas, movimentações, notificações operacionais, Atividade recente e auditoria visível são apagadas na mesma transação; catadores, cooperativas, usuários, permissões, materiais e demais configurações são preservados. Um comprovante técnico imutável da limpeza fica em uma tabela de segurança separada e não reaparece nos relatórios comuns.
 
 Notificações ligadas a registros removidos são eliminadas pelas rotas de exclusão e por uma migração de saneamento. A consulta também ignora referências órfãs, evitando que uma instalação sem catadores ou pesagens exiba avisos antigos.
 
