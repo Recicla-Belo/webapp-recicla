@@ -9,12 +9,13 @@ WebApp responsivo para gestão de cooperativas de reciclagem, catadores, produç
 - cadastro e edição de catadores em etapas, com CPF mascarado, nome como identificação mínima, demais dados opcionais, múltiplos contatos, endereço assistido por CEP e foto opcional;
 - pagamento opcional por Pix ou conta bancária; ao habilitá-lo, o sistema exige os dados necessários para o recebimento e, quando a conta é de terceiro, nome e CPF do titular;
 - cooperativas e associações com responsável e vínculo de catadores;
-- pesagem guiada com confirmação final em modal, código e nome do catador, ponto, material, peso, data e hora, status e cálculo acumulado da meta diária;
+- pesagem guiada com confirmação final em modal, código e nome do catador, ponto, material, peso, data e hora, status e cálculo acumulado da meta do ciclo operacional;
 - materiais configuráveis por unidade, quantidade de referência, valor e situação ativa/inativa;
-- meta diária configurável por material e meta geral opcional com prêmio fixo, seleção dos materiais válidos, escolha auditável para registrar cada entrega dentro ou fora da meta, crédito de peso excedente para uma meta futura, progresso individual e comemoração ao atingir o alvo;
+- meta configurável por material e meta geral opcional com prêmio fixo, seleção dos materiais válidos, escolha auditável para registrar cada entrega dentro ou fora da meta, crédito de peso excedente para um ciclo futuro, progresso individual e comemoração ao atingir o alvo;
 - ativação e inativação de catadores sem apagar seu cadastro ou histórico; catadores inativos não aparecem nem são aceitos em novas pesagens;
 - cadastro, edição, ativação e exclusão lógica dos responsáveis pela pesagem, preservando os nomes utilizados no histórico;
-- caixa diário independente por catador, com fechamento que bloqueia novos lançamentos, reabertura justificada e trilha de auditoria;
+- cadastro, edição, ativação, desativação e exclusão segura de pontos de apoio; locais usados em pesagens permanecem preservados no histórico e podem ser desativados;
+- ciclo operacional independente por catador, preservado mesmo após a meia-noite, com fechamento explícito que bloqueia novos lançamentos, reabertura justificada e trilha de auditoria;
 - atividade recente identificada com foto, código, nome e dados do catador, totais do caixa, pesagens, correções e motivo de reabertura;
 - ficha completa do catador com contatos, endereço, meios de pagamento, histórico, ganhos por material, metas e caixas;
 - exclusão definitiva e confirmada do catador, removendo cadastro, contatos, endereço, pagamento, fotos, pesagens, metas, caixas e movimentações em uma única transação, com motivo mínimo preservado na auditoria;
@@ -24,7 +25,7 @@ WebApp responsivo para gestão de cooperativas de reciclagem, catadores, produç
 - menu móvel com rolagem própria, áreas seguras do iPhone e proteção contra estouro horizontal da página;
 - API autenticada, PostgreSQL com UUID, auditoria, índices e pesquisa textual em português.
 - conta administrativa editável sob demanda: nome/e-mail e senha ficam ocultos até a ação escolhida, exigem a senha atual, geram auditoria e a troca de senha revoga as sessões anteriores.
-- dashboard operacional diário: peso, pagamentos, média e coletas são reiniciados visualmente a cada dia e permanecem disponíveis no relatório histórico;
+- dashboard com indicadores acumulados calculados a partir das pesagens válidas; os valores não são zerados automaticamente e somente mudam por operações explícitas e auditadas;
 - atividade recente limitada aos últimos 30 dias e a 100 eventos no dashboard, com exclusão individual disponível somente ao administrador mediante senha, motivo e confirmação explícita;
 - relatórios sem edição direta, com resumo diário, pesagens completas e livro de auditoria, todos paginados e filtráveis; exclusões definitivas são exclusivas do administrador e possuem confirmação reforçada;
 - limpeza administrativa transacional dos dados operacionais de teste, preservando catadores, cooperativas, usuários, permissões, materiais e configurações e zerando automaticamente os indicadores calculados;
@@ -197,7 +198,7 @@ Em **Configurações → Limpeza de dados**, somente o administrador pode remove
 
 Notificações ligadas a registros removidos são eliminadas pelas rotas de exclusão e por uma migração de saneamento. A consulta também ignora referências órfãs, evitando que uma instalação sem catadores ou pesagens exiba avisos antigos.
 
-O pagamento é calculado exclusivamente pelo backend, dentro da mesma transação que registra a pesagem. Quando a meta geral está ativa, ela soma somente os materiais e entregas marcados para contabilização; o peso usado até completar o alvo não recebe o preço dos materiais e libera uma única vez o prêmio fixo configurado. A parcela que ultrapassar o alvo pode ser paga imediatamente pelo preço do material ou, por escolha explícita, guardada como crédito de peso para uma meta de dia futuro. O crédito nunca é pago duas vezes e é consumido em ordem cronológica. Um material inválido para metas, ou uma entrega elegível escolhida como fora da meta, não aumenta o progresso e recebe pagamento imediato. Sem meta geral, cada material válido usa sua própria meta; meta por material igual a zero significa pagamento imediato. Configuração, decisões e parcelas liquidadas ficam congeladas no item da pesagem, e edições ou exclusões recalculam a cadeia histórica do catador.
+O pagamento é calculado exclusivamente pelo backend, dentro da mesma transação que registra a pesagem. Quando a meta geral está ativa, ela soma somente os materiais e entregas marcados para contabilização; o peso usado até completar o alvo não recebe o preço dos materiais e libera uma única vez o prêmio fixo configurado. A parcela que ultrapassar o alvo pode ser paga imediatamente pelo preço do material ou, por escolha explícita, guardada como crédito de peso para um ciclo futuro. O crédito nunca é pago duas vezes e é consumido em ordem cronológica. Um material inválido para metas, ou uma entrega elegível escolhida como fora da meta, não aumenta o progresso e recebe pagamento imediato. Sem meta geral, cada material válido usa sua própria meta; meta por material igual a zero significa pagamento imediato. Configuração, decisões e parcelas liquidadas ficam congeladas no item da pesagem, e edições ou exclusões recalculam a cadeia histórica do catador.
 
 O SQL único e completo está em `servidor/sql/recicla-belo-completo.sql`. Ele contém extensões, tipos, tabelas, chaves estrangeiras, restrições, índices de busca textual e dados iniciais. Para regenerá-lo após novas migrações, execute `npm run sql:gerar`.
 

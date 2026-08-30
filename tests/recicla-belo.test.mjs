@@ -187,7 +187,8 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(telaConfiguracoes, /Responsáveis pela pesagem/);
   assert.match(telaConfiguracoes, /\/api\/responsaveis-pesagem\?incluirInativos=true/);
   assert.match(telaConfiguracoes, /\/api\/configuracoes\/meta-geral/);
-  assert.match(telaConfiguracoes, /Meta geral diária/);
+  assert.match(telaConfiguracoes, /Meta geral do ciclo/);
+  assert.match(telaConfiguracoes, /Quantidade por ciclo/);
   assert.match(telaConfiguracoes, /Prêmio fixo ao bater a meta/);
   assert.match(telaConfiguracoes, /metaDiaria: ""/);
   assert.match(telaConfiguracoes, /placeholder="Sem meta específica"/);
@@ -216,6 +217,15 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(servidor, /pg_advisory_xact_lock\(hashtextextended\('pagamento-catador:/);
   assert.match(servidor, /coalesce\(pc\.cpf_catador,c\.cpf\) AS cpf_catador/);
   assert.match(servidor, /exportacao_excel/);
+  assert.match(servidor, /aplicacao\.post\("\/api\/pontos-apoio"/);
+  assert.match(servidor, /aplicacao\.put\("\/api\/pontos-apoio\/:uuid"/);
+  assert.match(servidor, /aplicacao\.delete\("\/api\/pontos-apoio\/:uuid"/);
+  assert.match(servidor, /pontos_apoio_gerenciar/);
+  assert.match(servidor, /WHERE catador_uuid=\$1 AND status='aberto' ORDER BY data_caixa/);
+  assert.match(servidor, /Resultados preservados até uma limpeza administrativa explícita|FROM pesagens p WHERE p\.status = 'concluida' AND p\.excluida_em IS NULL/);
+  assert.match(telaConfiguracoes, /Novo ponto de apoio/);
+  assert.match(telaConfiguracoes, /incluirInativos=true/);
+  assert.doesNotMatch(telaConfiguracoes, /Disponível em uma próxima etapa/);
   assert.match(telaCooperativas, /acessos\.editar/);
   assert.match(telaRelatorios, /\/api\/administrador\/pesagens/);
   assert.match(telaRelatorios, /\/api\/administrador\/auditoria/);

@@ -69,6 +69,7 @@ async function executar() {
   assert.ok(catalogoPermissoes.some((item) => item.chave === "cooperativas_editar"));
   assert.ok(catalogoPermissoes.some((item) => item.chave === "catadores_exportar"));
   assert.ok(catalogoPermissoes.some((item) => item.chave === "catadores_pagar"));
+  assert.ok(catalogoPermissoes.some((item) => item.chave === "pontos_apoio_gerenciar"));
 
   const materiaisAntesDaSelecao = (await chamar("/api/materiais")).dados.dados;
   const materiaisSelecionadosOriginais = materiaisAntesDaSelecao.filter((material) => material.contabiliza_meta).map((material) => material.uuid);
@@ -116,6 +117,8 @@ async function executar() {
     assert.equal(configuracaoBloqueada.status, 403);
     const selecaoMetaBloqueada = await fetch(`${urlApi}/api/materiais/participacao-meta`, { method: "PATCH", headers: { "content-type": "application/json", cookie: cookieRestrito }, body: JSON.stringify({ materiaisUuids: [] }) });
     assert.equal(selecaoMetaBloqueada.status, 403);
+    const pontoBloqueado = await fetch(`${urlApi}/api/pontos-apoio`, { method: "POST", headers: { "content-type": "application/json", cookie: cookieRestrito }, body: JSON.stringify({ nome: "Ponto indevido", ativo: true }) });
+    assert.equal(pontoBloqueado.status, 403);
     const limpezaAdministrativaBloqueada = await fetch(`${urlApi}/api/administrador/dados-operacionais`, { method: "DELETE", headers: { "content-type": "application/json", cookie: cookieRestrito }, body: JSON.stringify({ senhaAtual: senhaRestrita, confirmacao: "LIMPAR DADOS DE TESTE", motivo: "Tentativa sem permissão" }) });
     assert.equal(limpezaAdministrativaBloqueada.status, 403);
     assert.equal((await fetch(`${urlApi}/api/catadores`, { headers: { cookie: cookieRestrito } })).status, 403);
@@ -238,6 +241,14 @@ async function executar() {
     await chamar(`/api/catadores/${catadorUuid}/status`, { method: "PATCH", body: JSON.stringify({ ativo: false }) });
     assert.equal((await chamar(`/api/catadores?busca=${encodeURIComponent(catador.codigo)}&status=ativo`)).dados.total, 0);
     await chamar(`/api/catadores/${catadorUuid}/status`, { method: "PATCH", body: JSON.stringify({ ativo: true }) });
+
+    const pontoTemporarioUuid = (await chamar("/api/pontos-apoio", { method: "POST", body: JSON.stringify({ nome: `Ponto temporário ${sufixo}`, ativo: true }) })).dados.uuid;
+    entidadesCriadas.add(pontoTemporarioUuid);
+    await chamar(`/api/pontos-apoio/${pontoTemporarioUuid}`, { method: "PUT", body: JSON.stringify({ nome: `Ponto temporário editado ${sufixo}`, ativo: false }) });
+    const pontosComInativos = (await chamar("/api/pontos-apoio?incluirInativos=true")).dados.dados;
+    assert.ok(pontosComInativos.some((item) => item.uuid === pontoTemporarioUuid && item.status === "inativo"));
+    await chamar(`/api/pontos-apoio/${pontoTemporarioUuid}`, { method: "DELETE" });
+    assert.equal((await chamar("/api/pontos-apoio?incluirInativos=true")).dados.dados.some((item) => item.uuid === pontoTemporarioUuid), false);
 
     const pontos = (await chamar("/api/pontos-apoio")).dados.dados;
     responsavelUuid = (await chamar("/api/responsaveis-pesagem", { method: "POST", body: JSON.stringify({ nome: `Responsável ${sufixo}`, ativo: true }) })).dados.uuid;
@@ -428,6 +439,11 @@ async function executar() {
     assert.equal(excedenteGuardado.valorTotal, 0);
     assert.equal(excedenteGuardado.progressoMetaGeral.saldoCredito, 5);
     const dataDiaSeguinte = new Date(new Date(dataHoraPesagem).getTime() + 24 * 60 * 60 * 1000);
+    const dataOperacaoSeguinte = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bahia" }).format(dataDiaSeguinte);
+    const cicloAtravessandoMeiaNoite = (await chamar(`/api/catadores/${catadorMetaGeralUuid}/metas?data=${dataOperacaoSeguinte}`)).dados;
+    assert.equal(String(cicloAtravessandoMeiaNoite.caixa.data_caixa).slice(0, 10), dataCaixa);
+    assert.equal(Number(cicloAtravessandoMeiaNoite.metaGeral.saldoCredito), 5);
+    await chamar(`/api/catadores/${catadorMetaGeralUuid}/caixa/fechar`, { method: "POST", body: JSON.stringify({ data: dataCaixa }) });
     const usoParcialCredito = (await chamar("/api/pesagens", { method: "POST", body: JSON.stringify({ catadorUuid: catadorMetaGeralUuid, cooperativaUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsavelPadrao.uuid, materialUuid, contabilizarNaMeta: true, peso: 4, dataHora: dataDiaSeguinte.toISOString(), status: "concluida" }) })).dados;
     pesagensMetaGeral.push(usoParcialCredito.uuid); entidadesCriadas.add(usoParcialCredito.uuid);
     assert.equal(usoParcialCredito.valorTotal, 0);
@@ -468,7 +484,6 @@ async function executar() {
     assert.equal(relatorioGeral.total, 7);
     assert.equal(relatorioGeral.dados.filter((item) => item.tipo_meta === "fora_meta").length, 2);
     assert.ok(relatorioGeral.dados.filter((item) => item.tipo_meta === "geral").every((item) => Number(item.percentual_meta) === 100));
-    for (const pesagemGeralUuid of pesagensMetaGeral) await chamar(`/api/pesagens/${pesagemGeralUuid}`, { method: "DELETE", body: JSON.stringify({ motivo: "Limpeza do cenário de meta geral" }) });
     await chamar(`/api/catadores/${catadorMetaGeralUuid}`, { method: "DELETE", body: JSON.stringify({ confirmacao: true, motivo: "Limpeza do cenário de meta geral" }) });
     catadorMetaGeralUuid = undefined;
 

@@ -66,7 +66,7 @@ const chavesPermissao = [
   "catadores_visualizar", "catadores_cadastrar", "catadores_editar", "catadores_excluir", "catadores_gerenciar_caixa", "catadores_exportar", "catadores_pagar",
   "cooperativas_visualizar", "cooperativas_cadastrar", "cooperativas_editar", "cooperativas_excluir",
   "pesagens_cadastrar", "relatorios_visualizar", "pesagens_editar", "pesagens_excluir",
-  "materiais_gerenciar", "responsaveis_gerenciar", "metas_gerenciar", "identidade_visual_gerenciar",
+  "materiais_gerenciar", "responsaveis_gerenciar", "metas_gerenciar", "identidade_visual_gerenciar", "pontos_apoio_gerenciar",
 ] as const;
 type PermissaoUsuario = typeof chavesPermissao[number];
 type UsuarioAtivo = { uuid: string; nome: string; email: string; administrador: boolean; perfil: PerfilAcesso; versao_sessao: number; permissoes: PermissaoUsuario[] };
@@ -105,16 +105,18 @@ async function registrarAuditoria(executor: ExecutorSql, usuarioUuid: string, ac
 async function obterCaixaAberto(cliente: PoolClient, catadorUuid: string, dataHora: string, usuarioUuid: string, enderecoIp?: string) {
   const data = await cliente.query<{ data_caixa: string }>("SELECT ($1::timestamptz AT TIME ZONE 'America/Bahia')::date::text AS data_caixa", [dataHora]);
   const dataCaixa = data.rows[0]!.data_caixa;
-  await cliente.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`caixa:${catadorUuid}:${dataCaixa}`]);
-  let caixa = await cliente.query<{ uuid: string; status: "aberto" | "fechado"; meta_geral_ativa: boolean; meta_geral_diaria: number; unidade_meta_geral: string; valor_premio_meta_geral: number }>(
-    "SELECT uuid,status,meta_geral_ativa,meta_geral_diaria::float8,unidade_meta_geral,valor_premio_meta_geral::float8 FROM caixas_catador WHERE catador_uuid=$1 AND data_caixa=$2::date FOR UPDATE",
-    [catadorUuid, dataCaixa],
+  await cliente.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`caixa:${catadorUuid}`]);
+  let caixa = await cliente.query<{ uuid: string; data_caixa: string; status: "aberto" | "fechado"; meta_geral_ativa: boolean; meta_geral_diaria: number; unidade_meta_geral: string; valor_premio_meta_geral: number }>(
+    "SELECT uuid,data_caixa::text,status,meta_geral_ativa,meta_geral_diaria::float8,unidade_meta_geral,valor_premio_meta_geral::float8 FROM caixas_catador WHERE catador_uuid=$1 AND status='aberto' ORDER BY data_caixa,criado_em LIMIT 1 FOR UPDATE",
+    [catadorUuid],
   );
   if (!caixa.rows[0]) {
-    caixa = await cliente.query<{ uuid: string; status: "aberto" | "fechado"; meta_geral_ativa: boolean; meta_geral_diaria: number; unidade_meta_geral: string; valor_premio_meta_geral: number }>(
+    const fechadoNaData = await cliente.query("SELECT 1 FROM caixas_catador WHERE catador_uuid=$1 AND data_caixa=$2::date AND status='fechado' FOR UPDATE", [catadorUuid, dataCaixa]);
+    if (fechadoNaData.rows[0]) throw Object.assign(new Error("O ciclo operacional deste catador já foi fechado. Registre uma nova pesagem em uma data posterior ou reabra o caixa com um motivo."), { statusCode: 409 });
+    caixa = await cliente.query<{ uuid: string; data_caixa: string; status: "aberto" | "fechado"; meta_geral_ativa: boolean; meta_geral_diaria: number; unidade_meta_geral: string; valor_premio_meta_geral: number }>(
       `INSERT INTO caixas_catador (catador_uuid,data_caixa,aberto_por_uuid,meta_geral_ativa,meta_geral_diaria,unidade_meta_geral,valor_premio_meta_geral)
        SELECT $1,$2::date,$3,c.ativa,c.meta_diaria,c.unidade,c.valor_premio FROM configuracoes_meta_geral c WHERE c.chave='principal'
-       RETURNING uuid,status,meta_geral_ativa,meta_geral_diaria::float8,unidade_meta_geral,valor_premio_meta_geral::float8`,
+       RETURNING uuid,data_caixa::text,status,meta_geral_ativa,meta_geral_diaria::float8,unidade_meta_geral,valor_premio_meta_geral::float8`,
       [catadorUuid, dataCaixa, usuarioUuid],
     );
     const catador = await cliente.query<{ codigo: string; nome_completo: string }>("SELECT codigo,nome_completo FROM catadores WHERE uuid=$1", [catadorUuid]);
@@ -124,68 +126,67 @@ async function obterCaixaAberto(cliente: PoolClient, catadorUuid: string, dataHo
       nomeCatador: catador.rows[0]?.nome_completo,
       dataCaixa,
       aberturaAutomatica: true,
+      cicloPersistente: true,
       totais: { peso: 0, valor: 0, movimentacoes: 0 },
     }, enderecoIp);
   }
   if (caixa.rows[0]!.status === "fechado") throw Object.assign(new Error("O caixa deste catador está fechado para a data informada. Reabra-o antes de registrar ou corrigir movimentações."), { statusCode: 409 });
-  return { uuid: caixa.rows[0]!.uuid, dataCaixa, metaGeralAtiva: caixa.rows[0]!.meta_geral_ativa, metaGeralDiaria: Number(caixa.rows[0]!.meta_geral_diaria), unidadeMetaGeral: caixa.rows[0]!.unidade_meta_geral, valorPremioMetaGeral: Number(caixa.rows[0]!.valor_premio_meta_geral) };
+  return { uuid: caixa.rows[0]!.uuid, dataCaixa: caixa.rows[0]!.data_caixa, metaGeralAtiva: caixa.rows[0]!.meta_geral_ativa, metaGeralDiaria: Number(caixa.rows[0]!.meta_geral_diaria), unidadeMetaGeral: caixa.rows[0]!.unidade_meta_geral, valorPremioMetaGeral: Number(caixa.rows[0]!.valor_premio_meta_geral) };
 }
 
-async function bloquearMetaDiaria(cliente: PoolClient, catadorUuid: string, materialUuid: string, dataHora: string) {
+async function bloquearMetaDiaria(cliente: PoolClient, catadorUuid: string, materialUuid: string, caixaUuid: string) {
   await cliente.query(
     `SELECT pg_advisory_xact_lock(hashtextextended(
-      'meta:' || $1::text || ':' || $2::text || ':' || (($3::timestamptz AT TIME ZONE 'America/Bahia')::date)::text,
+      'meta:' || $1::text || ':' || $2::text || ':' || $3::text,
       0
     ))`,
-    [catadorUuid, materialUuid, dataHora],
+    [catadorUuid, materialUuid, caixaUuid],
   );
 }
 
-async function bloquearDiaCatador(cliente: PoolClient, catadorUuid: string, dataHora: string) {
+async function bloquearDiaCatador(cliente: PoolClient, catadorUuid: string, caixaUuid: string) {
   await cliente.query(
     `SELECT pg_advisory_xact_lock(hashtextextended(
-      'meta-geral:' || $1::text || ':' || (($2::timestamptz AT TIME ZONE 'America/Bahia')::date)::text,
+      'meta-geral:' || $1::text || ':' || $2::text,
       0
     ))`,
-    [catadorUuid, dataHora],
+    [catadorUuid, caixaUuid],
   );
 }
 
-async function consultarProgressoMeta(cliente: PoolClient, catadorUuid: string, materialUuid: string, dataHora: string, metaDiaria: number) {
+async function consultarProgressoMeta(cliente: ExecutorSql, catadorUuid: string, materialUuid: string, caixaUuid: string | null, metaDiaria: number) {
   const resultado = await cliente.query<{ peso: number; ganho: number }>(`SELECT
       coalesce(sum(ip.peso) FILTER (WHERE ip.contabiliza_meta),0)::float8 AS peso,
       coalesce(sum(p.valor_total) FILTER (WHERE ip.contabiliza_meta),0)::float8 AS ganho
     FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid
+    JOIN movimentacoes_caixa_catador mc ON mc.pesagem_uuid=p.uuid AND mc.ativa
     WHERE p.catador_uuid=$1 AND ip.material_uuid=$2 AND p.status='concluida' AND p.excluida_em IS NULL
-      AND (p.data_hora AT TIME ZONE 'America/Bahia')::date = ($3::timestamptz AT TIME ZONE 'America/Bahia')::date`, [catadorUuid, materialUuid, dataHora]);
+      AND mc.caixa_uuid=$3::uuid`, [catadorUuid, materialUuid, caixaUuid]);
   const peso = Number(resultado.rows[0]?.peso ?? 0);
   const ganho = Number(resultado.rows[0]?.ganho ?? 0);
   const semMeta = metaDiaria <= 0;
   return { peso, ganho, metaDiaria, percentual: semMeta ? 100 : Math.min(Math.round((peso / metaDiaria) * 10000) / 100, 100), falta: semMeta ? 0 : Math.max(Math.round((metaDiaria - peso) * 1000) / 1000, 0), atingida: semMeta || peso >= metaDiaria, semMeta };
 }
 
-async function recalcularPagamentoMetaDiaria(cliente: PoolClient, catadorUuid: string, materialUuid: string, dataHora: string) {
-  await bloquearDiaCatador(cliente, catadorUuid, dataHora);
+async function recalcularPagamentoMetaDiaria(cliente: PoolClient, catadorUuid: string, materialUuid: string, caixaUuid: string) {
+  await bloquearDiaCatador(cliente, catadorUuid, caixaUuid);
   const configuracaoGeral = await cliente.query<{ ativa: boolean; meta: number }>(`SELECT
-      coalesce(cx.meta_geral_ativa,c.ativa) AS ativa,
-      coalesce(cx.meta_geral_diaria,c.meta_diaria)::float8 AS meta
-    FROM configuracoes_meta_geral c
-    LEFT JOIN caixas_catador cx ON cx.catador_uuid=$1
-      AND cx.data_caixa=($2::timestamptz AT TIME ZONE 'America/Bahia')::date
-    WHERE c.chave='principal'`, [catadorUuid, dataHora]);
+      cx.meta_geral_ativa AS ativa,cx.meta_geral_diaria::float8 AS meta
+    FROM caixas_catador cx WHERE cx.uuid=$2 AND cx.catador_uuid=$1`, [catadorUuid, caixaUuid]);
   if (configuracaoGeral.rows[0]?.ativa && Number(configuracaoGeral.rows[0].meta) > 0) {
     await recalcularMetasGeraisCatador(cliente, catadorUuid);
     return;
   }
-  await bloquearMetaDiaria(cliente, catadorUuid, materialUuid, dataHora);
+  await bloquearMetaDiaria(cliente, catadorUuid, materialUuid, caixaUuid);
   await cliente.query(`WITH base AS (
       SELECT p.uuid,p.data_hora,p.criado_em,ip.meta_diaria,
         sum(CASE WHEN ip.contabiliza_meta THEN ip.peso ELSE 0 END) OVER ordem AS peso_meta_acumulado,
         sum(CASE WHEN ip.contabiliza_meta THEN round((ip.peso/ip.quantidade_referencia)*ip.valor_referencia,2) ELSE 0 END) OVER ordem AS valor_meta_acumulado,
         sum(CASE WHEN NOT ip.contabiliza_meta THEN round((ip.peso/ip.quantidade_referencia)*ip.valor_referencia,2) ELSE 0 END) OVER ordem AS valor_fora_meta_acumulado
       FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid
+      JOIN movimentacoes_caixa_catador mc ON mc.pesagem_uuid=p.uuid AND mc.ativa
       WHERE p.catador_uuid=$1 AND ip.material_uuid=$2 AND p.status='concluida' AND p.excluida_em IS NULL
-        AND (p.data_hora AT TIME ZONE 'America/Bahia')::date=($3::timestamptz AT TIME ZONE 'America/Bahia')::date
+        AND mc.caixa_uuid=$3::uuid
       WINDOW ordem AS (ORDER BY p.data_hora,p.criado_em,p.uuid ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
     ), direitos AS (
       SELECT uuid,data_hora,criado_em,
@@ -197,7 +198,7 @@ async function recalcularPagamentoMetaDiaria(cliente: PoolClient, catadorUuid: s
       UPDATE pesagens p SET valor_total=greatest(v.valor,0),atualizado_em=now() FROM valores v WHERE p.uuid=v.uuid RETURNING p.uuid,p.valor_total
     )
     UPDATE movimentacoes_caixa_catador mc SET valor=a.valor_total,atualizado_em=now()
-    FROM atualizadas a WHERE mc.pesagem_uuid=a.uuid`, [catadorUuid, materialUuid, dataHora]);
+    FROM atualizadas a WHERE mc.pesagem_uuid=a.uuid`, [catadorUuid, materialUuid, caixaUuid]);
 }
 
 type LinhaLiquidacaoMetaGeral = {
@@ -226,8 +227,8 @@ async function recalcularMetasGeraisCatador(cliente: PoolClient, catadorUuid: st
       ip.quantidade_referencia::float8,ip.valor_referencia::float8
     FROM pesagens p
     JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid
-    JOIN caixas_catador cx ON cx.catador_uuid=p.catador_uuid
-      AND cx.data_caixa=(p.data_hora AT TIME ZONE 'America/Bahia')::date
+    JOIN movimentacoes_caixa_catador mc ON mc.pesagem_uuid=p.uuid AND mc.ativa
+    JOIN caixas_catador cx ON cx.uuid=mc.caixa_uuid
     WHERE p.catador_uuid=$1 AND p.status='concluida' AND p.excluida_em IS NULL
       AND cx.meta_geral_ativa AND cx.meta_geral_diaria>0
     ORDER BY cx.data_caixa,p.data_hora,p.criado_em,p.uuid`, [catadorUuid]);
@@ -296,7 +297,7 @@ async function recalcularMetasGeraisCatador(cliente: PoolClient, catadorUuid: st
   }
 }
 
-async function consultarProgressoMetaGeral(cliente: ExecutorSql, catadorUuid: string, dataHora: string) {
+async function consultarProgressoMetaGeral(cliente: ExecutorSql, catadorUuid: string, caixaUuid: string | null) {
   const configuracao = await cliente.query<{ ativa: boolean; meta: number; unidade: string; premio: number; credito_utilizado: number }>(`SELECT
       coalesce(cx.meta_geral_ativa,c.ativa) AS ativa,
       coalesce(cx.meta_geral_diaria,c.meta_diaria)::float8 AS meta,
@@ -304,9 +305,8 @@ async function consultarProgressoMetaGeral(cliente: ExecutorSql, catadorUuid: st
       coalesce(cx.valor_premio_meta_geral,c.valor_premio)::float8 AS premio,
       coalesce(cx.credito_meta_utilizado,0)::float8 AS credito_utilizado
     FROM configuracoes_meta_geral c
-    LEFT JOIN caixas_catador cx ON cx.catador_uuid=$1
-      AND cx.data_caixa=($2::timestamptz AT TIME ZONE 'America/Bahia')::date
-    WHERE c.chave='principal'`, [catadorUuid, dataHora]);
+    LEFT JOIN caixas_catador cx ON cx.uuid=$2::uuid AND cx.catador_uuid=$1
+    WHERE c.chave='principal'`, [catadorUuid, caixaUuid]);
   const detalhes = await cliente.query<{ material_uuid: string; nome: string; unidade: string; peso: number; peso_meta: number; peso_excedente_pago: number; peso_excedente_credito: number; valor_bruto: number; valor_liberado: number; valor_premio: number }>(`SELECT
       m.uuid AS material_uuid,m.nome,ip.unidade,
       sum(ip.peso)::float8 AS peso,
@@ -317,10 +317,10 @@ async function consultarProgressoMetaGeral(cliente: ExecutorSql, catadorUuid: st
       sum(ip.valor_excedente_material)::float8 AS valor_liberado,
       sum(ip.valor_premio_meta)::float8 AS valor_premio
     FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN materiais m ON m.uuid=ip.material_uuid
+    JOIN movimentacoes_caixa_catador mc ON mc.pesagem_uuid=p.uuid AND mc.ativa
     WHERE p.catador_uuid=$1 AND p.status='concluida' AND p.excluida_em IS NULL
-      AND ip.contabiliza_meta
-      AND (p.data_hora AT TIME ZONE 'America/Bahia')::date=($2::timestamptz AT TIME ZONE 'America/Bahia')::date
-    GROUP BY m.uuid,m.nome,ip.unidade ORDER BY m.nome`, [catadorUuid, dataHora]);
+      AND ip.contabiliza_meta AND mc.caixa_uuid=$2::uuid
+    GROUP BY m.uuid,m.nome,ip.unidade ORDER BY m.nome`, [catadorUuid, caixaUuid]);
   const meta = Number(configuracao.rows[0]?.meta ?? 0);
   const ativa = Boolean(configuracao.rows[0]?.ativa && meta > 0);
   const creditoUtilizado = Number(configuracao.rows[0]?.credito_utilizado ?? 0);
@@ -333,10 +333,8 @@ async function consultarProgressoMetaGeral(cliente: ExecutorSql, catadorUuid: st
   const detalhesPagamento = detalhes.rows.map((item) => ({ ...item, valor_liberado: Number(item.valor_liberado), valor_premio: Number(item.valor_premio) }));
   const saldoCredito = await cliente.query<{ saldo: number }>(`SELECT greatest(
       coalesce((SELECT sum(ip.peso_excedente_credito) FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid
-        WHERE p.catador_uuid=$1 AND p.status='concluida' AND p.excluida_em IS NULL
-          AND (p.data_hora AT TIME ZONE 'America/Bahia')::date <= ($2::timestamptz AT TIME ZONE 'America/Bahia')::date),0)
-      - coalesce((SELECT sum(cx.credito_meta_utilizado) FROM caixas_catador cx
-        WHERE cx.catador_uuid=$1 AND cx.data_caixa <= ($2::timestamptz AT TIME ZONE 'America/Bahia')::date),0),0)::float8 AS saldo`, [catadorUuid, dataHora]);
+        WHERE p.catador_uuid=$1 AND p.status='concluida' AND p.excluida_em IS NULL),0)
+      - coalesce((SELECT sum(cx.credito_meta_utilizado) FROM caixas_catador cx WHERE cx.catador_uuid=$1),0),0)::float8 AS saldo`, [catadorUuid]);
   return {
     ativa,
     meta,
@@ -384,7 +382,7 @@ function permissoesExigidasPelaRota(requisicao: FastifyRequest): PermissaoUsuari
     if (rota === "/api/cooperativas") return ["cooperativas_visualizar", "catadores_visualizar", "catadores_cadastrar", "catadores_editar", "pesagens_cadastrar", "relatorios_visualizar"];
     if (rota === "/api/materiais") return ["materiais_gerenciar", "metas_gerenciar", "pesagens_cadastrar", "relatorios_visualizar"];
     if (rota === "/api/configuracoes/meta-geral") return ["metas_gerenciar", "pesagens_cadastrar"];
-    if (rota === "/api/pontos-apoio") return ["pesagens_cadastrar", "relatorios_visualizar"];
+    if (rota === "/api/pontos-apoio") return ["pontos_apoio_gerenciar", "pesagens_cadastrar", "relatorios_visualizar"];
     if (rota === "/api/responsaveis-pesagem") return ["responsaveis_gerenciar", "pesagens_cadastrar", "relatorios_visualizar"];
     if (rota === "/api/enderecos/cep/:cep") return ["catadores_cadastrar", "catadores_editar"];
     if (rota.startsWith("/api/relatorios/")) return ["relatorios_visualizar"];
@@ -404,6 +402,7 @@ function permissoesExigidasPelaRota(requisicao: FastifyRequest): PermissaoUsuari
   if (metodo === "PATCH" && rota === "/api/materiais/participacao-meta") return ["metas_gerenciar"];
   if (["POST", "PUT", "DELETE"].includes(metodo) && rota.startsWith("/api/materiais")) return ["materiais_gerenciar"];
   if (["POST", "PUT", "DELETE"].includes(metodo) && rota.startsWith("/api/responsaveis-pesagem")) return ["responsaveis_gerenciar"];
+  if (["POST", "PUT", "DELETE"].includes(metodo) && rota.startsWith("/api/pontos-apoio")) return ["pontos_apoio_gerenciar"];
   if (metodo === "PUT" && rota === "/api/configuracoes/meta-geral") return ["metas_gerenciar"];
   return "administrador";
 }
@@ -624,7 +623,7 @@ aplicacao.delete("/api/administrador/pesagens/:uuid", { config: { rateLimit: { m
         caixaRemovido = true;
       }
     }
-    await recalcularPagamentoMetaDiaria(cliente, pesagem.catador_uuid, pesagem.material_uuid, pesagem.data_hora);
+    if (pesagem.caixa_uuid && !caixaRemovido) await recalcularPagamentoMetaDiaria(cliente, pesagem.catador_uuid, pesagem.material_uuid, pesagem.caixa_uuid);
     await registrarLimpezaAdministrativa(cliente, confirmacao.administradorUuid, "excluir_pesagem_definitivamente", confirmacao.motivo, {
       codigo: pesagem.codigo, auditoriasRemovidas: auditorias.rowCount ?? 0, caixaVazioRemovido: caixaRemovido,
     }, requisicao.ip, pesagem.uuid);
@@ -643,27 +642,36 @@ aplicacao.delete("/api/administrador/dados-operacionais/dia/:data", { config: { 
     await cliente.query("BEGIN");
     await cliente.query("SELECT pg_advisory_xact_lock(hashtextextended('limpeza-administrativa',0))");
     await cliente.query("LOCK TABLE caixas_catador,pesagens,itens_pesagem,movimentacoes_caixa_catador,auditoria,notificacoes IN ACCESS EXCLUSIVE MODE");
-    const pesagens = await cliente.query<{ uuid: string; catador_uuid: string }>(`SELECT uuid,catador_uuid FROM pesagens
-      WHERE (data_hora AT TIME ZONE 'America/Bahia')::date=$1::date FOR UPDATE`, [parametro.data.data]);
+    const pesagens = await cliente.query<{ uuid: string; catador_uuid: string; material_uuid: string; caixa_uuid: string | null }>(`SELECT p.uuid,p.catador_uuid,ip.material_uuid,mc.caixa_uuid
+      FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid
+      LEFT JOIN movimentacoes_caixa_catador mc ON mc.pesagem_uuid=p.uuid
+      WHERE (p.data_hora AT TIME ZONE 'America/Bahia')::date=$1::date FOR UPDATE OF p,ip`, [parametro.data.data]);
     if (!pesagens.rowCount) {
       await cliente.query("ROLLBACK");
       return resposta.code(404).send({ mensagem: "Não há dados operacionais nessa data." });
     }
-    const caixas = await cliente.query<{ uuid: string; catador_uuid: string }>("SELECT uuid,catador_uuid FROM caixas_catador WHERE data_caixa=$1::date FOR UPDATE", [parametro.data.data]);
     const pesagensUuids = pesagens.rows.map((item) => item.uuid);
-    const caixasUuids = caixas.rows.map((item) => item.uuid);
+    const caixasAfetadosUuids = [...new Set(pesagens.rows.flatMap((item) => item.caixa_uuid ? [item.caixa_uuid] : []))];
     await cliente.query("SELECT set_config('reciclabelo.limpeza_administrativa','autorizada',TRUE)");
-    const auditorias = await cliente.query(`DELETE FROM auditoria WHERE
-      (entidade='pesagens' AND entidade_uuid=ANY($1::uuid[])) OR
-      (entidade='caixas_catador' AND entidade_uuid=ANY($2::uuid[])) RETURNING uuid`, [pesagensUuids, caixasUuids]);
-    await cliente.query(`DELETE FROM notificacoes WHERE
-      (entidade='pesagens' AND entidade_uuid=ANY($1::uuid[])) OR
-      (entidade='caixas_catador' AND entidade_uuid=ANY($2::uuid[]))`, [pesagensUuids, caixasUuids]);
+    const auditoriasPesagens = await cliente.query("DELETE FROM auditoria WHERE entidade='pesagens' AND entidade_uuid=ANY($1::uuid[]) RETURNING uuid", [pesagensUuids]);
+    await cliente.query("DELETE FROM notificacoes WHERE entidade='pesagens' AND entidade_uuid=ANY($1::uuid[])", [pesagensUuids]);
     await cliente.query("DELETE FROM movimentacoes_caixa_catador WHERE pesagem_uuid=ANY($1::uuid[])", [pesagensUuids]);
     await cliente.query("DELETE FROM pesagens WHERE uuid=ANY($1::uuid[])", [pesagensUuids]);
-    await cliente.query("DELETE FROM caixas_catador WHERE uuid=ANY($1::uuid[])", [caixasUuids]);
-    for (const catadorUuid of new Set(pesagens.rows.map((item) => item.catador_uuid))) await recalcularMetasGeraisCatador(cliente, catadorUuid);
-    const contagens = { pesagens: pesagens.rowCount ?? 0, caixas: caixas.rowCount ?? 0, auditorias: auditorias.rowCount ?? 0 };
+    const caixasVazios = caixasAfetadosUuids.length ? await cliente.query<{ uuid: string }>(`SELECT cx.uuid FROM caixas_catador cx
+      WHERE cx.uuid=ANY($1::uuid[]) AND NOT EXISTS(SELECT 1 FROM movimentacoes_caixa_catador mc WHERE mc.caixa_uuid=cx.uuid)
+      FOR UPDATE`, [caixasAfetadosUuids]) : { rows: [] as Array<{ uuid: string }> };
+    const caixasVaziosUuids = caixasVazios.rows.map((item) => item.uuid);
+    let auditoriasCaixasRemovidas = 0;
+    if (caixasVaziosUuids.length) {
+      const auditoriasCaixas = await cliente.query("DELETE FROM auditoria WHERE entidade='caixas_catador' AND entidade_uuid=ANY($1::uuid[]) RETURNING uuid", [caixasVaziosUuids]);
+      auditoriasCaixasRemovidas = auditoriasCaixas.rowCount ?? 0;
+      await cliente.query("DELETE FROM notificacoes WHERE entidade='caixas_catador' AND entidade_uuid=ANY($1::uuid[])", [caixasVaziosUuids]);
+      await cliente.query("DELETE FROM caixas_catador WHERE uuid=ANY($1::uuid[])", [caixasVaziosUuids]);
+    }
+    const recalculos = new Map<string, { catadorUuid: string; materialUuid: string; caixaUuid: string }>();
+    for (const item of pesagens.rows) if (item.caixa_uuid && !caixasVaziosUuids.includes(item.caixa_uuid)) recalculos.set(`${item.caixa_uuid}:${item.material_uuid}`, { catadorUuid: item.catador_uuid, materialUuid: item.material_uuid, caixaUuid: item.caixa_uuid });
+    for (const item of recalculos.values()) await recalcularPagamentoMetaDiaria(cliente, item.catadorUuid, item.materialUuid, item.caixaUuid);
+    const contagens = { pesagens: pesagens.rowCount ?? 0, caixas: caixasVaziosUuids.length, auditorias: (auditoriasPesagens.rowCount ?? 0) + auditoriasCaixasRemovidas };
     await registrarLimpezaAdministrativa(cliente, confirmacao.administradorUuid, "excluir_dia_operacional", confirmacao.motivo, { data: parametro.data.data, ...contagens }, requisicao.ip);
     await cliente.query("COMMIT");
     return { removido: true, contagens };
@@ -799,30 +807,27 @@ aplicacao.get("/api/painel", async (requisicao) => {
   const indicadores = await banco.query(`SELECT
     (SELECT count(*)::int FROM catadores WHERE status = 'ativo') AS catadores_ativos,
     (SELECT count(DISTINCT meta.catador_uuid)::int FROM (
-      SELECT p.catador_uuid FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid
-      JOIN caixas_catador cx ON cx.catador_uuid=p.catador_uuid AND cx.data_caixa=(p.data_hora AT TIME ZONE 'America/Bahia')::date
+      SELECT p.catador_uuid FROM caixas_catador cx JOIN movimentacoes_caixa_catador mc ON mc.caixa_uuid=cx.uuid AND mc.ativa
+      JOIN pesagens p ON p.uuid=mc.pesagem_uuid JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid
       WHERE p.status='concluida' AND p.excluida_em IS NULL AND cx.meta_geral_ativa AND cx.meta_geral_diaria>0
-        AND ip.contabiliza_meta
-        AND (p.data_hora AT TIME ZONE 'America/Bahia')::date=(now() AT TIME ZONE 'America/Bahia')::date
+        AND cx.status='aberto' AND ip.contabiliza_meta
       GROUP BY p.catador_uuid,cx.meta_geral_diaria,cx.credito_meta_utilizado
       HAVING cx.credito_meta_utilizado + sum(ip.peso_meta_aplicado)>=cx.meta_geral_diaria
       UNION
-      SELECT p.catador_uuid FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid
-      LEFT JOIN caixas_catador cx ON cx.catador_uuid=p.catador_uuid AND cx.data_caixa=(p.data_hora AT TIME ZONE 'America/Bahia')::date
+      SELECT p.catador_uuid FROM caixas_catador cx JOIN movimentacoes_caixa_catador mc ON mc.caixa_uuid=cx.uuid AND mc.ativa
+      JOIN pesagens p ON p.uuid=mc.pesagem_uuid JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid
       WHERE p.status='concluida' AND p.excluida_em IS NULL AND NOT coalesce(cx.meta_geral_ativa,FALSE)
-        AND ip.contabiliza_meta
-        AND (p.data_hora AT TIME ZONE 'America/Bahia')::date=(now() AT TIME ZONE 'America/Bahia')::date
+        AND cx.status='aberto' AND ip.contabiliza_meta
       GROUP BY p.catador_uuid,ip.material_uuid HAVING max(ip.meta_diaria)>0 AND sum(ip.peso) >= max(ip.meta_diaria)
     ) meta) AS catadores_meta_atingida,
     coalesce(sum(p.peso_total), 0)::float8 AS total_coletado,
     coalesce(sum(greatest(p.valor_total-coalesce((SELECT sum(ipc.valor) FROM itens_pagamento_catador ipc WHERE ipc.pesagem_uuid=p.uuid),0),0)), 0)::float8 AS valor_total_pagar,
     count(p.uuid)::int AS coletas_realizadas,
     coalesce(sum(p.peso_total) / nullif(count(DISTINCT p.catador_uuid), 0), 0)::float8 AS media_por_catador
-    FROM pesagens p WHERE p.status = 'concluida' AND p.excluida_em IS NULL
-      AND (p.data_hora AT TIME ZONE 'America/Bahia')::date = (now() AT TIME ZONE 'America/Bahia')::date`);
+    FROM pesagens p WHERE p.status = 'concluida' AND p.excluida_em IS NULL`);
   const producao = await banco.query(`SELECT to_char(dia,'YYYY-MM-DD') AS data, coalesce(sum(p.peso_total),0)::float8 AS peso
-    FROM generate_series(current_date - interval '6 days', current_date, interval '1 day') dia
-    LEFT JOIN pesagens p ON p.status='concluida' AND p.excluida_em IS NULL AND p.data_hora >= dia AND p.data_hora < dia + interval '1 day'
+    FROM generate_series((now() AT TIME ZONE 'America/Bahia')::date - interval '6 days',(now() AT TIME ZONE 'America/Bahia')::date,interval '1 day') dia
+    LEFT JOIN pesagens p ON p.status='concluida' AND p.excluida_em IS NULL AND (p.data_hora AT TIME ZONE 'America/Bahia')::date=dia::date
     GROUP BY dia ORDER BY dia`);
   const atividades = await banco.query(`SELECT a.uuid,a.acao,a.entidade,a.criado_em,a.dados,
       coalesce(p.codigo,pc.codigo) AS codigo,p.peso_total::float8,coalesce(p.valor_total,pc.valor)::float8 AS valor_total,
@@ -875,18 +880,18 @@ aplicacao.get("/api/catadores", async (requisicao) => {
       ,coalesce((SELECT sum(p.peso_total) FROM pesagens p WHERE p.catador_uuid=c.uuid AND p.status='concluida' AND p.excluida_em IS NULL),0)::float8 AS total_quilos,
       EXISTS(SELECT 1 FROM arquivos_catador ar WHERE ar.catador_uuid=c.uuid AND ar.tipo='foto_rosto') AS tem_foto
       ,coalesce((SELECT sum(p.valor_total) FROM pesagens p WHERE p.catador_uuid=c.uuid AND p.status='concluida' AND p.excluida_em IS NULL),0)::float8 AS total_ganhos,
-      coalesce((SELECT sum(ip.peso) FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid WHERE p.catador_uuid=c.uuid AND ip.contabiliza_meta AND p.status='concluida' AND p.excluida_em IS NULL AND (p.data_hora AT TIME ZONE 'America/Bahia')::date=(now() AT TIME ZONE 'America/Bahia')::date),0)::float8 AS peso_hoje,
+      coalesce((SELECT sum(ip.peso) FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN movimentacoes_caixa_catador mc ON mc.pesagem_uuid=p.uuid AND mc.ativa WHERE p.catador_uuid=c.uuid AND mc.caixa_uuid=cx.uuid AND ip.contabiliza_meta AND p.status='concluida' AND p.excluida_em IS NULL),0)::float8 AS peso_hoje,
       CASE WHEN coalesce(cx.meta_geral_ativa,cfg.ativa) AND coalesce(cx.meta_geral_diaria,cfg.meta_diaria)>0
         THEN coalesce(cx.meta_geral_diaria,cfg.meta_diaria)::float8
-        ELSE coalesce((SELECT max(ip.meta_diaria) FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid WHERE p.catador_uuid=c.uuid AND ip.contabiliza_meta AND p.status='concluida' AND p.excluida_em IS NULL AND (p.data_hora AT TIME ZONE 'America/Bahia')::date=(now() AT TIME ZONE 'America/Bahia')::date), (SELECT min(meta_diaria) FROM materiais WHERE status='ativo' AND contabiliza_meta), 0)::float8 END AS meta_hoje,
+        ELSE coalesce((SELECT max(ip.meta_diaria) FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN movimentacoes_caixa_catador mc ON mc.pesagem_uuid=p.uuid AND mc.ativa WHERE p.catador_uuid=c.uuid AND mc.caixa_uuid=cx.uuid AND ip.contabiliza_meta AND p.status='concluida' AND p.excluida_em IS NULL), (SELECT min(meta_diaria) FROM materiais WHERE status='ativo' AND contabiliza_meta), 0)::float8 END AS meta_hoje,
       CASE WHEN coalesce(cx.meta_geral_ativa,cfg.ativa) AND coalesce(cx.meta_geral_diaria,cfg.meta_diaria)>0
-        THEN least((coalesce(cx.credito_meta_utilizado,0)+coalesce((SELECT sum(ip.peso_meta_aplicado) FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid WHERE p.catador_uuid=c.uuid AND ip.contabiliza_meta AND p.status='concluida' AND p.excluida_em IS NULL AND (p.data_hora AT TIME ZONE 'America/Bahia')::date=(now() AT TIME ZONE 'America/Bahia')::date),0))/coalesce(cx.meta_geral_diaria,cfg.meta_diaria)*100,100)::float8
-        ELSE coalesce((SELECT max(progresso) FROM (SELECT CASE WHEN max(ip.meta_diaria)<=0 THEN 100 ELSE least(sum(ip.peso)/max(ip.meta_diaria)*100,100) END::float8 AS progresso FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid WHERE p.catador_uuid=c.uuid AND ip.contabiliza_meta AND p.status='concluida' AND p.excluida_em IS NULL AND (p.data_hora AT TIME ZONE 'America/Bahia')::date=(now() AT TIME ZONE 'America/Bahia')::date GROUP BY ip.material_uuid) metas),0)::float8 END AS percentual_meta_hoje,
+        THEN least((coalesce(cx.credito_meta_utilizado,0)+coalesce((SELECT sum(ip.peso_meta_aplicado) FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN movimentacoes_caixa_catador mc ON mc.pesagem_uuid=p.uuid AND mc.ativa WHERE p.catador_uuid=c.uuid AND mc.caixa_uuid=cx.uuid AND ip.contabiliza_meta AND p.status='concluida' AND p.excluida_em IS NULL),0))/coalesce(cx.meta_geral_diaria,cfg.meta_diaria)*100,100)::float8
+        ELSE coalesce((SELECT max(progresso) FROM (SELECT CASE WHEN max(ip.meta_diaria)<=0 THEN 100 ELSE least(sum(ip.peso)/max(ip.meta_diaria)*100,100) END::float8 AS progresso FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN movimentacoes_caixa_catador mc ON mc.pesagem_uuid=p.uuid AND mc.ativa WHERE p.catador_uuid=c.uuid AND mc.caixa_uuid=cx.uuid AND ip.contabiliza_meta AND p.status='concluida' AND p.excluida_em IS NULL GROUP BY ip.material_uuid) metas),0)::float8 END AS percentual_meta_hoje,
       coalesce(cx.status::text, 'aberto') AS status_caixa_hoje
     FROM catadores c LEFT JOIN cooperativas co ON co.uuid = c.cooperativa_uuid
     LEFT JOIN contatos_catador ct ON ct.catador_uuid = c.uuid
     CROSS JOIN configuracoes_meta_geral cfg
-    LEFT JOIN caixas_catador cx ON cx.catador_uuid=c.uuid AND cx.data_caixa=(now() AT TIME ZONE 'America/Bahia')::date
+    LEFT JOIN caixas_catador cx ON cx.catador_uuid=c.uuid AND cx.status='aberto'
     WHERE ($3='' OR to_tsvector('portuguese', coalesce(c.nome_completo,'') || ' ' || coalesce(c.apelido,'') || ' ' || c.codigo)
       @@ consulta_busca_prefixada($3))
       AND ($4::text IS NULL OR c.status::text=$4)
@@ -958,25 +963,23 @@ aplicacao.get("/api/catadores/:uuid/perfil", async (requisicao, resposta) => {
   const materiais = await banco.query(`SELECT m.uuid,m.nome,coalesce(sum(ip.peso),0)::float8 AS peso_total,
       coalesce(sum(p.valor_total),0)::float8 AS ganho_total,count(*)::int AS pesagens
     FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN materiais m ON m.uuid=ip.material_uuid
-    LEFT JOIN caixas_catador cx ON cx.catador_uuid=p.catador_uuid AND cx.data_caixa=(p.data_hora AT TIME ZONE 'America/Bahia')::date
     WHERE p.catador_uuid=$1 AND p.status='concluida' AND p.excluida_em IS NULL GROUP BY m.uuid,m.nome ORDER BY ganho_total DESC`, [uuid]);
   const metas = await banco.query(`SELECT * FROM (
-      SELECT (p.data_hora AT TIME ZONE 'America/Bahia')::date AS data,'Meta geral'::text AS nome,
+      SELECT cx.data_caixa AS data,'Meta geral'::text AS nome,
         (cx.credito_meta_utilizado+sum(ip.peso_meta_aplicado))::float8 AS peso,cx.meta_geral_diaria::float8 AS meta,
         least(round((cx.credito_meta_utilizado+sum(ip.peso_meta_aplicado))/cx.meta_geral_diaria*100,2),100)::float8 AS percentual,
         cx.credito_meta_utilizado+sum(ip.peso_meta_aplicado)>=cx.meta_geral_diaria AS atingida,sum(p.valor_total) FILTER (WHERE ip.contabiliza_meta)::float8 AS ganho
-      FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN caixas_catador cx ON cx.catador_uuid=p.catador_uuid AND cx.data_caixa=(p.data_hora AT TIME ZONE 'America/Bahia')::date
+      FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN movimentacoes_caixa_catador mc ON mc.pesagem_uuid=p.uuid AND mc.ativa JOIN caixas_catador cx ON cx.uuid=mc.caixa_uuid
       WHERE p.catador_uuid=$1 AND ip.contabiliza_meta AND p.status='concluida' AND p.excluida_em IS NULL AND cx.meta_geral_ativa AND cx.meta_geral_diaria>0
-      GROUP BY (p.data_hora AT TIME ZONE 'America/Bahia')::date,cx.meta_geral_diaria,cx.credito_meta_utilizado
+      GROUP BY cx.uuid
       UNION ALL
-      SELECT (p.data_hora AT TIME ZONE 'America/Bahia')::date AS data,m.nome,
+      SELECT cx.data_caixa AS data,m.nome,
         sum(ip.peso)::float8 AS peso,max(ip.meta_diaria)::float8 AS meta,
         CASE WHEN max(ip.meta_diaria)<=0 THEN 100 ELSE least(round(sum(ip.peso)/max(ip.meta_diaria)*100,2),100) END::float8 AS percentual,
         (max(ip.meta_diaria)<=0 OR sum(ip.peso)>=max(ip.meta_diaria)) AS atingida,sum(p.valor_total)::float8 AS ganho
-      FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN materiais m ON m.uuid=ip.material_uuid
-      LEFT JOIN caixas_catador cx ON cx.catador_uuid=p.catador_uuid AND cx.data_caixa=(p.data_hora AT TIME ZONE 'America/Bahia')::date
+      FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN materiais m ON m.uuid=ip.material_uuid JOIN movimentacoes_caixa_catador mc ON mc.pesagem_uuid=p.uuid AND mc.ativa JOIN caixas_catador cx ON cx.uuid=mc.caixa_uuid
       WHERE p.catador_uuid=$1 AND ip.contabiliza_meta AND p.status='concluida' AND p.excluida_em IS NULL AND NOT coalesce(cx.meta_geral_ativa,FALSE)
-      GROUP BY (p.data_hora AT TIME ZONE 'America/Bahia')::date,m.uuid,m.nome
+      GROUP BY cx.uuid,m.uuid,m.nome
     ) historico_metas ORDER BY data DESC,nome LIMIT 120`, [uuid]);
   const caixas = await banco.query(`SELECT cx.uuid,cx.data_caixa,cx.status,cx.aberto_em,cx.fechado_em,cx.reaberto_em,cx.motivo_reabertura,
       ua.nome AS aberto_por,uf.nome AS fechado_por,ur.nome AS reaberto_por,
@@ -1441,7 +1444,7 @@ aplicacao.put("/api/configuracoes/meta-geral", async (requisicao, resposta) => {
     const atualizada = await cliente.query<{ uuid: string }>(`UPDATE configuracoes_meta_geral SET ativa=$1,meta_diaria=$2,valor_premio=$3,unidade=$4,atualizado_por_uuid=$5,atualizado_em=now()
       WHERE chave='principal' RETURNING uuid`, [entrada.data.ativa, entrada.data.metaDiaria, entrada.data.valorPremio, entrada.data.unidade, requisicao.user.usuarioUuid]);
     const caixasAbertos = entrada.data.ativa ? await cliente.query<{ catador_uuid: string }>(`UPDATE caixas_catador SET valor_premio_meta_geral=$1,atualizado_em=now()
-      WHERE status='aberto' AND meta_geral_ativa AND data_caixa=(now() AT TIME ZONE 'America/Bahia')::date
+      WHERE status='aberto' AND meta_geral_ativa
       RETURNING catador_uuid`, [entrada.data.valorPremio]) : { rows: [] as Array<{ catador_uuid: string }> };
     for (const catadorUuid of new Set(caixasAbertos.rows.map((caixa) => caixa.catador_uuid))) await recalcularMetasGeraisCatador(cliente, catadorUuid);
     await registrarAuditoria(cliente, requisicao.user.usuarioUuid, "alteracao", "configuracoes_meta_geral", atualizada.rows[0]!.uuid, { antes: anterior.rows[0], depois: entrada.data, caixasAbertosRecalculados: caixasAbertos.rows.length }, requisicao.ip);
@@ -1455,9 +1458,53 @@ aplicacao.put("/api/configuracoes/meta-geral", async (requisicao, resposta) => {
   }
 });
 
-aplicacao.get("/api/pontos-apoio", async () => {
-  const { rows } = await banco.query("SELECT uuid,nome FROM pontos_apoio WHERE status='ativo' ORDER BY nome");
+const esquemaPontoApoio = z.object({ nome: z.string().trim().min(2).max(160), ativo: z.boolean().default(true) });
+
+aplicacao.get("/api/pontos-apoio", async (requisicao) => {
+  const consulta = z.object({ incluirInativos: z.stringbool().default(false) }).parse(requisicao.query);
+  const { rows } = await banco.query("SELECT uuid,nome,status,criado_em,atualizado_em FROM pontos_apoio WHERE $1::boolean OR status='ativo' ORDER BY status DESC,nome", [consulta.incluirInativos]);
   return { dados: rows };
+});
+
+aplicacao.post("/api/pontos-apoio", async (requisicao, resposta) => {
+  const entrada = esquemaPontoApoio.safeParse(requisicao.body);
+  if (!entrada.success) return resposta.code(400).send({ mensagem: "Revise o nome do ponto de apoio.", detalhes: z.treeifyError(entrada.error) });
+  try {
+    const criado = await banco.query<{ uuid: string }>("INSERT INTO pontos_apoio (nome,status) VALUES ($1,$2) RETURNING uuid", [entrada.data.nome, entrada.data.ativo ? "ativo" : "inativo"]);
+    await registrarAuditoria(banco, requisicao.user.usuarioUuid, "criacao", "pontos_apoio", criado.rows[0]!.uuid, entrada.data, requisicao.ip);
+    return resposta.code(201).send({ uuid: criado.rows[0]!.uuid });
+  } catch (erro) {
+    if ((erro as { code?: string }).code === "23505") return resposta.code(409).send({ mensagem: "Já existe um ponto de apoio com este nome." });
+    throw erro;
+  }
+});
+
+aplicacao.put("/api/pontos-apoio/:uuid", async (requisicao, resposta) => {
+  const uuid = z.uuid().parse((requisicao.params as { uuid: string }).uuid);
+  const entrada = esquemaPontoApoio.safeParse(requisicao.body);
+  if (!entrada.success) return resposta.code(400).send({ mensagem: "Revise o nome do ponto de apoio.", detalhes: z.treeifyError(entrada.error) });
+  const anterior = await banco.query("SELECT nome,status FROM pontos_apoio WHERE uuid=$1", [uuid]);
+  if (!anterior.rows[0]) return resposta.code(404).send({ mensagem: "Ponto de apoio não encontrado." });
+  try {
+    await banco.query("UPDATE pontos_apoio SET nome=$1,status=$2,atualizado_em=now() WHERE uuid=$3", [entrada.data.nome, entrada.data.ativo ? "ativo" : "inativo", uuid]);
+  } catch (erro) {
+    if ((erro as { code?: string }).code === "23505") return resposta.code(409).send({ mensagem: "Já existe um ponto de apoio com este nome." });
+    throw erro;
+  }
+  await registrarAuditoria(banco, requisicao.user.usuarioUuid, "alteracao", "pontos_apoio", uuid, { antes: anterior.rows[0], depois: entrada.data }, requisicao.ip);
+  return resposta.code(204).send();
+});
+
+aplicacao.delete("/api/pontos-apoio/:uuid", async (requisicao, resposta) => {
+  const uuid = z.uuid().parse((requisicao.params as { uuid: string }).uuid);
+  const ponto = await banco.query<{ nome: string }>("SELECT nome FROM pontos_apoio WHERE uuid=$1", [uuid]);
+  if (!ponto.rows[0]) return resposta.code(404).send({ mensagem: "Ponto de apoio não encontrado." });
+  const vinculos = await banco.query<{ total: number }>("SELECT count(*)::int AS total FROM pesagens WHERE ponto_apoio_uuid=$1", [uuid]);
+  if (Number(vinculos.rows[0]?.total ?? 0) > 0) return resposta.code(409).send({ mensagem: "Este ponto possui pesagens no histórico e não pode ser excluído. Desative-o para impedir novas seleções." });
+  await banco.query("DELETE FROM pontos_apoio WHERE uuid=$1", [uuid]);
+  await banco.query("DELETE FROM notificacoes WHERE usuario_uuid=$1 AND entidade='pontos_apoio' AND entidade_uuid=$2", [requisicao.user.usuarioUuid, uuid]);
+  await registrarAuditoria(banco, requisicao.user.usuarioUuid, "exclusao_definitiva", "pontos_apoio", uuid, { nome: ponto.rows[0].nome, semPesagensVinculadas: true }, requisicao.ip);
+  return resposta.code(204).send();
 });
 
 const esquemaResponsavelPesagem = z.object({ nome: z.string().trim().min(2).max(160), ativo: z.boolean().default(true) });
@@ -1597,12 +1644,12 @@ aplicacao.post("/api/pesagens", async (requisicao, resposta) => {
     const guardarExcedenteMeta = Boolean(contabilizaMeta && entrada.data.guardarExcedenteMeta);
     let valorTotal = 0;
     const caixa = entrada.data.status === "concluida" ? await obterCaixaAberto(cliente, entrada.data.catadorUuid, entrada.data.dataHora, requisicao.user.usuarioUuid, requisicao.ip) : null;
-    if (entrada.data.status === "concluida") {
-      await bloquearDiaCatador(cliente, entrada.data.catadorUuid, entrada.data.dataHora);
-      await bloquearMetaDiaria(cliente, entrada.data.catadorUuid, entrada.data.materialUuid, entrada.data.dataHora);
+    if (caixa) {
+      await bloquearDiaCatador(cliente, entrada.data.catadorUuid, caixa.uuid);
+      await bloquearMetaDiaria(cliente, entrada.data.catadorUuid, entrada.data.materialUuid, caixa.uuid);
     }
-    const progressoMaterialAntes = entrada.data.status === "concluida" ? await consultarProgressoMeta(cliente, entrada.data.catadorUuid, entrada.data.materialUuid, entrada.data.dataHora, ref.meta_diaria) : null;
-    const progressoGeralAntes = entrada.data.status === "concluida" ? await consultarProgressoMetaGeral(cliente, entrada.data.catadorUuid, entrada.data.dataHora) : null;
+    const progressoMaterialAntes = caixa ? await consultarProgressoMeta(cliente, entrada.data.catadorUuid, entrada.data.materialUuid, caixa.uuid, ref.meta_diaria) : null;
+    const progressoGeralAntes = caixa ? await consultarProgressoMetaGeral(cliente, entrada.data.catadorUuid, caixa.uuid) : null;
     await cliente.query("SELECT pg_advisory_xact_lock(hashtext('pesagens_codigo'))");
     const proximo = await cliente.query<{ codigo: string }>("SELECT 'PES-' || lpad((coalesce(max(substring(codigo from '[0-9]+')::bigint),0) + 1)::text, 6, '0') AS codigo FROM pesagens");
     const codigo = proximo.rows[0]!.codigo;
@@ -1611,24 +1658,24 @@ aplicacao.post("/api/pesagens", async (requisicao, resposta) => {
     await cliente.query(`INSERT INTO itens_pesagem (pesagem_uuid,material_uuid,peso,unidade,quantidade_referencia,valor_referencia,meta_diaria,contabiliza_meta,guardar_excedente_meta,observacao) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [criada.rows[0]!.uuid, entrada.data.materialUuid, entrada.data.peso, ref.unidade, ref.quantidade_referencia, ref.valor_referencia, ref.meta_diaria, contabilizaMeta, guardarExcedenteMeta, entrada.data.observacao ?? null]);
     if (caixa) await cliente.query(`INSERT INTO movimentacoes_caixa_catador (caixa_uuid,pesagem_uuid,peso,valor) VALUES ($1,$2,$3,$4)`, [caixa.uuid, criada.rows[0]!.uuid, entrada.data.peso, valorTotal]);
     if (entrada.data.status === "concluida") {
-      await recalcularPagamentoMetaDiaria(cliente, entrada.data.catadorUuid, entrada.data.materialUuid, entrada.data.dataHora);
+      await recalcularPagamentoMetaDiaria(cliente, entrada.data.catadorUuid, entrada.data.materialUuid, caixa!.uuid);
       const valorCalculado = await cliente.query<{ valor_total: number }>("SELECT valor_total::float8 FROM pesagens WHERE uuid=$1", [criada.rows[0]!.uuid]);
       valorTotal = Number(valorCalculado.rows[0]?.valor_total ?? 0);
     }
     await registrarAuditoria(cliente, requisicao.user.usuarioUuid, "criacao", "pesagens", criada.rows[0]!.uuid, { codigo, dados: { ...entrada.data, contabilizarNaMeta: contabilizaMeta, guardarExcedenteMeta }, valorTotal }, requisicao.ip);
-    const progressoMaterial = entrada.data.status === "concluida" ? await consultarProgressoMeta(cliente, entrada.data.catadorUuid, entrada.data.materialUuid, entrada.data.dataHora, ref.meta_diaria) : null;
-    const progressoMetaGeral = entrada.data.status === "concluida" ? await consultarProgressoMetaGeral(cliente, entrada.data.catadorUuid, entrada.data.dataHora) : null;
+    const progressoMaterial = caixa ? await consultarProgressoMeta(cliente, entrada.data.catadorUuid, entrada.data.materialUuid, caixa.uuid, ref.meta_diaria) : null;
+    const progressoMetaGeral = caixa ? await consultarProgressoMetaGeral(cliente, entrada.data.catadorUuid, caixa.uuid) : null;
     const usaMetaGeral = Boolean(progressoMetaGeral?.ativa);
     const metaAtingidaAgora = contabilizaMeta && (usaMetaGeral
       ? Boolean(progressoMetaGeral?.atingida && !progressoGeralAntes?.atingida)
       : Boolean(progressoMaterial?.atingida && !progressoMaterialAntes?.atingida));
     const descricaoMeta = usaMetaGeral
-      ? `a meta geral de ${progressoMetaGeral!.meta.toLocaleString("pt-BR")} ${progressoMetaGeral!.unidade} e tem ${progressoMetaGeral!.valorLiberado.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} liberados no dia`
-      : `a meta de ${ref.meta_diaria.toLocaleString("pt-BR")} ${ref.unidade} em ${ref.nome} e faturou ${progressoMaterial!.ganho.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} no dia`;
+      ? `a meta geral de ${progressoMetaGeral!.meta.toLocaleString("pt-BR")} ${progressoMetaGeral!.unidade} e tem ${progressoMetaGeral!.valorLiberado.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} liberados no ciclo`
+      : `a meta de ${ref.meta_diaria.toLocaleString("pt-BR")} ${ref.unidade} em ${ref.nome} e faturou ${progressoMaterial!.ganho.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} no ciclo`;
     const descricaoPagamento = !contabilizaMeta
       ? `${valorTotal.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} pagos imediatamente fora da meta`
       : valorTotal > 0 ? valorTotal.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "valor sujeito à meta";
-    await criarNotificacao(cliente, requisicao.user.usuarioUuid, metaAtingidaAgora ? "meta" : "pesagem", metaAtingidaAgora ? "Meta diária atingida" : "Pesagem registrada", metaAtingidaAgora ? `${catador.rows[0].nome_completo} bateu ${descricaoMeta}.` : `${catador.rows[0].nome_completo}: ${entrada.data.peso.toLocaleString("pt-BR")} ${ref.unidade}, ${descricaoPagamento}.`, "pesagens", criada.rows[0]!.uuid);
+    await criarNotificacao(cliente, requisicao.user.usuarioUuid, metaAtingidaAgora ? "meta" : "pesagem", metaAtingidaAgora ? "Meta do ciclo atingida" : "Pesagem registrada", metaAtingidaAgora ? `${catador.rows[0].nome_completo} bateu ${descricaoMeta}.` : `${catador.rows[0].nome_completo}: ${entrada.data.peso.toLocaleString("pt-BR")} ${ref.unidade}, ${descricaoPagamento}.`, "pesagens", criada.rows[0]!.uuid);
     await cliente.query("COMMIT");
     return resposta.code(201).send({ uuid: criada.rows[0]!.uuid, codigo, pesoTotal: entrada.data.peso, valorTotal, contabilizaMeta, guardarExcedenteMeta, dataHora: entrada.data.dataHora, status: entrada.data.status, progressoMeta: progressoMaterial, progressoMetaGeral, metaAtingidaAgora, caixa: caixa ? { data: caixa.dataCaixa, status: "aberto" } : null });
   } catch (erro) { await cliente.query("ROLLBACK"); throw erro; } finally { cliente.release(); }
@@ -1642,8 +1689,10 @@ aplicacao.put("/api/pesagens/:uuid", async (requisicao, resposta) => {
   const cliente = await banco.connect();
   try {
     await cliente.query("BEGIN");
-    const atual = await cliente.query<Record<string, unknown> & { codigo: string; catador_uuid: string; data_hora: string; status: string; item_uuid: string; excluida_em: string | null }>(`SELECT p.*,ip.uuid AS item_uuid,ip.material_uuid,ip.peso AS item_peso,ip.unidade,ip.quantidade_referencia,ip.valor_referencia,ip.contabiliza_meta,ip.guardar_excedente_meta
-      FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid WHERE p.uuid=$1 FOR UPDATE OF p,ip`, [uuid]);
+    const atual = await cliente.query<Record<string, unknown> & { codigo: string; catador_uuid: string; data_hora: string; status: string; item_uuid: string; excluida_em: string | null; caixa_uuid: string | null; caixa_status: "aberto" | "fechado" | null }>(`SELECT p.*,ip.uuid AS item_uuid,ip.material_uuid,ip.peso AS item_peso,ip.unidade,ip.quantidade_referencia,ip.valor_referencia,ip.contabiliza_meta,ip.guardar_excedente_meta,mc.caixa_uuid,cx.status AS caixa_status
+      FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid
+      LEFT JOIN movimentacoes_caixa_catador mc ON mc.pesagem_uuid=p.uuid AND mc.ativa LEFT JOIN caixas_catador cx ON cx.uuid=mc.caixa_uuid
+      WHERE p.uuid=$1 FOR UPDATE OF p,ip`, [uuid]);
     if (!atual.rows[0]) { await cliente.query("ROLLBACK"); return resposta.code(404).send({ mensagem: "Pesagem não encontrada." }); }
     if (atual.rows[0].excluida_em) { await cliente.query("ROLLBACK"); return resposta.code(409).send({ mensagem: "Uma pesagem excluída não pode ser alterada." }); }
     const catador = await cliente.query<{ nome_completo: string }>("SELECT nome_completo FROM catadores WHERE uuid=$1 AND status='ativo' FOR SHARE", [entrada.data.catadorUuid]);
@@ -1661,17 +1710,21 @@ aplicacao.put("/api/pesagens/:uuid", async (requisicao, resposta) => {
     const contabilizaMeta = Boolean(material.rows[0].contabiliza_meta && entrada.data.contabilizarNaMeta);
     const guardarExcedenteMeta = Boolean(contabilizaMeta && entrada.data.guardarExcedenteMeta);
     let valorTotal = 0;
-    if (atual.rows[0].status === "concluida") await bloquearMetaDiaria(cliente, atual.rows[0].catador_uuid, String(atual.rows[0].material_uuid), atual.rows[0].data_hora);
-    if (entrada.data.status === "concluida") await bloquearMetaDiaria(cliente, entrada.data.catadorUuid, entrada.data.materialUuid, entrada.data.dataHora);
-    if (atual.rows[0].status === "concluida") await obterCaixaAberto(cliente, atual.rows[0].catador_uuid, atual.rows[0].data_hora, requisicao.user.usuarioUuid, requisicao.ip);
-    const caixaDestino = entrada.data.status === "concluida" ? await obterCaixaAberto(cliente, entrada.data.catadorUuid, entrada.data.dataHora, requisicao.user.usuarioUuid, requisicao.ip) : null;
+    if (atual.rows[0].status === "concluida" && atual.rows[0].caixa_status === "fechado") throw Object.assign(new Error("O ciclo operacional desta pesagem está fechado. Reabra o caixa antes de corrigir o registro."), { statusCode: 409 });
+    if (atual.rows[0].status === "concluida" && atual.rows[0].caixa_uuid) await bloquearMetaDiaria(cliente, atual.rows[0].catador_uuid, String(atual.rows[0].material_uuid), atual.rows[0].caixa_uuid);
+    const caixaDestino = entrada.data.status === "concluida"
+      ? atual.rows[0].status === "concluida" && atual.rows[0].catador_uuid === entrada.data.catadorUuid && atual.rows[0].caixa_uuid
+        ? { uuid: atual.rows[0].caixa_uuid }
+        : await obterCaixaAberto(cliente, entrada.data.catadorUuid, entrada.data.dataHora, requisicao.user.usuarioUuid, requisicao.ip)
+      : null;
+    if (caixaDestino) await bloquearMetaDiaria(cliente, entrada.data.catadorUuid, entrada.data.materialUuid, caixaDestino.uuid);
     await cliente.query(`UPDATE pesagens SET catador_uuid=$1,cooperativa_uuid=$2,ponto_apoio_uuid=$3,responsavel_pesagem_uuid=$4,responsavel_outro=$5,status=$6::status_pesagem,observacao=$7,peso_total=$8,valor_total=$9,data_hora=$10,confirmada_em=CASE WHEN $6::status_pesagem='concluida'::status_pesagem THEN $10::timestamptz ELSE NULL END,atualizado_em=now() WHERE uuid=$11`, [entrada.data.catadorUuid, entrada.data.cooperativaUuid, entrada.data.pontoApoioUuid, entrada.data.responsavelPesagemUuid ?? null, entrada.data.responsavelOutro ?? null, entrada.data.status, entrada.data.observacao ?? null, entrada.data.peso, valorTotal, entrada.data.dataHora, uuid]);
     await cliente.query(`UPDATE itens_pesagem SET material_uuid=$1,peso=$2,unidade=$3,quantidade_referencia=$4,valor_referencia=$5,meta_diaria=$6,contabiliza_meta=$7,guardar_excedente_meta=$8,observacao=$9 WHERE uuid=$10`, [entrada.data.materialUuid, entrada.data.peso, material.rows[0].unidade, material.rows[0].quantidade_referencia, material.rows[0].valor_referencia, material.rows[0].meta_diaria, contabilizaMeta, guardarExcedenteMeta, entrada.data.observacao ?? null, atual.rows[0].item_uuid]);
     if (caixaDestino) await cliente.query(`INSERT INTO movimentacoes_caixa_catador (caixa_uuid,pesagem_uuid,peso,valor,ativa) VALUES ($1,$2,$3,$4,TRUE)
       ON CONFLICT (pesagem_uuid) DO UPDATE SET caixa_uuid=EXCLUDED.caixa_uuid,peso=EXCLUDED.peso,valor=EXCLUDED.valor,ativa=TRUE,atualizado_em=now()`, [caixaDestino.uuid, uuid, entrada.data.peso, valorTotal]);
     else await cliente.query("UPDATE movimentacoes_caixa_catador SET ativa=FALSE,atualizado_em=now() WHERE pesagem_uuid=$1", [uuid]);
-    if (atual.rows[0].status === "concluida") await recalcularPagamentoMetaDiaria(cliente, atual.rows[0].catador_uuid, String(atual.rows[0].material_uuid), atual.rows[0].data_hora);
-    if (entrada.data.status === "concluida") await recalcularPagamentoMetaDiaria(cliente, entrada.data.catadorUuid, entrada.data.materialUuid, entrada.data.dataHora);
+    if (atual.rows[0].status === "concluida" && atual.rows[0].caixa_uuid) await recalcularPagamentoMetaDiaria(cliente, atual.rows[0].catador_uuid, String(atual.rows[0].material_uuid), atual.rows[0].caixa_uuid);
+    if (caixaDestino) await recalcularPagamentoMetaDiaria(cliente, entrada.data.catadorUuid, entrada.data.materialUuid, caixaDestino.uuid);
     const valorCalculado = await cliente.query<{ valor_total: number }>("SELECT valor_total::float8 FROM pesagens WHERE uuid=$1", [uuid]);
     valorTotal = Number(valorCalculado.rows[0]?.valor_total ?? 0);
     const depois = { ...entrada.data, contabilizarNaMeta: contabilizaMeta, guardarExcedenteMeta, valorTotal };
@@ -1689,16 +1742,16 @@ aplicacao.delete("/api/pesagens/:uuid", async (requisicao, resposta) => {
   const cliente = await banco.connect();
   try {
     await cliente.query("BEGIN");
-    const existente = await cliente.query<Record<string, unknown> & { codigo: string; catador_uuid: string; material_uuid: string; data_hora: string; status: string; excluida_em: string | null }>("SELECT p.*,ip.material_uuid FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid WHERE p.uuid=$1 FOR UPDATE OF p", [uuid]);
+    const existente = await cliente.query<Record<string, unknown> & { codigo: string; catador_uuid: string; material_uuid: string; data_hora: string; status: string; excluida_em: string | null; caixa_uuid: string | null; caixa_status: "aberto" | "fechado" | null }>("SELECT p.*,ip.material_uuid,mc.caixa_uuid,cx.status AS caixa_status FROM pesagens p JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid LEFT JOIN movimentacoes_caixa_catador mc ON mc.pesagem_uuid=p.uuid AND mc.ativa LEFT JOIN caixas_catador cx ON cx.uuid=mc.caixa_uuid WHERE p.uuid=$1 FOR UPDATE OF p", [uuid]);
     if (!existente.rows[0]) { await cliente.query("ROLLBACK"); return resposta.code(404).send({ mensagem: "Pesagem não encontrada." }); }
     if (existente.rows[0].excluida_em) { await cliente.query("ROLLBACK"); return resposta.code(409).send({ mensagem: "A pesagem já foi excluída." }); }
     if (existente.rows[0].status === "concluida") {
-      await obterCaixaAberto(cliente, existente.rows[0].catador_uuid, existente.rows[0].data_hora, requisicao.user.usuarioUuid, requisicao.ip);
-      await bloquearMetaDiaria(cliente, existente.rows[0].catador_uuid, existente.rows[0].material_uuid, existente.rows[0].data_hora);
+      if (existente.rows[0].caixa_status === "fechado") throw Object.assign(new Error("O ciclo operacional desta pesagem está fechado. Reabra o caixa antes de excluir o registro."), { statusCode: 409 });
+      if (existente.rows[0].caixa_uuid) await bloquearMetaDiaria(cliente, existente.rows[0].catador_uuid, existente.rows[0].material_uuid, existente.rows[0].caixa_uuid);
     }
     await cliente.query("UPDATE pesagens SET excluida_em=now(),excluida_por_uuid=$1,motivo_exclusao=$2,atualizado_em=now() WHERE uuid=$3", [requisicao.user.usuarioUuid, entrada.data.motivo, uuid]);
     await cliente.query("UPDATE movimentacoes_caixa_catador SET ativa=FALSE,atualizado_em=now() WHERE pesagem_uuid=$1", [uuid]);
-    if (existente.rows[0].status === "concluida") await recalcularPagamentoMetaDiaria(cliente, existente.rows[0].catador_uuid, existente.rows[0].material_uuid, existente.rows[0].data_hora);
+    if (existente.rows[0].status === "concluida" && existente.rows[0].caixa_uuid) await recalcularPagamentoMetaDiaria(cliente, existente.rows[0].catador_uuid, existente.rows[0].material_uuid, existente.rows[0].caixa_uuid);
     await registrarAuditoria(cliente, requisicao.user.usuarioUuid, "exclusao_logica", "pesagens", uuid, { motivo: entrada.data.motivo, registro: existente.rows[0] }, requisicao.ip);
     await criarNotificacao(cliente, requisicao.user.usuarioUuid, "pesagem", "Pesagem excluída", `${existente.rows[0].codigo} foi excluída e preservada para auditoria.`, "pesagens", uuid);
     await cliente.query("COMMIT");
@@ -1709,6 +1762,12 @@ aplicacao.delete("/api/pesagens/:uuid", async (requisicao, resposta) => {
 aplicacao.get("/api/catadores/:uuid/metas", async (requisicao) => {
   const catadorUuid = z.uuid().parse((requisicao.params as { uuid: string }).uuid);
   const consulta = z.object({ data: z.iso.date().default(new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bahia" }).format(new Date())) }).parse(requisicao.query);
+  const caixa = await banco.query(`SELECT cx.uuid,cx.status,cx.data_caixa,cx.fechado_em,cx.reaberto_em,
+      coalesce(sum(mc.peso) FILTER (WHERE mc.ativa),0)::float8 AS peso,coalesce(sum(mc.valor) FILTER (WHERE mc.ativa),0)::float8 AS valor
+    FROM caixas_catador cx LEFT JOIN movimentacoes_caixa_catador mc ON mc.caixa_uuid=cx.uuid
+    WHERE cx.catador_uuid=$1 AND (cx.status='aberto' OR cx.data_caixa=$2::date)
+    GROUP BY cx.uuid ORDER BY (cx.status='aberto') DESC,cx.data_caixa DESC LIMIT 1`, [catadorUuid, consulta.data]);
+  const caixaAtual = caixa.rows[0] as { uuid: string; status: "aberto" | "fechado"; data_caixa: string; peso: number; valor: number } | undefined;
   const metas = await banco.query(`SELECT m.uuid AS material_uuid,m.nome,m.unidade,m.meta_diaria::float8 AS meta,
       coalesce(sum(ip.peso) FILTER (WHERE p.uuid IS NOT NULL AND ip.contabiliza_meta),0)::float8 AS peso,coalesce(sum(p.valor_total) FILTER (WHERE p.uuid IS NOT NULL AND ip.contabiliza_meta),0)::float8 AS ganho,
       CASE WHEN m.meta_diaria<=0 THEN 100 ELSE least(round(coalesce(sum(ip.peso) FILTER (WHERE p.uuid IS NOT NULL AND ip.contabiliza_meta),0)/m.meta_diaria*100,2),100) END::float8 AS percentual,
@@ -1718,15 +1777,10 @@ aplicacao.get("/api/catadores/:uuid/metas", async (requisicao) => {
     FROM materiais m
     LEFT JOIN itens_pesagem ip ON ip.material_uuid=m.uuid
     LEFT JOIN pesagens p ON p.uuid=ip.pesagem_uuid AND p.catador_uuid=$1 AND p.status='concluida' AND p.excluida_em IS NULL
-      AND (p.data_hora AT TIME ZONE 'America/Bahia')::date=$2::date
-    WHERE m.status='ativo' AND m.contabiliza_meta GROUP BY m.uuid ORDER BY m.nome`, [catadorUuid, consulta.data]);
-  const caixa = await banco.query(`SELECT cx.uuid,cx.status,cx.data_caixa,cx.fechado_em,cx.reaberto_em,
-      coalesce(sum(mc.peso) FILTER (WHERE mc.ativa),0)::float8 AS peso,coalesce(sum(mc.valor) FILTER (WHERE mc.ativa),0)::float8 AS valor
-    FROM caixas_catador cx LEFT JOIN movimentacoes_caixa_catador mc ON mc.caixa_uuid=cx.uuid
-    WHERE cx.catador_uuid=$1 AND cx.data_caixa=$2::date GROUP BY cx.uuid`, [catadorUuid, consulta.data]);
-  const referenciaData = `${consulta.data}T12:00:00-03:00`;
-  const metaGeral = await consultarProgressoMetaGeral(banco, catadorUuid, referenciaData);
-  return { data: consulta.data, metas: metas.rows, metaGeral, caixa: caixa.rows[0] ?? { status: "aberto", data_caixa: consulta.data, peso: 0, valor: 0 } };
+      AND EXISTS(SELECT 1 FROM movimentacoes_caixa_catador mc WHERE mc.pesagem_uuid=p.uuid AND mc.ativa AND mc.caixa_uuid=$2::uuid)
+    WHERE m.status='ativo' AND m.contabiliza_meta GROUP BY m.uuid ORDER BY m.nome`, [catadorUuid, caixaAtual?.uuid ?? null]);
+  const metaGeral = await consultarProgressoMetaGeral(banco, catadorUuid, caixaAtual?.uuid ?? null);
+  return { data: caixaAtual?.data_caixa ?? consulta.data, metas: metas.rows, metaGeral, caixa: caixaAtual ?? { status: "aberto", data_caixa: consulta.data, peso: 0, valor: 0 } };
 });
 
 aplicacao.post("/api/catadores/:uuid/caixa/fechar", async (requisicao, resposta) => {
@@ -1738,7 +1792,7 @@ aplicacao.post("/api/catadores/:uuid/caixa/fechar", async (requisicao, resposta)
     await cliente.query("BEGIN");
     const catador = await cliente.query<{ nome_completo: string; codigo: string }>("SELECT nome_completo,codigo FROM catadores WHERE uuid=$1 FOR SHARE", [catadorUuid]);
     if (!catador.rows[0]) { await cliente.query("ROLLBACK"); return resposta.code(404).send({ mensagem: "Catador não encontrado." }); }
-    await cliente.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`caixa:${catadorUuid}:${entrada.data.data}`]);
+    await cliente.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`caixa:${catadorUuid}`]);
     let caixa = await cliente.query<{ uuid: string; status: string }>("SELECT uuid,status FROM caixas_catador WHERE catador_uuid=$1 AND data_caixa=$2::date FOR UPDATE", [catadorUuid, entrada.data.data]);
     if (!caixa.rows[0]) {
       caixa = await cliente.query<{ uuid: string; status: string }>(`INSERT INTO caixas_catador (catador_uuid,data_caixa,aberto_por_uuid,meta_geral_ativa,meta_geral_diaria,unidade_meta_geral,valor_premio_meta_geral)
@@ -1766,7 +1820,9 @@ aplicacao.post("/api/catadores/:uuid/caixa/reabrir", async (requisicao, resposta
   const cliente = await banco.connect();
   try {
     await cliente.query("BEGIN");
-    await cliente.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`caixa:${catadorUuid}:${entrada.data.data}`]);
+    await cliente.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`caixa:${catadorUuid}`]);
+    const outroAberto = await cliente.query("SELECT 1 FROM caixas_catador WHERE catador_uuid=$1 AND status='aberto' AND data_caixa<>$2::date FOR UPDATE", [catadorUuid, entrada.data.data]);
+    if (outroAberto.rows[0]) { await cliente.query("ROLLBACK"); return resposta.code(409).send({ mensagem: "Este catador já possui outro ciclo operacional aberto. Feche-o antes de reabrir este caixa." }); }
     const caixa = await cliente.query<{ uuid: string; status: string }>("SELECT uuid,status FROM caixas_catador WHERE catador_uuid=$1 AND data_caixa=$2::date FOR UPDATE", [catadorUuid, entrada.data.data]);
     if (!caixa.rows[0]) { await cliente.query("ROLLBACK"); return resposta.code(404).send({ mensagem: "Caixa não encontrado para esta data." }); }
     if (caixa.rows[0].status === "aberto") { await cliente.query("ROLLBACK"); return resposta.code(409).send({ mensagem: "Este caixa já está aberto." }); }
@@ -1850,16 +1906,16 @@ aplicacao.get("/api/relatorios/pesagens", async (requisicao) => {
       cx.status::text AS status_caixa,
       CASE WHEN NOT ip.contabiliza_meta THEN 100
       WHEN cx.meta_geral_ativa AND cx.meta_geral_diaria>0 THEN
-        least(round((cx.credito_meta_utilizado + (SELECT coalesce(sum(ip2.peso_meta_aplicado),0) FROM pesagens p2 JOIN itens_pesagem ip2 ON ip2.pesagem_uuid=p2.uuid WHERE p2.catador_uuid=p.catador_uuid AND ip2.contabiliza_meta AND p2.status='concluida' AND p2.excluida_em IS NULL AND (p2.data_hora AT TIME ZONE 'America/Bahia')::date=(p.data_hora AT TIME ZONE 'America/Bahia')::date))/cx.meta_geral_diaria*100,2),100)::float8
+        least(round((cx.credito_meta_utilizado + (SELECT coalesce(sum(ip2.peso_meta_aplicado),0) FROM pesagens p2 JOIN itens_pesagem ip2 ON ip2.pesagem_uuid=p2.uuid JOIN movimentacoes_caixa_catador mc2 ON mc2.pesagem_uuid=p2.uuid AND mc2.ativa WHERE p2.catador_uuid=p.catador_uuid AND mc2.caixa_uuid=cx.uuid AND ip2.contabiliza_meta AND p2.status='concluida' AND p2.excluida_em IS NULL))/cx.meta_geral_diaria*100,2),100)::float8
       WHEN ip.meta_diaria<=0 THEN 100
-      ELSE least(round((SELECT coalesce(sum(ip2.peso),0) FROM pesagens p2 JOIN itens_pesagem ip2 ON ip2.pesagem_uuid=p2.uuid WHERE p2.catador_uuid=p.catador_uuid AND ip2.material_uuid=ip.material_uuid AND ip2.contabiliza_meta AND p2.status='concluida' AND p2.excluida_em IS NULL AND (p2.data_hora AT TIME ZONE 'America/Bahia')::date=(p.data_hora AT TIME ZONE 'America/Bahia')::date)/ip.meta_diaria*100,2),100)::float8 END AS percentual_meta,
+      ELSE least(round((SELECT coalesce(sum(ip2.peso),0) FROM pesagens p2 JOIN itens_pesagem ip2 ON ip2.pesagem_uuid=p2.uuid JOIN movimentacoes_caixa_catador mc2 ON mc2.pesagem_uuid=p2.uuid AND mc2.ativa WHERE p2.catador_uuid=p.catador_uuid AND mc2.caixa_uuid=cx.uuid AND ip2.material_uuid=ip.material_uuid AND ip2.contabiliza_meta AND p2.status='concluida' AND p2.excluida_em IS NULL)/ip.meta_diaria*100,2),100)::float8 END AS percentual_meta,
       coalesce(rp.nome,p.responsavel_outro) AS responsavel,uc.nome AS criado_por,uc.email AS criado_por_email,
       ue.nome AS excluido_por,ue.email AS excluido_por_email,
       coalesce((SELECT json_agg(json_build_object('uuid',a.uuid,'acao',a.acao,'dados',a.dados,'criado_em',a.criado_em,'usuario',ua.nome,'email',ua.email,'endereco_ip',host(a.endereco_ip)) ORDER BY a.criado_em DESC)
         FROM auditoria a LEFT JOIN usuarios ua ON ua.uuid=a.usuario_uuid WHERE a.entidade='pesagens' AND a.entidade_uuid=p.uuid), '[]'::json) AS historico
     FROM pesagens p JOIN catadores c ON c.uuid=p.catador_uuid JOIN pontos_apoio pa ON pa.uuid=p.ponto_apoio_uuid
     LEFT JOIN cooperativas co ON co.uuid=p.cooperativa_uuid
-    LEFT JOIN caixas_catador cx ON cx.catador_uuid=p.catador_uuid AND cx.data_caixa=(p.data_hora AT TIME ZONE 'America/Bahia')::date
+    LEFT JOIN movimentacoes_caixa_catador mc ON mc.pesagem_uuid=p.uuid AND mc.ativa LEFT JOIN caixas_catador cx ON cx.uuid=mc.caixa_uuid
     LEFT JOIN responsaveis_pesagem rp ON rp.uuid=p.responsavel_pesagem_uuid
     LEFT JOIN usuarios uc ON uc.uuid=p.criada_por_uuid
     LEFT JOIN usuarios ue ON ue.uuid=p.excluida_por_uuid
@@ -1972,7 +2028,7 @@ aplicacao.get("/api/relatorios/exportar", async (requisicao, resposta) => {
       coalesce((SELECT json_agg(json_build_object('protocolo',a.uuid,'acao',a.acao,'data',a.criado_em,'usuario',ua.nome,'email',ua.email,'ip',host(a.endereco_ip),'dados',a.dados) ORDER BY a.criado_em) FROM auditoria a LEFT JOIN usuarios ua ON ua.uuid=a.usuario_uuid WHERE a.entidade='pesagens' AND a.entidade_uuid=p.uuid),'[]'::json) AS historico
       FROM pesagens p JOIN catadores c ON c.uuid=p.catador_uuid JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN materiais m ON m.uuid=ip.material_uuid
       JOIN pontos_apoio pa ON pa.uuid=p.ponto_apoio_uuid LEFT JOIN cooperativas co ON co.uuid=p.cooperativa_uuid LEFT JOIN responsaveis_pesagem rp ON rp.uuid=p.responsavel_pesagem_uuid
-      LEFT JOIN caixas_catador cx ON cx.catador_uuid=p.catador_uuid AND cx.data_caixa=(p.data_hora AT TIME ZONE 'America/Bahia')::date LEFT JOIN usuarios uc ON uc.uuid=p.criada_por_uuid LEFT JOIN usuarios ue ON ue.uuid=p.excluida_por_uuid
+      LEFT JOIN movimentacoes_caixa_catador mc ON mc.pesagem_uuid=p.uuid AND mc.ativa LEFT JOIN caixas_catador cx ON cx.uuid=mc.caixa_uuid LEFT JOIN usuarios uc ON uc.uuid=p.criada_por_uuid LEFT JOIN usuarios ue ON ue.uuid=p.excluida_por_uuid
       WHERE p.data_hora >= $1::date AND p.data_hora < $2::date+interval '1 day' AND ($3::uuid IS NULL OR p.catador_uuid=$3) AND ($4::uuid IS NULL OR ip.material_uuid=$4) AND ($5::uuid IS NULL OR p.cooperativa_uuid=$5)
       AND ($6::text IS NULL OR CASE WHEN $6='excluida' THEN p.excluida_em IS NOT NULL ELSE p.status::text=$6 AND p.excluida_em IS NULL END)
       AND ($7='' OR to_tsvector('portuguese',c.nome_completo || ' ' || c.codigo || ' ' || p.codigo || ' ' || m.nome || ' ' || p.status::text || ' ' || coalesce(co.nome,'')) @@ consulta_busca_prefixada($7))
@@ -2011,4 +2067,22 @@ process.on("SIGTERM", encerrar);
 process.on("SIGINT", encerrar);
 
 await banco.query("SELECT 1");
+const ciclosParaRecalcular = await banco.query<{ catador_uuid: string; material_uuid: string | null; caixa_uuid: string }>(`SELECT DISTINCT cx.catador_uuid,
+    CASE WHEN cx.meta_geral_ativa AND cx.meta_geral_diaria>0 THEN NULL ELSE ip.material_uuid END AS material_uuid,
+    cx.uuid AS caixa_uuid
+  FROM caixas_catador cx JOIN movimentacoes_caixa_catador mc ON mc.caixa_uuid=cx.uuid AND mc.ativa
+  JOIN pesagens p ON p.uuid=mc.pesagem_uuid JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid
+  WHERE cx.status='aberto' AND p.status='concluida' AND p.excluida_em IS NULL`);
+for (const ciclo of ciclosParaRecalcular.rows) {
+  const cliente = await banco.connect();
+  try {
+    await cliente.query("BEGIN");
+    if (ciclo.material_uuid) await recalcularPagamentoMetaDiaria(cliente, ciclo.catador_uuid, ciclo.material_uuid, ciclo.caixa_uuid);
+    else await recalcularMetasGeraisCatador(cliente, ciclo.catador_uuid);
+    await cliente.query("COMMIT");
+  } catch (erro) {
+    await cliente.query("ROLLBACK");
+    throw erro;
+  } finally { cliente.release(); }
+}
 await aplicacao.listen({ port: ambiente.PORTA_API, host: ambiente.HOST_API });

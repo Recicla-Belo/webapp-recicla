@@ -33,7 +33,7 @@ import { TelaLogin } from "./tela-login";
 import { MarcaPlataforma } from "./marca-plataforma";
 import { requisitarApi, type AdministradorApi, type NotificacaoApi, type PermissaoUsuario } from "@/app/dados/api";
 
-const permissoesConfiguracao: PermissaoUsuario[] = ["materiais_gerenciar", "responsaveis_gerenciar", "metas_gerenciar", "identidade_visual_gerenciar"];
+const permissoesConfiguracao: PermissaoUsuario[] = ["materiais_gerenciar", "responsaveis_gerenciar", "metas_gerenciar", "identidade_visual_gerenciar", "pontos_apoio_gerenciar"];
 const itens: Array<{ pagina: Pagina; rotulo: string; icone: LucideIcon; permissoes: PermissaoUsuario[] }> = [
   { pagina: "painel", rotulo: "Visão geral", icone: LayoutDashboard, permissoes: ["painel_visualizar"] },
   { pagina: "catadores", rotulo: "Catadores", icone: UsersRound, permissoes: ["catadores_visualizar"] },

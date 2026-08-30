@@ -69,7 +69,7 @@ export function PainelPrincipal({ onNovaPesagem, podeNovaPesagem = true, adminis
     { rotulo: "Valor total a pagar", valor: dinheiro(dados.indicadores.valor_total_pagar), icone: WalletCards },
     { rotulo: "Média por catador", valor: `${dados.indicadores.media_por_catador.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} kg`, icone: Gauge },
     { rotulo: "Coletas realizadas", valor: dados.indicadores.coletas_realizadas.toLocaleString("pt-BR"), icone: Recycle },
-    { rotulo: "Catadores que bateram meta hoje", valor: dados.indicadores.catadores_meta_atingida.toLocaleString("pt-BR"), icone: Target },
+    { rotulo: "Catadores com meta atingida", valor: dados.indicadores.catadores_meta_atingida.toLocaleString("pt-BR"), icone: Target },
   ], [dados]);
   const maiorPeso = Math.max(...dados.producaoSemanal.map((item) => Number(item.peso)), 1);
 
@@ -78,7 +78,7 @@ export function PainelPrincipal({ onNovaPesagem, podeNovaPesagem = true, adminis
 
   return <section className="painel-principal">
     <section className="secao-indicadores sem-chamada">
-      <div className="titulo-secao"><div><h2>Indicadores de hoje</h2><p>Resultados da operação do dia; o histórico completo permanece em Relatórios</p></div></div>
+      <div className="titulo-secao"><div><h2>Indicadores acumulados</h2><p>Resultados preservados até uma limpeza administrativa explícita</p></div></div>
       <div className="grade-indicadores">{indicadores.map((item, indice) => <article className="cartao-indicador" key={item.rotulo}><div className={`icone-indicador cor-${indice}`}><item.icone /></div><p>{item.rotulo}</p><strong>{item.valor}</strong></article>)}</div>
     </section>
     <div className="grade-inferior">
