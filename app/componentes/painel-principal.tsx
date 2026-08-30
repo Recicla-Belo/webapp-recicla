@@ -10,7 +10,7 @@ import { ModalExclusaoAdministrativa } from "@/app/componentes/modal-exclusao-ad
 
 type DadosAuditoria = { motivo?: string; antes?: Record<string, unknown>; depois?: Record<string, unknown> };
 type AtividadeApi = {
-  uuid: string; acao: string; entidade: string; criado_em: string; dados: DadosAuditoria;
+  uuid: string; acao: string; entidade: string; entidade_uuid: string | null; criado_em: string; dados: DadosAuditoria;
   codigo: string | null; peso_total: number | null; valor_total: number | null; status: string | null;
   catador_uuid: string | null; codigo_catador: string | null; catador: string | null; tem_foto: boolean;
   contato_catador: string | null; endereco_catador: string | null; cooperativa_catador: string | null;
@@ -55,7 +55,13 @@ export function PainelPrincipal({ onNovaPesagem, podeNovaPesagem = true, adminis
     if (!atividadeExcluir || !administrador) return;
     setExcluindo(true); setErroExclusao("");
     try {
-      await requisitarApi(`/api/administrador/auditoria/${atividadeExcluir.uuid}`, { method: "DELETE", body: JSON.stringify(dadosConfirmacao) });
+      const pesagemUuid = atividadeExcluir.entidade === "pesagens" ? atividadeExcluir.entidade_uuid : null;
+      await requisitarApi(pesagemUuid ? "/api/administrador/pesagens" : `/api/administrador/auditoria/${atividadeExcluir.uuid}`, {
+        method: "DELETE",
+        body: JSON.stringify(pesagemUuid
+          ? { ...dadosConfirmacao, confirmacao: "EXCLUIR REGISTROS", pesagensUuids: [pesagemUuid] }
+          : dadosConfirmacao),
+      });
       setAtividadeExcluir(null);
       if (dados.atividades.length === 1 && paginaAtividades > 1) setPaginaAtividades((paginaAtual) => paginaAtual - 1);
       else await carregar();
@@ -85,11 +91,11 @@ export function PainelPrincipal({ onNovaPesagem, podeNovaPesagem = true, adminis
       <section className="painel"><div className="titulo-secao"><div><h2>Produção dos últimos 7 dias</h2><p>Volume confirmado no banco de dados</p></div></div><div className="grafico" aria-label="Gráfico de produção dos últimos sete dias">{dados.producaoSemanal.map((item) => <div className="barra-grupo" key={item.data}><div className="barra" title={`${Number(item.peso).toLocaleString("pt-BR")} kg`} style={{ height: `${Math.max((Number(item.peso) / maiorPeso) * 100, Number(item.peso) > 0 ? 6 : 1)}%` }} /><span>{rotuloDia(item.data)}</span></div>)}</div></section>
       <section className="painel atividade">
         <div className="titulo-secao"><div><h2>Atividade recente</h2><p>Últimos 30 dias, limitada a 100 eventos; o livro completo fica em Relatórios</p></div>{podeNovaPesagem && <button type="button" onClick={onNovaPesagem}>Registrar nova</button>}</div>
-        {dados.atividades.length === 0 ? <p className="estado-vazio">Nenhuma movimentação registrada.</p> : dados.atividades.map((atividade) => <AtividadeRecente atividade={atividade} key={atividade.uuid} podeExcluir={administrador} aoExcluir={() => { setErroExclusao(""); setAtividadeExcluir(atividade); }} />)}
+        {dados.atividades.length === 0 ? <p className="estado-vazio">Nenhuma movimentação registrada.</p> : dados.atividades.map((atividade) => <AtividadeRecente atividade={atividade} key={atividade.uuid} podeExcluir={administrador && !(atividade.entidade === "pesagens" && atividade.acao === "exclusao_logica")} aoExcluir={() => { setErroExclusao(""); setAtividadeExcluir(atividade); }} />)}
         <Paginacao pagina={paginaAtividades} total={dados.paginacaoAtividades.total} itensPorPagina={limiteAtividades} aoMudarPagina={setPaginaAtividades} aoMudarQuantidade={(quantidade) => { setLimiteAtividades(quantidade); setPaginaAtividades(1); }} opcoesQuantidade={[5, 10, 20]} rotulo="atividades" />
       </section>
     </div>
-    <ModalExclusaoAdministrativa aberto={Boolean(atividadeExcluir)} titulo="Apagar item da Atividade recente?" descricao="Somente este evento deixará de aparecer no painel e no livro de auditoria." itensApagados={[atividadeExcluir ? `${rotuloAtividade(atividadeExcluir.acao, atividadeExcluir.entidade)} — ${new Date(atividadeExcluir.criado_em).toLocaleString("pt-BR")}` : "Evento selecionado"]} itensPreservados={["Catadores e seus dados", "Cooperativas e associações", "Pesagens e valores vinculados", "Usuários e permissões"]} fraseConfirmacao="EXCLUIR DEFINITIVAMENTE" processando={excluindo} erro={erroExclusao} aoConfirmar={(dadosConfirmacao) => void excluirAtividade(dadosConfirmacao)} aoFechar={() => { if (!excluindo) { setAtividadeExcluir(null); setErroExclusao(""); } }} />
+    <ModalExclusaoAdministrativa aberto={Boolean(atividadeExcluir)} titulo={atividadeExcluir?.entidade === "pesagens" ? "Excluir a pesagem e corrigir os valores?" : "Apagar item da Atividade recente?"} descricao={atividadeExcluir?.entidade === "pesagens" ? "A pesagem será invalidada, sairá do histórico operacional e todos os valores, metas e caixas afetados serão recalculados." : "Somente este evento deixará de aparecer no painel e no livro de auditoria."} itensApagados={[atividadeExcluir ? `${rotuloAtividade(atividadeExcluir.acao, atividadeExcluir.entidade)} — ${new Date(atividadeExcluir.criado_em).toLocaleString("pt-BR")}` : "Evento selecionado"]} itensPreservados={atividadeExcluir?.entidade === "pesagens" ? ["Registro excluído nos Relatórios", "Dados anteriores e motivo na auditoria", "Catadores, cooperativas, usuários e permissões"] : ["Catadores e seus dados", "Cooperativas e associações", "Pesagens e valores vinculados", "Usuários e permissões"]} fraseConfirmacao={atividadeExcluir?.entidade === "pesagens" ? "EXCLUIR REGISTROS" : "EXCLUIR DEFINITIVAMENTE"} processando={excluindo} erro={erroExclusao} aoConfirmar={(dadosConfirmacao) => void excluirAtividade(dadosConfirmacao)} aoFechar={() => { if (!excluindo) { setAtividadeExcluir(null); setErroExclusao(""); } }} />
   </section>;
 }
 

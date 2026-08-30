@@ -4,16 +4,17 @@
 
 import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 import { AlertTriangle, ArrowLeft, Banknote, Camera, Eye, FileSpreadsheet, LoaderCircle, LockKeyhole, Pencil, Plus, Search, Trash2, UnlockKeyhole, UserCheck, UserX, WalletCards, X } from "lucide-react";
-import { baixarArquivoApi, requisitarApi, URL_API, type CatadorApi, type CooperativaApi } from "@/app/dados/api";
+import { baixarArquivoApi, requisitarApi, URL_API, type CatadorApi, type CooperativaApi, type MaterialApi, type PontoApoioApi, type ResponsavelPesagemApi } from "@/app/dados/api";
 import { Paginacao } from "@/app/componentes/paginacao";
 import { ModalConfirmacao } from "@/app/componentes/modal-confirmacao";
+import { ModalExclusaoAdministrativa } from "@/app/componentes/modal-exclusao-administrativa";
 import { ModalPagamentoCatador, ModalReciboPagamento, type ContaRecebimento, type ReciboPagamento } from "@/app/componentes/modal-pagamento-catador";
 import { useTermoBusca } from "@/app/utilitarios/use-termo-busca";
 
 const etapas = ["Identificação", "Contato e endereço", "Pagamento", "Foto e revisão"];
 const vazio = { nomeCompleto: "", apelido: "", cooperativaUuid: "", genero: "", racaCor: "", dataNascimento: "", cpf: "", cep: "", logradouro: "", numero: "", complemento: "", bairro: "", cidade: "Belo Horizonte", estado: "MG", tipoPagamento: "pix", tipoChavePix: "CPF", chavePix: "", banco: "", agencia: "", numeroConta: "", tipoConta: "corrente", nomeTitular: "", cpfTitular: "", relacaoTitular: "" };
 
-type AcessosCatadores = { cadastrar: boolean; editar: boolean; excluir: boolean; gerenciarCaixa: boolean; exportar: boolean; pagar: boolean };
+type AcessosCatadores = { administrador: boolean; cadastrar: boolean; editar: boolean; excluir: boolean; gerenciarCaixa: boolean; exportar: boolean; pagar: boolean };
 
 export function TelaCatadores({ acessos }: { acessos: AcessosCatadores }) {
   const [catadores, setCatadores] = useState<CatadorApi[]>([]);
@@ -132,6 +133,12 @@ function formatarCpf(valor: string) {
 
 type EnderecoPerfil = { cep: string | null; logradouro: string | null; numero: string | null; complemento: string | null; bairro: string | null; cidade: string | null; estado: string | null; referencia?: string | null };
 type ContaFinanceiraPerfil = ContaRecebimento;
+type PesagemHistorico = {
+  uuid: string; codigo: string; data_hora: string; status: "concluida" | "agendada" | "cancelada"; peso_total: number; valor_total: number;
+  catador_uuid: string; cooperativa_uuid: string; ponto_apoio_uuid: string; responsavel_pesagem_uuid: string | null; responsavel_outro: string | null;
+  observacao: string | null; material_uuid: string; contabiliza_meta: boolean; guardar_excedente_meta: boolean;
+  material: string; ponto_apoio: string; cooperativa: string | null; responsavel: string;
+};
 
 type PerfilApi = {
   catador: Omit<CatadorApi, "contatos"> & { cooperativa_uuid: string | null; genero: string | null; raca_cor: string | null; data_nascimento: string | null; cpf: string | null; endereco: EnderecoPerfil | null; contas_financeiras: ContaFinanceiraPerfil[]; contatos: Array<{ tipo: string; valor: string; principal?: boolean }> };
@@ -139,7 +146,7 @@ type PerfilApi = {
   materiais: Array<{ uuid: string; nome: string; peso_total: number; ganho_total: number; pesagens: number }>;
   metas: Array<{ data: string; nome: string; peso: number; meta: number; percentual: number; atingida: boolean; ganho: number }>;
   caixas: Array<{ uuid: string; data_caixa: string; status: "aberto" | "fechado"; aberto_em: string; fechado_em: string | null; reaberto_em: string | null; motivo_reabertura: string | null; aberto_por: string | null; fechado_por: string | null; reaberto_por: string | null; peso: number; valor: number; movimentacoes: number }>;
-  historico: Array<{ uuid: string; codigo: string; data_hora: string; status: string; peso_total: number; valor_total: number; excluida_em: string | null; contabiliza_meta: boolean; material: string; ponto_apoio: string; cooperativa: string | null; responsavel: string }>;
+  historico: PesagemHistorico[];
   pagamentos: ReciboPagamento[];
 };
 
@@ -160,10 +167,15 @@ function PerfilCatador({ uuid, acessos, onVoltar, onEditar, onExcluir }: { uuid:
   const [paginaCaixas, setPaginaCaixas] = useState(1);
   const [paginaHistorico, setPaginaHistorico] = useState(1);
   const [paginaPagamentos, setPaginaPagamentos] = useState(1);
+  const [pesagensSelecionadas, setPesagensSelecionadas] = useState<string[]>([]);
+  const [pesagensExcluir, setPesagensExcluir] = useState<PesagemHistorico[]>([]);
+  const [pesagemEditar, setPesagemEditar] = useState<PesagemHistorico | null>(null);
+  const [processandoPesagens, setProcessandoPesagens] = useState(false);
+  const [erroPesagens, setErroPesagens] = useState("");
   const hoje = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bahia" }).format(new Date());
   const carregar = useCallback(async () => {
     setCarregando(true);
-    try { setDados(await requisitarApi<PerfilApi>(`/api/catadores/${uuid}/perfil`)); setErro(""); }
+    try { setDados(await requisitarApi<PerfilApi>(`/api/catadores/${uuid}/perfil`)); setPesagensSelecionadas([]); setErro(""); }
     catch (falha) { setErro(falha instanceof Error ? falha.message : "Não foi possível carregar a ficha do catador."); }
     finally { setCarregando(false); }
   }, [uuid]);
@@ -180,6 +192,19 @@ function PerfilCatador({ uuid, acessos, onVoltar, onEditar, onExcluir }: { uuid:
       setAcaoCaixa(null); setMotivoReabertura(""); await carregar();
     } catch (falha) { setErro(falha instanceof Error ? falha.message : "Não foi possível alterar o caixa."); }
     finally { setProcessando(false); }
+  }
+
+  async function excluirPesagens(dadosConfirmacao: { senhaAtual: string; confirmacao: string; motivo: string }) {
+    if (!acessos.administrador || pesagensExcluir.length === 0) return;
+    setProcessandoPesagens(true); setErroPesagens("");
+    try {
+      await requisitarApi("/api/administrador/pesagens", {
+        method: "DELETE",
+        body: JSON.stringify({ ...dadosConfirmacao, pesagensUuids: pesagensExcluir.map((item) => item.uuid) }),
+      });
+      setPesagensExcluir([]); await carregar();
+    } catch (falha) { setErroPesagens(falha instanceof Error ? falha.message : "Não foi possível excluir e recalcular as pesagens."); }
+    finally { setProcessandoPesagens(false); }
   }
 
   if (!dados) return <section className="pagina-interna"><button className="botao-secundario" onClick={onVoltar}><ArrowLeft /> Voltar</button><div className="painel estado-pagina">{erro || <span className="estado-carregando"><LoaderCircle className="icone-carregando" /> Carregando ficha completa...</span>}</div></section>;
@@ -203,12 +228,56 @@ function PerfilCatador({ uuid, acessos, onVoltar, onEditar, onExcluir }: { uuid:
     <section className="painel"><div className="titulo-secao"><div><h2>Ganhos por material</h2><p>Totais financeiros separados por material pesado</p></div></div><div className="grade-materiais-ficha">{dados.materiais.map((item) => <article key={item.uuid}><strong>{item.nome}</strong><span>{Number(item.peso_total).toLocaleString("pt-BR")} kg</span><b>{Number(item.ganho_total).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</b><small>{item.pesagens} pesagem(ns)</small></article>)}</div></section>
     <section className="painel"><div className="titulo-secao"><div><h2>Histórico de metas</h2><p>Progresso diário e ganho de cada meta</p></div></div><div className="lista-metas-ficha">{metasPaginadas.map((meta, indice) => <article key={`${meta.data}-${meta.nome}-${indice}`}><header><strong>{meta.nome}</strong><span>{new Date(`${String(meta.data).slice(0, 10)}T12:00:00`).toLocaleDateString("pt-BR")} · {meta.atingida ? "Meta batida" : "Em andamento"}</span></header><BarraMeta percentual={Number(meta.percentual)} texto={`${Number(meta.peso).toLocaleString("pt-BR")} / ${Number(meta.meta).toLocaleString("pt-BR")} kg`} />{meta.atingida && <b>{Number(meta.ganho).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</b>}</article>)}</div><Paginacao pagina={paginaMetas} total={dados.metas.length} itensPorPagina={itensPerfil} aoMudarPagina={setPaginaMetas} rotulo="metas" /></section>
     <section className="painel"><div className="titulo-secao"><div><h2>Caixas individuais</h2><p>Aberturas, fechamentos, reaberturas e totais por dia</p></div></div><div className="tabela-responsiva"><table><thead><tr><th>Data</th><th>Status</th><th>Movimentações</th><th>Peso</th><th>Valor</th><th>Responsáveis e reabertura</th></tr></thead><tbody>{caixasPaginados.map((item) => <tr key={item.uuid}><td>{new Date(`${String(item.data_caixa).slice(0, 10)}T12:00:00`).toLocaleDateString("pt-BR")}</td><td><span className={`status-caixa ${item.status}`}>{item.status}</span></td><td>{item.movimentacoes}</td><td>{Number(item.peso).toLocaleString("pt-BR")} kg</td><td>{Number(item.valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</td><td><strong>Aberto por {item.aberto_por || "sistema"}</strong>{item.fechado_em && <small className="texto-bloco">Fechado por {item.fechado_por || "administrador"} em {new Date(item.fechado_em).toLocaleString("pt-BR")}</small>}{item.reaberto_em && <small className="texto-bloco aviso-auditoria">Reaberto por {item.reaberto_por || "administrador"} em {new Date(item.reaberto_em).toLocaleString("pt-BR")} · Motivo: {item.motivo_reabertura}</small>}</td></tr>)}</tbody></table></div><Paginacao pagina={paginaCaixas} total={dados.caixas.length} itensPorPagina={itensPerfil} aoMudarPagina={setPaginaCaixas} rotulo="caixas" /></section>
-    <section className="painel"><div className="titulo-secao"><div><h2>Histórico completo de pesagens</h2><p>Inclui registros cancelados, alterados e excluídos</p></div></div><div className="tabela-responsiva"><table><thead><tr><th>Registro</th><th>Data</th><th>Material</th><th>Operação</th><th>Peso</th><th>Ganho</th><th>Status</th></tr></thead><tbody>{historicoPaginado.map((item) => <tr key={item.uuid}><td><code>{item.codigo}</code></td><td>{new Date(item.data_hora).toLocaleString("pt-BR")}</td><td>{item.material}<small className={item.contabiliza_meta ? "texto-bloco" : "texto-bloco aviso-auditoria"}>{item.contabiliza_meta ? "Contabilizada na meta" : "Fora da meta · pagamento imediato"}</small></td><td>{item.cooperativa || "—"} · {item.ponto_apoio} · {item.responsavel}</td><td>{Number(item.peso_total).toLocaleString("pt-BR")} kg</td><td>{Number(item.valor_total).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</td><td><span className={`status-pesagem ${item.excluida_em ? "excluida" : item.status}`}>{item.excluida_em ? "Excluída" : item.status}</span></td></tr>)}</tbody></table></div><Paginacao pagina={paginaHistorico} total={dados.historico.length} itensPorPagina={itensPerfil} aoMudarPagina={setPaginaHistorico} rotulo="pesagens" /></section>
+    <section className="painel"><div className="titulo-secao"><div><h2>Histórico operacional de pesagens</h2><p>Somente registros válidos; exclusões e alterações permanecem documentadas em Relatórios e auditoria</p></div></div>{acessos.administrador && <div className="barra-acoes-historico"><span>{pesagensSelecionadas.length} registro(s) selecionado(s)</span><button type="button" className="botao-perigo" disabled={!pesagensSelecionadas.length} onClick={() => setPesagensExcluir(dados.historico.filter((item) => pesagensSelecionadas.includes(item.uuid)))}><Trash2 /> Excluir selecionados</button></div>}<div className="tabela-responsiva"><table><thead><tr>{acessos.administrador && <th className="coluna-selecao"><input type="checkbox" aria-label="Selecionar todas as pesagens desta página" checked={historicoPaginado.length > 0 && historicoPaginado.every((item) => pesagensSelecionadas.includes(item.uuid))} onChange={(evento) => setPesagensSelecionadas((atuais) => evento.target.checked ? [...new Set([...atuais, ...historicoPaginado.map((item) => item.uuid)])] : atuais.filter((uuidAtual) => !historicoPaginado.some((item) => item.uuid === uuidAtual)))} /></th>}<th>Registro</th><th>Data</th><th>Material</th><th>Operação</th><th>Peso</th><th>Ganho</th><th>Status</th>{acessos.administrador && <th>Ações</th>}</tr></thead><tbody>{historicoPaginado.map((item) => <tr key={item.uuid}>{acessos.administrador && <td className="coluna-selecao"><input type="checkbox" aria-label={`Selecionar pesagem ${item.codigo}`} checked={pesagensSelecionadas.includes(item.uuid)} onChange={(evento) => setPesagensSelecionadas((atuais) => evento.target.checked ? [...atuais, item.uuid] : atuais.filter((uuidAtual) => uuidAtual !== item.uuid))} /></td>}<td><code>{item.codigo}</code></td><td>{new Date(item.data_hora).toLocaleString("pt-BR")}</td><td>{item.material}<small className={item.contabiliza_meta ? "texto-bloco" : "texto-bloco aviso-auditoria"}>{item.contabiliza_meta ? "Contabilizada na meta" : "Fora da meta · pagamento imediato"}</small></td><td>{item.cooperativa || "—"} · {item.ponto_apoio} · {item.responsavel}</td><td>{Number(item.peso_total).toLocaleString("pt-BR")} kg</td><td>{Number(item.valor_total).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</td><td><span className={`status-pesagem ${item.status}`}>{item.status}</span></td>{acessos.administrador && <td><div className="acoes-tabela"><button type="button" onClick={() => { setErroPesagens(""); setPesagemEditar(item); }} aria-label={`Editar ${item.codigo}`} title="Editar pesagem"><Pencil /></button><button type="button" className="perigoso" onClick={() => { setErroPesagens(""); setPesagensExcluir([item]); }} aria-label={`Excluir ${item.codigo}`} title="Excluir e recalcular"><Trash2 /></button></div></td>}</tr>)}</tbody></table>{dados.historico.length === 0 && <p className="estado-vazio">Nenhuma pesagem operacional válida.</p>}</div><Paginacao pagina={paginaHistorico} total={dados.historico.length} itensPorPagina={itensPerfil} aoMudarPagina={setPaginaHistorico} rotulo="pesagens" /></section>
     <section className="painel"><div className="titulo-secao"><div><h2>Pagamentos e recibos</h2><p>Registro do valor, forma de pagamento e usuário responsável</p></div></div><div className="tabela-responsiva"><table><thead><tr><th>Recibo</th><th>Data</th><th>Tipo</th><th>Valor</th><th>Pagador(a)</th><th>Pesagens quitadas</th><th>Ação</th></tr></thead><tbody>{pagamentosPaginados.map((item) => <tr key={item.uuid}><td><code>{item.codigo}</code></td><td>{new Date(item.pago_em).toLocaleString("pt-BR")}</td><td>{item.tipo === "transferencia_bancaria" ? "Transferência bancária" : item.tipo === "pix" ? "Pix" : item.tipo === "dinheiro" ? "Dinheiro" : "Outro"}</td><td><strong className="valor-verde">{Number(item.valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong></td><td>{item.pagador}<small className="texto-bloco">{item.pagador_email}</small></td><td>{item.itens.map((pesagem) => pesagem.codigo_pesagem).join(" · ")}</td><td><button className="botao-secundario botao-recibo" type="button" onClick={() => setReciboAberto(item)}><Eye /> Ver recibo</button></td></tr>)}</tbody></table>{dados.pagamentos.length === 0 && <p className="estado-vazio">Nenhum pagamento registrado para este catador.</p>}</div><Paginacao pagina={paginaPagamentos} total={dados.pagamentos.length} itensPorPagina={itensPerfil} aoMudarPagina={setPaginaPagamentos} rotulo="pagamentos" /></section>
     <ModalConfirmacao aberto={Boolean(acaoCaixa)} titulo={acaoCaixa === "reabrir" ? "Reabrir o ciclo operacional?" : "Fechar o ciclo operacional?"} descricao={acaoCaixa === "reabrir" ? "A reabertura será registrada na auditoria e permitirá novas movimentações." : "Depois de fechado, o ciclo bloqueará novas pesagens até uma reabertura justificada."} textoConfirmar={acaoCaixa === "reabrir" ? "Reabrir ciclo" : "Fechar ciclo"} processando={processando} rotuloCampo={acaoCaixa === "reabrir" ? "Motivo obrigatório da reabertura" : undefined} valorCampo={motivoReabertura} aoMudarCampo={setMotivoReabertura} placeholderCampo="Descreva por que o ciclo precisa ser reaberto" campoObrigatorio={acaoCaixa === "reabrir"} aoFechar={() => setAcaoCaixa(null)} aoConfirmar={() => acaoCaixa && void alterarCaixa(acaoCaixa)} />
     {pagamentoAberto && <ModalPagamentoCatador catador={{ uuid, codigo: catador.codigo, nome_completo: catador.nome_completo, cpf: catador.cpf, cooperativa: catador.cooperativa }} saldo={Number(resumo.saldo_pendente)} contas={catador.contas_financeiras} aoFechar={() => setPagamentoAberto(false)} aoPago={carregar} />}
     {reciboAberto && <ModalReciboPagamento recibo={reciboAberto} aoFechar={() => setReciboAberto(null)} />}
+    {pesagemEditar && <ModalEdicaoPesagem pesagem={pesagemEditar} aoFechar={() => setPesagemEditar(null)} aoSalvo={async () => { setPesagemEditar(null); await carregar(); }} />}
+    <ModalExclusaoAdministrativa aberto={pesagensExcluir.length > 0} titulo={pesagensExcluir.length > 1 ? `Excluir ${pesagensExcluir.length} pesagens selecionadas?` : "Excluir esta pesagem e recalcular os valores?"} descricao="Os registros sairão da ficha operacional do catador. Caixa, metas, total coletado e valor a pagar serão recalculados na mesma operação." itensApagados={pesagensExcluir.map((item) => `${item.codigo} · ${item.material} · ${Number(item.peso_total).toLocaleString("pt-BR")} kg · ${Number(item.valor_total).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}`)} itensPreservados={["Registros marcados como excluídos nos Relatórios", "Dados anteriores, motivo, usuário e horário na auditoria", "Cadastro do catador e pagamentos já registrados"]} fraseConfirmacao="EXCLUIR REGISTROS" processando={processandoPesagens} erro={erroPesagens} aoConfirmar={(confirmacao) => void excluirPesagens(confirmacao)} aoFechar={() => { if (!processandoPesagens) { setPesagensExcluir([]); setErroPesagens(""); } }} />
   </section>;
+}
+
+function dataHoraParaCampo(valor: string) {
+  const data = new Date(valor);
+  const local = new Date(data.getTime() - data.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function ModalEdicaoPesagem({ pesagem, aoFechar, aoSalvo }: { pesagem: PesagemHistorico; aoFechar: () => void; aoSalvo: () => Promise<void> }) {
+  const [materiais, setMateriais] = useState<MaterialApi[]>([]);
+  const [cooperativas, setCooperativas] = useState<CooperativaApi[]>([]);
+  const [pontos, setPontos] = useState<PontoApoioApi[]>([]);
+  const [responsaveis, setResponsaveis] = useState<ResponsavelPesagemApi[]>([]);
+  const [formulario, setFormulario] = useState({ materialUuid: pesagem.material_uuid, cooperativaUuid: pesagem.cooperativa_uuid, pontoApoioUuid: pesagem.ponto_apoio_uuid, responsavelPesagemUuid: pesagem.responsavel_pesagem_uuid ?? "", responsavelOutro: pesagem.responsavel_outro ?? "", peso: String(pesagem.peso_total), dataHora: dataHoraParaCampo(pesagem.data_hora), status: pesagem.status, observacao: pesagem.observacao ?? "", contabilizarNaMeta: pesagem.contabiliza_meta, guardarExcedenteMeta: pesagem.guardar_excedente_meta, motivoAlteracao: "" });
+  const [carregando, setCarregando] = useState(true);
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState("");
+  useEffect(() => {
+    void Promise.all([
+      requisitarApi<{ dados: MaterialApi[] }>("/api/materiais"), requisitarApi<{ dados: CooperativaApi[] }>("/api/cooperativas"),
+      requisitarApi<{ dados: PontoApoioApi[] }>("/api/pontos-apoio?incluirInativos=true"), requisitarApi<{ dados: ResponsavelPesagemApi[] }>("/api/responsaveis-pesagem?incluirInativos=true"),
+    ]).then(([m, c, p, r]) => { setMateriais(m.dados); setCooperativas(c.dados); setPontos(p.dados); setResponsaveis(r.dados); }).catch((falha) => setErro(falha instanceof Error ? falha.message : "Não foi possível carregar as opções da pesagem.")).finally(() => setCarregando(false));
+  }, []);
+  const atualizar = <C extends keyof typeof formulario>(campo: C, valor: (typeof formulario)[C]) => setFormulario((atual) => ({ ...atual, [campo]: valor }));
+  async function salvar() {
+    const peso = Number(formulario.peso.replace(",", "."));
+    if (!(peso > 0) || formulario.motivoAlteracao.trim().length < 3) return setErro("Informe um peso válido e o motivo da correção.");
+    if (!formulario.responsavelPesagemUuid && formulario.responsavelOutro.trim().length < 2) return setErro("Informe o responsável pela pesagem.");
+    setSalvando(true); setErro("");
+    try {
+      await requisitarApi(`/api/pesagens/${pesagem.uuid}`, { method: "PUT", body: JSON.stringify({
+        catadorUuid: pesagem.catador_uuid, cooperativaUuid: formulario.cooperativaUuid, pontoApoioUuid: formulario.pontoApoioUuid,
+        responsavelPesagemUuid: formulario.responsavelPesagemUuid || undefined, responsavelOutro: formulario.responsavelPesagemUuid ? undefined : formulario.responsavelOutro.trim(),
+        materialUuid: formulario.materialUuid, contabilizarNaMeta: formulario.contabilizarNaMeta, guardarExcedenteMeta: formulario.guardarExcedenteMeta,
+        peso, observacao: formulario.observacao.trim() || undefined, dataHora: new Date(formulario.dataHora).toISOString(), status: formulario.status,
+        motivoAlteracao: formulario.motivoAlteracao.trim(),
+      }) });
+      await aoSalvo();
+    } catch (falha) { setErro(falha instanceof Error ? falha.message : "Não foi possível corrigir a pesagem."); }
+    finally { setSalvando(false); }
+  }
+  return <div className="sobreposicao" role="dialog" aria-modal="true" aria-labelledby="titulo-edicao-pesagem"><div className="modal modal-edicao-pesagem"><header className="cabecalho-modal"><div><span>CORREÇÃO ADMINISTRATIVA</span><h2 id="titulo-edicao-pesagem">Editar pesagem {pesagem.codigo}</h2><p>Toda mudança será registrada com os dados anteriores, usuário, horário e motivo.</p></div><button type="button" onClick={aoFechar} disabled={salvando} aria-label="Fechar"><X /></button></header><div className="corpo-modal-pesagem">{carregando ? <p className="estado-carregando"><LoaderCircle className="icone-carregando" /> Carregando opções...</p> : <div className="grade-formulario"><label className="campo">Material<select value={formulario.materialUuid} onChange={(e) => atualizar("materialUuid", e.target.value)}>{materiais.map((item) => <option key={item.uuid} value={item.uuid}>{item.nome}{item.status === "inativo" ? " (inativo)" : ""}</option>)}</select></label><label className="campo">Peso<input inputMode="decimal" value={formulario.peso} onChange={(e) => atualizar("peso", e.target.value)} /></label><label className="campo">Data e hora<input type="datetime-local" value={formulario.dataHora} onChange={(e) => atualizar("dataHora", e.target.value)} /></label><label className="campo">Status<select value={formulario.status} onChange={(e) => atualizar("status", e.target.value as PesagemHistorico["status"])}><option value="concluida">Concluída</option><option value="agendada">Agendada</option><option value="cancelada">Cancelada</option></select></label><label className="campo">Cooperativa / Associação<select value={formulario.cooperativaUuid} onChange={(e) => atualizar("cooperativaUuid", e.target.value)}>{cooperativas.map((item) => <option key={item.uuid} value={item.uuid}>{item.nome}{item.status === "inativo" ? " (inativa)" : ""}</option>)}</select></label><label className="campo">Ponto de apoio<select value={formulario.pontoApoioUuid} onChange={(e) => atualizar("pontoApoioUuid", e.target.value)}>{pontos.map((item) => <option key={item.uuid} value={item.uuid}>{item.nome}{item.status === "inativo" ? " (inativo)" : ""}</option>)}</select></label><label className="campo">Responsável<select value={formulario.responsavelPesagemUuid} onChange={(e) => atualizar("responsavelPesagemUuid", e.target.value)}><option value="">Outro / nome livre</option>{responsaveis.map((item) => <option key={item.uuid} value={item.uuid}>{item.nome}{item.status === "inativo" ? " (inativo)" : ""}</option>)}</select></label>{!formulario.responsavelPesagemUuid && <label className="campo">Nome do responsável<input value={formulario.responsavelOutro} onChange={(e) => atualizar("responsavelOutro", e.target.value)} /></label>}<label className="campo campo-largo">Observação<textarea value={formulario.observacao} onChange={(e) => atualizar("observacao", e.target.value)} maxLength={1000} /></label><label className="opcao-toggle campo-largo"><input type="checkbox" checked={formulario.contabilizarNaMeta} onChange={(e) => atualizar("contabilizarNaMeta", e.target.checked)} /><span>Contabilizar esta pesagem na meta</span></label>{formulario.contabilizarNaMeta && <label className="opcao-toggle campo-largo"><input type="checkbox" checked={formulario.guardarExcedenteMeta} onChange={(e) => atualizar("guardarExcedenteMeta", e.target.checked)} /><span>Guardar excedente para a próxima coleta</span></label>}<label className="campo campo-largo">Motivo obrigatório da alteração<textarea value={formulario.motivoAlteracao} onChange={(e) => atualizar("motivoAlteracao", e.target.value)} minLength={3} maxLength={500} placeholder="Explique o erro humano e a correção realizada" /></label></div>}{erro && <p className="mensagem-erro" role="alert">{erro}</p>}</div><footer className="rodape-modal"><button type="button" className="botao-secundario" onClick={aoFechar} disabled={salvando}>Cancelar</button><button type="button" className="botao-primario" onClick={() => void salvar()} disabled={carregando || salvando}>{salvando ? <><LoaderCircle className="icone-carregando" /> Salvando e recalculando...</> : <><Pencil /> Salvar correção</>}</button></footer></div></div>;
 }
 
 function CadastroCatador({ cooperativas, edicao, onFechar, onSalvo }: { cooperativas: CooperativaApi[]; edicao?: PerfilApi; onFechar: () => void; onSalvo: () => Promise<void> }) {

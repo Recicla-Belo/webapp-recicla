@@ -268,6 +268,13 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(telaCatadores, /method: "PUT"/);
   assert.match(telaCatadores, /method: "PATCH"/);
   assert.match(telaCatadores, /ModalConfirmacao/);
+  assert.match(telaCatadores, /EXCLUIR REGISTROS/);
+  assert.match(telaCatadores, /pesagensSelecionadas/);
+  assert.match(telaCatadores, /ModalEdicaoPesagem/);
+  assert.match(telaCatadores, /motivoAlteracao/);
+  assert.match(servidor, /aplicacao\.delete\("\/api\/administrador\/pesagens"/);
+  assert.match(servidor, /origem: "correcao_administrativa"/);
+  assert.match(servidor, /WHERE p\.catador_uuid=\$1 AND p\.excluida_em IS NULL ORDER BY p\.data_hora/);
   assert.match(telaCatadores, /Excluir todos os dados/);
   assert.match(servidor, /aplicacao\.put\("\/api\/catadores\/:uuid"/);
   assert.match(servidor, /exclusao_definitiva/);

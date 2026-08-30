@@ -280,8 +280,8 @@ async function executar() {
 
     const caixaFechado = (await chamar(`/api/catadores/${catadorUuid}/caixa/fechar`, { method: "POST", body: JSON.stringify({ data: dataCaixa }) })).dados;
     assert.equal(caixaFechado.status, "fechado");
-    const edicaoBloqueada = await fetch(`${urlApi}/api/pesagens/${pesagemUuid}`, { method: "PUT", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ catadorUuid, cooperativaUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsavelUuid, materialUuid, peso: 31, dataHora: dataHoraPesagem, status: "concluida", motivoAlteracao: "Deve ser bloqueada" }) });
-    assert.equal(edicaoBloqueada.status, 409);
+    const correcaoAdministrativaCaixaFechado = await fetch(`${urlApi}/api/pesagens/${pesagemUuid}`, { method: "PUT", headers: { "content-type": "application/json", cookie }, body: JSON.stringify({ catadorUuid, cooperativaUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsavelUuid, materialUuid, peso: 15, dataHora: pesagem.dataHora, status: "concluida", motivoAlteracao: "Validação administrativa em ciclo fechado" }) });
+    assert.equal(correcaoAdministrativaCaixaFechado.status, 200);
     const caixaReaberto = (await chamar(`/api/catadores/${catadorUuid}/caixa/reabrir`, { method: "POST", body: JSON.stringify({ data: dataCaixa, motivo: "Correção controlada do teste" }) })).dados;
     assert.equal(caixaReaberto.status, "aberto");
 
@@ -382,6 +382,7 @@ async function executar() {
     assert.ok(excluida.excluida_em);
     assert.equal(excluida.motivo_exclusao, "Registro temporário do teste integrado");
     assert.ok(excluida.historico.some((evento) => evento.acao === "exclusao_logica"));
+    assert.equal((await chamar(`/api/catadores/${catadorUuid}/perfil`)).dados.historico.some((item) => item.uuid === pesagemUuid), false);
     assert.equal(Number((await chamar("/api/painel")).dados.indicadores.coletas_realizadas), Number(painelAntes.coletas_realizadas) + 1);
 
     await chamar(`/api/responsaveis-pesagem/${responsavelUuid}`, { method: "DELETE" });
@@ -399,7 +400,21 @@ async function executar() {
     const pesagemSemMeta = (await chamar("/api/pesagens", { method: "POST", body: JSON.stringify({ catadorUuid, cooperativaUuid, pontoApoioUuid: pontos[0].uuid, responsavelPesagemUuid: responsavelPadrao.uuid, materialUuid: materialSemMetaUuid, peso: 3, dataHora: new Date(new Date(dataHoraPesagem).getTime() + 2000).toISOString(), status: "concluida" }) })).dados;
     assert.equal(pesagemSemMeta.valorTotal, 6);
     assert.equal(pesagemSemMeta.progressoMeta.semMeta, true);
-    await chamar(`/api/pesagens/${pesagemSemMeta.uuid}`, { method: "DELETE", body: JSON.stringify({ motivo: "Validação temporária de material sem meta" }) });
+    const painelAntesExclusaoAdministrativa = (await chamar("/api/painel")).dados.indicadores;
+    const exclusaoAdministrativa = (await chamar("/api/administrador/pesagens", { method: "DELETE", body: JSON.stringify({
+      pesagensUuids: [pesagemSemMeta.uuid], senhaAtual: process.env.ADMIN_SENHA, confirmacao: "EXCLUIR REGISTROS", motivo: "Validação administrativa com recálculo",
+    }) })).dados;
+    assert.equal(exclusaoAdministrativa.removidas, 1);
+    const perfilAposExclusaoAdministrativa = (await chamar(`/api/catadores/${catadorUuid}/perfil`)).dados;
+    assert.equal(perfilAposExclusaoAdministrativa.historico.some((item) => item.uuid === pesagemSemMeta.uuid), false);
+    assert.equal(Number(perfilAposExclusaoAdministrativa.resumo.ganho_total), 0);
+    const painelAposExclusaoAdministrativa = (await chamar("/api/painel")).dados.indicadores;
+    assert.equal(Number(painelAposExclusaoAdministrativa.total_coletado), Number(painelAntesExclusaoAdministrativa.total_coletado) - 3);
+    assert.equal(Number(painelAposExclusaoAdministrativa.valor_total_pagar), Number(painelAntesExclusaoAdministrativa.valor_total_pagar) - 6);
+    assert.equal(Number(painelAposExclusaoAdministrativa.coletas_realizadas), Number(painelAntesExclusaoAdministrativa.coletas_realizadas) - 1);
+    const pesagemAdministrativamenteExcluida = (await chamar(`/api/relatorios/pesagens?catadorUuid=${catadorUuid}`)).dados.dados.find((item) => item.uuid === pesagemSemMeta.uuid);
+    assert.ok(pesagemAdministrativamenteExcluida.excluida_em);
+    assert.ok(pesagemAdministrativamenteExcluida.historico.some((evento) => evento.acao === "exclusao_logica" && evento.dados.origem === "correcao_administrativa"));
 
     await chamar("/api/configuracoes/meta-geral", { method: "PUT", body: JSON.stringify({ ativa: true, metaDiaria: 10, valorPremio: 200, unidade: "kg" }) });
     const configuracaoMetaAtiva = (await chamar("/api/configuracoes/meta-geral")).dados;

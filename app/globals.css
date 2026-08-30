@@ -249,3 +249,15 @@ html,body{max-width:100%;overflow-x:hidden}.aplicacao,.conteudo,.pagina-interna,
 .modal-pagamento>.corpo-pagamento,.modal-pagamento>.recibo-pagamento{flex:1 1 auto;min-height:0;max-height:none;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--verde) 58%,var(--borda)) transparent}
 @media(max-width:820px){.sobreposicao{align-items:center;padding:10px max(8px,env(safe-area-inset-right,0px)) max(10px,env(safe-area-inset-bottom,0px)) max(8px,env(safe-area-inset-left,0px))}.modal,.modal.cadastro,.modal-pagamento{max-height:calc(100dvh - 20px)}.modal>.cabecalho-modal{padding-top:max(20px,env(safe-area-inset-top,0px))}.modal>.rodape-modal{padding-bottom:max(16px,env(safe-area-inset-bottom,0px))}}
 @media(max-height:620px){.sobreposicao{align-items:start}.modal,.modal.cadastro,.modal-pagamento{max-height:calc(100dvh - 12px)}.corpo-pagamento{padding-block:18px}}
+
+/* Correção administrativa das pesagens na ficha do catador */
+.barra-acoes-historico{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:16px 0;padding:14px 16px;border:1px solid var(--borda);border-radius:14px;background:var(--fundo)}
+.barra-acoes-historico span{font-size:14px;font-weight:800;color:var(--texto-suave)}
+.coluna-selecao{width:52px;text-align:center!important}
+.coluna-selecao input{width:22px;height:22px;accent-color:var(--verde);cursor:pointer}
+.modal-edicao-pesagem{width:min(980px,100%);overflow:hidden}
+.corpo-modal-pesagem{padding:26px 32px;overflow-y:auto;max-height:calc(94dvh - 210px)}
+.corpo-modal-pesagem .opcao-toggle{display:flex;align-items:center;gap:13px;min-height:54px;padding:13px 16px;border:1px solid var(--borda);border-radius:13px;background:var(--fundo);font-size:15px;font-weight:800;cursor:pointer}
+.corpo-modal-pesagem .opcao-toggle input{width:23px;height:23px;accent-color:var(--verde)}
+.modal-edicao-pesagem .rodape-modal .botao-primario{display:inline-flex;align-items:center;justify-content:center;gap:9px}
+@media(max-width:820px){.barra-acoes-historico{align-items:stretch;flex-direction:column}.barra-acoes-historico button{width:100%;justify-content:center}.corpo-modal-pesagem{padding:20px;max-height:calc(100dvh - 225px)}.modal-edicao-pesagem{max-height:calc(100dvh - 20px)}.modal-edicao-pesagem .rodape-modal{flex-wrap:nowrap}.modal-edicao-pesagem .rodape-modal button{min-width:0}}
