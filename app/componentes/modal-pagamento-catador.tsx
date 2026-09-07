@@ -112,6 +112,6 @@ function Recibo({ recibo }: { recibo: ReciboPagamento }) {
       <strong>Assinatura do catador</strong>
       <span>{recibo.nome_catador} · {recibo.codigo_catador}</span>
     </section>
-    <footer><span>Pagamento registrado eletronicamente no Recicla Belô.</span><strong>Total: {moeda(recibo.valor)}</strong></footer>
+    <footer><span>Pagamento registrado eletronicamente no CataNexo.</span><strong>Total: {moeda(recibo.valor)}</strong></footer>
   </article>;
 }

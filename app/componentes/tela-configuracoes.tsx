@@ -321,7 +321,7 @@ export function TelaConfiguracoes({ administrador, onAdministradorAtualizado }: 
         </form>
 
         <aside className="preview-identidade" style={{ background: `linear-gradient(145deg, ${edicao.corFundo}, color-mix(in srgb, ${edicao.corPrimaria} 12%, white))` }}>
-          <small>PRÉVIA</small><span className="preview-logo"><img src={edicao.iconeAplicacao} alt="" /></span><h3>{edicao.nomeAplicacao || "Nome da plataforma"}</h3><p>Gestão que transforma</p><button type="button" style={{ background: edicao.corPrimaria }}>Ação principal</button>
+          <small>PRÉVIA</small><span className="preview-logo"><img src={edicao.iconeAplicacao} alt="" /></span><h3>{edicao.nomeAplicacao || "Nome da plataforma"}</h3><p>Conecta trabalho, reciclagem e gestão</p><button type="button" style={{ background: edicao.corPrimaria }}>Ação principal</button>
         </aside>
       </div>
     </div> : aba === "pontos" ? <div className="painel-responsaveis painel-pontos-apoio">

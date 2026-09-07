@@ -1,4 +1,6 @@
-# Recicla Belô
+# CataNexo
+
+Conecta trabalho, reciclagem e gestão.
 
 WebApp responsivo para gestão de cooperativas de reciclagem, catadores, produção, pesagens e pagamentos em Belo Horizonte. A interface foi desenhada com elementos amplos, contraste forte, navegação móvel e tema escuro.
 
@@ -154,6 +156,8 @@ O script não altera regras de firewall nem virtual hosts de outras aplicações
 
 ### Segunda instância na mesma VPS
 
+Esta branch entrega a segunda instalação com a identidade CataNexo, sem alterar a aplicação Recicla Belô que já está em produção.
+
 Cada instalação adicional deve ficar em um clone separado. Não copie o `.env` da instalação principal. Informe um identificador exclusivo para que projeto, rede e volumes Docker, portas locais, credenciais e nomes internos do NGINX sejam isolados automaticamente:
 
 ```bash
@@ -189,7 +193,7 @@ Em instalações adicionais, execute os comandos sempre dentro da pasta correspo
 
 ## Acesso administrativo inicial
 
-- usuário: `admin@reciclabelo`
+- usuário padrão em uma instalação nova: `admin@catanexo`
 - senha inicial: valor local de `ADMIN_SENHA` no arquivo `.env`
 
 Não existe tela pública de cadastro. A senha solicitada para o ambiente local fica somente no `.env` ignorado pelo Git. Em Configurações → Conta do administrador, o usuário autenticado pode alterar nome, e-mail ou senha confirmando a senha atual. Não execute o seed para trocar uma senha de produção: o seed é destinado apenas à preparação inicial e substituiria a senha pelo valor do `.env`.
@@ -279,7 +283,7 @@ Repositório previsto: `https://github.com/Recicla-Belo/webapp-recicla.git`
 
 ```bash
 git add .
-git commit -m "feat: cria primeira versão do Recicla Belô"
+git commit -m "feat: cria primeira versão do CataNexo"
 git branch -M main
 git remote add origin https://github.com/Recicla-Belo/webapp-recicla.git
 git push -u origin main

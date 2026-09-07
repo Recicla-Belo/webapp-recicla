@@ -7,7 +7,7 @@ const pastaSaida = resolve(raiz, "servidor", "sql");
 const destino = resolve(pastaSaida, "recicla-belo-completo.sql");
 const arquivos = (await readdir(pastaMigracoes)).filter((nome) => nome.endsWith(".sql")).sort();
 const partes = [
-  "-- Recicla Belô — estrutura completa do PostgreSQL 18.6",
+  "-- CataNexo — estrutura completa do PostgreSQL 18.6",
   "-- Arquivo gerado a partir das migrações oficiais. Execute em um banco vazio.",
   "-- O administrador é criado separadamente por `npm run banco:seed`, pois a senha é protegida com bcrypt.",
   "\\set ON_ERROR_STOP on",

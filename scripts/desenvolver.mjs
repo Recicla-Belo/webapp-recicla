@@ -18,7 +18,7 @@ const processos = new Set();
 let encerrando = false;
 
 function titulo(mensagem) {
-  console.log(`\n\x1b[32m[Recicla Belô]\x1b[0m ${mensagem}`);
+  console.log(`\n\x1b[32m[CataNexo]\x1b[0m ${mensagem}`);
 }
 
 function executar(comando, argumentos, opcoes = {}) {
@@ -129,7 +129,7 @@ function encerrarArvore(processo) {
 async function encerrar(codigo = 0, mensagem, aoReceberSinal = false) {
   if (encerrando) return;
   encerrando = true;
-  if (mensagem) console.error(`\n[Recicla Belô] ${mensagem}`);
+  if (mensagem) console.error(`\n[CataNexo] ${mensagem}`);
   for (const processo of processos) encerrarArvore(processo);
   if (noWindows && aoReceberSinal) {
     const limpeza = spawn(docker, ["compose", "stop", "banco"], {

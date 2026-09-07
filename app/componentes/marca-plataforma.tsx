@@ -8,6 +8,6 @@ export function MarcaPlataforma({ compacta = false }: { compacta?: boolean }) {
   const { identidade } = useIdentidadeVisual();
   return <div className={compacta ? "marca-plataforma compacta" : "marca-plataforma"}>
     <span className="imagem-marca"><img src={identidade.iconeAplicacao} alt="" /></span>
-    <div><strong>{identidade.nomeAplicacao}</strong><small>Gestão que transforma</small></div>
+    <div><strong>{identidade.nomeAplicacao}</strong><small>Conecta trabalho, reciclagem e gestão</small></div>
   </div>;
 }

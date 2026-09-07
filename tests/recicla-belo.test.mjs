@@ -11,13 +11,13 @@ async function renderizar() {
   }, { waitUntil() {}, passThroughOnException() {} });
 }
 
-test("renderiza a experiência do Recicla Belô", async () => {
+test("renderiza a experiência do CataNexo", async () => {
   const resposta = await renderizar();
   assert.equal(resposta.status, 200);
   assert.match(resposta.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await resposta.text();
-  assert.match(html, /Recicla Belô/);
-  assert.match(html, /Gestão que transforma/);
+  assert.match(html, /CataNexo/);
+  assert.match(html, /Conecta trabalho, reciclagem e gestão/);
   assert.match(html, /Carregando seu painel/);
   assert.doesNotMatch(html, /Cada pesagem conta|Cada pessoa importa/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Starter Project/i);
@@ -77,7 +77,7 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(exemplo, /PORTA_FRONTEND/);
   assert.match(exemplo, /HOST_API="127\.0\.0\.1"/);
   assert.match(estilos, /\.pagina-login\{width:100%;grid-template-columns:minmax\(0,1fr\);justify-items:center;align-items:center\}/);
-  assert.match(exemplo, /NEXT_PUBLIC_ICONE_APLICACAO="\/favicon\.svg"/);
+  assert.match(exemplo, /NEXT_PUBLIC_ICONE_APLICACAO="\/catanexo\.svg"/);
   assert.match(migracao, /gen_random_uuid\(\)/);
   assert.match(migracao, /websearch_to_tsquery|to_tsvector/);
   assert.match(sqlCompleto, /CREATE TABLE IF NOT EXISTS pesagens/);
@@ -168,7 +168,7 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(telaLogin, /placeholder="Digite seu e-mail"/);
   assert.match(telaLogin, /Lembrar meu acesso/);
   assert.match(telaLogin, /localStorage\.setItem\(CHAVE_EMAIL_LEMBRADO/);
-  assert.doesNotMatch(telaLogin, /useState\("admin@reciclabelo"\)/);
+  assert.doesNotMatch(telaLogin, /useState\("admin@(reciclabelo|catanexo)"\)/);
   assert.match(telaPesagem, /CONFIRMAÇÃO FINAL/);
   assert.match(telaPesagem, /Código do catador/);
   assert.match(telaPesagem, /metaAtingidaAgora/);
@@ -335,6 +335,7 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(dockerfileProducao, /npm run lint/);
   assert.match(dockerfileProducao, /npm test/);
   assert.match(leiaMe, /PostgreSQL 18\.6/);
-  await access(new URL("../public/og.png", import.meta.url));
+  await access(new URL("../public/og-catanexo.png", import.meta.url));
+  await access(new URL("../public/catanexo.svg", import.meta.url));
   await assert.rejects(access(new URL("../app/dados/demonstracao.ts", import.meta.url)));
 });

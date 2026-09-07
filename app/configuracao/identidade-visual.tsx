@@ -51,7 +51,7 @@ export function ProvedorIdentidadeVisual({ children }: { children: ReactNode }) 
   const [identidade, setIdentidade] = useState(identidadePadrao);
 
   useEffect(() => {
-    const salva = window.localStorage.getItem("reciclabelo-identidade");
+    const salva = window.localStorage.getItem("catanexo-identidade");
     if (!salva) {
       aplicarIdentidade(identidadePadrao);
       return;
@@ -61,7 +61,7 @@ export function ProvedorIdentidadeVisual({ children }: { children: ReactNode }) 
       setIdentidade(restaurada);
       aplicarIdentidade(restaurada);
     } catch {
-      window.localStorage.removeItem("reciclabelo-identidade");
+      window.localStorage.removeItem("catanexo-identidade");
       aplicarIdentidade(identidadePadrao);
     }
   }, []);
@@ -69,11 +69,11 @@ export function ProvedorIdentidadeVisual({ children }: { children: ReactNode }) 
   function salvarIdentidade(novaIdentidade: IdentidadeVisual) {
     setIdentidade(novaIdentidade);
     aplicarIdentidade(novaIdentidade);
-    window.localStorage.setItem("reciclabelo-identidade", JSON.stringify(novaIdentidade));
+    window.localStorage.setItem("catanexo-identidade", JSON.stringify(novaIdentidade));
   }
 
   function restaurarIdentidade() {
-    window.localStorage.removeItem("reciclabelo-identidade");
+    window.localStorage.removeItem("catanexo-identidade");
     setIdentidade(identidadePadrao);
     aplicarIdentidade(identidadePadrao);
   }

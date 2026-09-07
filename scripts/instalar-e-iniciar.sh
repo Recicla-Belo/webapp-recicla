@@ -7,7 +7,7 @@ SEM_COR='\033[0m'
 RAIZ_PROJETO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$RAIZ_PROJETO"
 
-informar() { printf "${COR_VERDE}[Recicla Belô]${SEM_COR} %s\n" "$1"; }
+informar() { printf "${COR_VERDE}[CataNexo]${SEM_COR} %s\n" "$1"; }
 alertar() { printf "${COR_AMARELA}[Atenção]${SEM_COR} %s\n" "$1"; }
 falhar() { printf "[Erro] %s\n" "$1" >&2; exit 1; }
 

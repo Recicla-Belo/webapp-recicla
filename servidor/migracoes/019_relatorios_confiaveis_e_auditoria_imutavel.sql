@@ -22,7 +22,7 @@ BEFORE UPDATE OR DELETE ON auditoria
 FOR EACH ROW EXECUTE FUNCTION impedir_alteracao_auditoria();
 
 COMMENT ON TABLE auditoria IS
-  'Livro imutável e permanente de eventos de segurança e alterações do Recicla Belô.';
+  'Livro imutável e permanente de eventos de segurança e alterações do CataNexo.';
 
 CREATE OR REPLACE VIEW relatorio_resumo_diario AS
 WITH producao AS (

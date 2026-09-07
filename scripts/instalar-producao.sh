@@ -17,7 +17,7 @@ NAO_INTERATIVO=false
 PRIMEIRA_INSTALACAO=false
 SENHA_ADMIN_GERADA=""
 
-informar() { printf "${COR_VERDE}[Recicla Belô]${SEM_COR} %s\n" "$1"; }
+informar() { printf "${COR_VERDE}[CataNexo]${SEM_COR} %s\n" "$1"; }
 alertar() { printf "${COR_AMARELA}[Atenção]${SEM_COR} %s\n" "$1"; }
 falhar() { printf "${COR_VERMELHA}[Erro]${SEM_COR} %s\n" "$1" >&2; exit 1; }
 
@@ -85,7 +85,7 @@ export NOME_PROJETO_COMPOSE NOME_REDE_DOCKER
 
 # A trava é global para impedir disputa por portas e pelo gerenciador de pacotes.
 DIRETORIO_TRAVA="/var/lock/recicla-belo-producao.lock"
-mkdir "$DIRETORIO_TRAVA" 2>/dev/null || falhar "Outra instalação do Recicla Belô já está em andamento."
+mkdir "$DIRETORIO_TRAVA" 2>/dev/null || falhar "Outra instalação do CataNexo já está em andamento."
 trap 'rmdir "$DIRETORIO_TRAVA" 2>/dev/null || true' EXIT
 
 diagnosticar_falha() {
@@ -146,6 +146,7 @@ validar_dominio() {
 
 solicitar_configuracao() {
   local dominio_anterior nome_admin email_admin senha_admin senha_banco segredo_jwt
+  local nome_aplicacao descricao_aplicacao icone_aplicacao favicon
   dominio_anterior="$(ler_env DOMINIO_APLICACAO)"
   [ -n "$DOMINIO" ] || DOMINIO="$dominio_anterior"
   if [ -z "$DOMINIO" ] && ! $NAO_INTERATIVO; then read -r -p "Domínio da plataforma (ex.: reciclabelo.vupi.us): " DOMINIO; fi
@@ -159,7 +160,7 @@ solicitar_configuracao() {
   fi
 
   nome_admin="$(ler_env ADMIN_NOME)"; [ -n "$nome_admin" ] || nome_admin="Administrador"
-  email_admin="$(ler_env ADMIN_EMAIL)"; [ -n "$email_admin" ] || email_admin="admin@reciclabelo"
+  email_admin="$(ler_env ADMIN_EMAIL)"; [ -n "$email_admin" ] || email_admin="admin@catanexo"
   senha_admin="$(ler_env ADMIN_SENHA)"
   senha_banco="$(ler_env BANCO_SENHA)"
   segredo_jwt="$(ler_env SEGREDO_JWT)"
@@ -179,6 +180,15 @@ solicitar_configuracao() {
   [[ "$nome_admin" != *$'\n'* && "$nome_admin" != *'"'* ]] || falhar "O nome do administrador contém caracteres não permitidos no arquivo de ambiente."
   [[ "$senha_admin" != *$'\n'* && "$senha_admin" != *'"'* && "$senha_admin" != *'\\'* ]] || falhar "A senha informada contém aspas, barra invertida ou quebra de linha. Use outra senha."
 
+  nome_aplicacao="$(ler_env NEXT_PUBLIC_NOME_APLICACAO)"
+  descricao_aplicacao="$(ler_env NEXT_PUBLIC_DESCRICAO_APLICACAO)"
+  icone_aplicacao="$(ler_env NEXT_PUBLIC_ICONE_APLICACAO)"
+  favicon="$(ler_env NEXT_PUBLIC_FAVICON)"
+  { [ -n "$nome_aplicacao" ] && [ "$nome_aplicacao" != "Recicla Belô" ]; } || nome_aplicacao="CataNexo"
+  { [ -n "$descricao_aplicacao" ] && [ "$descricao_aplicacao" != "Gestão que transforma" ]; } || descricao_aplicacao="Conecta trabalho, reciclagem e gestão"
+  { [ -n "$icone_aplicacao" ] && [ "$icone_aplicacao" != "/favicon.svg" ]; } || icone_aplicacao="/catanexo.svg"
+  { [ -n "$favicon" ] && [ "$favicon" != "/favicon.svg" ]; } || favicon="/catanexo.svg"
+
   local porta_frontend porta_api
   porta_frontend="$(ler_env PORTA_FRONTEND)"; [ -n "$porta_frontend" ] || porta_frontend="$(encontrar_porta 3101 3199)"
   porta_api="$(ler_env PORTA_API)"; [ -n "$porta_api" ] || porta_api="$(encontrar_porta 3333 3399)"
@@ -193,10 +203,10 @@ NOME_PROJETO_COMPOSE="$NOME_PROJETO_COMPOSE"
 NOME_REDE_DOCKER="$NOME_REDE_DOCKER"
 DOMINIO_APLICACAO="$DOMINIO"
 EMAIL_CERTIFICADO="$EMAIL_CERTIFICADO"
-NEXT_PUBLIC_NOME_APLICACAO="$(ler_env NEXT_PUBLIC_NOME_APLICACAO "${ARQUIVO_ENV:-.env}")"
-NEXT_PUBLIC_DESCRICAO_APLICACAO="$(ler_env NEXT_PUBLIC_DESCRICAO_APLICACAO "${ARQUIVO_ENV:-.env}")"
-NEXT_PUBLIC_ICONE_APLICACAO="$(ler_env NEXT_PUBLIC_ICONE_APLICACAO "${ARQUIVO_ENV:-.env}")"
-NEXT_PUBLIC_FAVICON="$(ler_env NEXT_PUBLIC_FAVICON "${ARQUIVO_ENV:-.env}")"
+NEXT_PUBLIC_NOME_APLICACAO="$nome_aplicacao"
+NEXT_PUBLIC_DESCRICAO_APLICACAO="$descricao_aplicacao"
+NEXT_PUBLIC_ICONE_APLICACAO="$icone_aplicacao"
+NEXT_PUBLIC_FAVICON="$favicon"
 NEXT_PUBLIC_COR_PRIMARIA="$(ler_env NEXT_PUBLIC_COR_PRIMARIA "${ARQUIVO_ENV:-.env}")"
 NEXT_PUBLIC_COR_PRIMARIA_ESCURA="$(ler_env NEXT_PUBLIC_COR_PRIMARIA_ESCURA "${ARQUIVO_ENV:-.env}")"
 NEXT_PUBLIC_COR_FUNDO="$(ler_env NEXT_PUBLIC_COR_FUNDO "${ARQUIVO_ENV:-.env}")"
@@ -223,12 +233,12 @@ ADMIN_SENHA="$senha_admin"
 ADMIN_NOME="$nome_admin"
 EOF
   # Mantém os padrões visuais quando o arquivo anterior ainda não existia.
-  sed -i 's|NEXT_PUBLIC_NOME_APLICACAO=""|NEXT_PUBLIC_NOME_APLICACAO="Recicla Belô"|; s|NEXT_PUBLIC_DESCRICAO_APLICACAO=""|NEXT_PUBLIC_DESCRICAO_APLICACAO="Gestão que transforma"|; s|NEXT_PUBLIC_ICONE_APLICACAO=""|NEXT_PUBLIC_ICONE_APLICACAO="/favicon.svg"|; s|NEXT_PUBLIC_FAVICON=""|NEXT_PUBLIC_FAVICON="/favicon.svg"|; s|NEXT_PUBLIC_COR_PRIMARIA=""|NEXT_PUBLIC_COR_PRIMARIA="#167347"|; s|NEXT_PUBLIC_COR_PRIMARIA_ESCURA=""|NEXT_PUBLIC_COR_PRIMARIA_ESCURA="#075c37"|; s|NEXT_PUBLIC_COR_FUNDO=""|NEXT_PUBLIC_COR_FUNDO="#f5f7f6"|' "$temporario_env"
+  sed -i 's|NEXT_PUBLIC_COR_PRIMARIA=""|NEXT_PUBLIC_COR_PRIMARIA="#167347"|; s|NEXT_PUBLIC_COR_PRIMARIA_ESCURA=""|NEXT_PUBLIC_COR_PRIMARIA_ESCURA="#075c37"|; s|NEXT_PUBLIC_COR_FUNDO=""|NEXT_PUBLIC_COR_FUNDO="#f5f7f6"|' "$temporario_env"
   if [ -f "$ARQUIVO_ENV" ]; then cp -a "$ARQUIVO_ENV" "$ARQUIVO_ENV.backup.$(date +%Y%m%d%H%M%S)"; fi
   mv "$temporario_env" "$ARQUIVO_ENV"
   chmod 600 "$ARQUIVO_ENV"
   if [ -n "$SENHA_ADMIN_GERADA" ]; then
-    local arquivo_credenciais="/root/reciclabelo-${INSTANCIA}-credenciais-iniciais.txt"
+    local arquivo_credenciais="/root/catanexo-${INSTANCIA}-credenciais-iniciais.txt"
     umask 077
     printf 'Domínio: %s\nAdministrador: %s\nSenha inicial: %s\n' "$DOMINIO" "$email_admin" "$SENHA_ADMIN_GERADA" > "$arquivo_credenciais"
     chmod 600 "$arquivo_credenciais"
@@ -377,7 +387,7 @@ verificar_resultado() {
   informar "Instalação concluída: $protocolo://$DOMINIO"
   informar "Para atualizar esta instância: git pull --ff-only && sudo bash scripts/instalar-producao.sh --instancia $INSTANCIA --dominio $DOMINIO"
   if [ -n "$SENHA_ADMIN_GERADA" ]; then
-    alertar "Consulte /root/reciclabelo-${INSTANCIA}-credenciais-iniciais.txt e transfira a senha para um gerenciador seguro."
+    alertar "Consulte /root/catanexo-${INSTANCIA}-credenciais-iniciais.txt e transfira a senha para um gerenciador seguro."
   fi
 }
 

@@ -26,8 +26,8 @@ export async function generateMetadata(): Promise<Metadata> {
     title: titulo,
     description: descricao,
     icons: { icon: ambiente.favicon, shortcut: ambiente.favicon },
-    openGraph: { title: titulo, description: descricao, type: "website", locale: "pt_BR", images: [{ url: "/og.png", width: 1734, height: 907, alt: "Recicla Belô — Gestão que transforma" }] },
-    twitter: { card: "summary_large_image", title: titulo, description: descricao, images: ["/og.png"] },
+    openGraph: { title: titulo, description: descricao, type: "website", locale: "pt_BR", images: [{ url: "/og-catanexo.png", width: 1734, height: 907, alt: "CataNexo — Conecta trabalho, reciclagem e gestão" }] },
+    twitter: { card: "summary_large_image", title: titulo, description: descricao, images: ["/og-catanexo.png"] },
   };
 }
 

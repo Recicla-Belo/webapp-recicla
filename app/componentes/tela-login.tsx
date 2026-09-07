@@ -5,7 +5,7 @@ import { useIdentidadeVisual } from "@/app/configuracao/identidade-visual";
 import { MarcaPlataforma } from "./marca-plataforma";
 import type { AdministradorApi } from "@/app/dados/api";
 
-const CHAVE_EMAIL_LEMBRADO = "recicla-belo:email-lembrado";
+const CHAVE_EMAIL_LEMBRADO = "catanexo:email-lembrado";
 
 function IconeOlho({ visivel }: { visivel: boolean }) {
   return <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">

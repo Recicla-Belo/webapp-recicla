@@ -134,7 +134,7 @@ function prepararPlanilha(planilha: ExcelJS.Worksheet, titulo: string, descricao
   });
   planilha.views = [{ state: "frozen", ySplit: 4, showGridLines: false, zoomScale: 90 }];
   planilha.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9, margins: { left: 0.25, right: 0.25, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } };
-  planilha.headerFooter.oddFooter = "&LRecicla Belô&C&P de &N&RExportação confidencial";
+  planilha.headerFooter.oddFooter = "&LCataNexo&C&P de &N&RExportação confidencial";
   planilha.properties.tabColor = { argb: CORES.verde };
 }
 
@@ -165,7 +165,7 @@ function criarCapa(pasta: ExcelJS.Workbook, catadores: CatadorParaExportacao[], 
   planilha.properties.tabColor = { argb: CORES.verdeEscuro };
   planilha.columns = Array.from({ length: 8 }, () => ({ width: 18 }));
   planilha.mergeCells("A1:H2");
-  planilha.getCell("A1").value = "Recicla Belô — Catadores cadastrados";
+  planilha.getCell("A1").value = "CataNexo — Catadores cadastrados";
   planilha.getCell("A1").font = { name: "Aptos Display", size: 24, bold: true, color: { argb: CORES.branco } };
   planilha.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: CORES.verdeEscuro } };
   planilha.getCell("A1").alignment = { vertical: "middle", horizontal: "left" };
@@ -226,10 +226,10 @@ function criarCapa(pasta: ExcelJS.Workbook, catadores: CatadorParaExportacao[], 
 
 export async function gerarPlanilhaCatadores(catadores: CatadorParaExportacao[], geradoEm = new Date()) {
   const pasta = new ExcelJS.Workbook();
-  pasta.creator = "Recicla Belô";
-  pasta.company = "Recicla Belô";
+  pasta.creator = "CataNexo";
+  pasta.company = "CataNexo";
   pasta.subject = "Relação completa de catadores cadastrados";
-  pasta.title = "Catadores cadastrados — Recicla Belô";
+  pasta.title = "Catadores cadastrados — CataNexo";
   pasta.description = "Exportação confidencial para produção de crachás e conferência cadastral.";
   pasta.created = geradoEm;
   pasta.modified = geradoEm;
