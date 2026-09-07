@@ -152,11 +152,29 @@ O processo é idempotente e pode ser executado novamente após atualizações. E
 
 O script não altera regras de firewall nem virtual hosts de outras aplicações. Se o DNS ainda não estiver propagado, mantém a aplicação em HTTP e pode ser executado novamente para concluir o certificado.
 
+### Segunda instância na mesma VPS
+
+Cada instalação adicional deve ficar em um clone separado. Não copie o `.env` da instalação principal. Informe um identificador exclusivo para que projeto, rede e volumes Docker, portas locais, credenciais e nomes internos do NGINX sejam isolados automaticamente:
+
+```bash
+cd ~
+git clone --branch implantacao/segunda-instancia-vps \
+  https://github.com/Recicla-Belo/webapp-recicla.git \
+  webapp-recicla-cliente2
+cd webapp-recicla-cliente2
+sudo bash scripts/instalar-producao.sh \
+  --instancia cliente2 \
+  --dominio cliente2.exemplo.com.br \
+  --email-certificado administrador@exemplo.com.br
+```
+
+A instalação histórica continua usando a instância `principal`, o projeto `recicla-belo-producao` e seus volumes atuais. Uma instalação chamada `cliente2` usa o projeto `recicla-belo-cliente2`, a rede `recicla_belo_cliente2_interna` e volumes prefixados por `recicla-belo-cliente2_`. O instalador também impede trocar a identidade de uma pasta que já possua `.env`.
+
 Para atualizar uma instalação existente:
 
 ```bash
 git pull --ff-only
-sudo bash scripts/instalar-producao.sh
+sudo bash scripts/instalar-producao.sh --instancia principal
 ```
 
 Para diagnosticar manualmente:
@@ -166,6 +184,8 @@ docker compose -f docker-compose.producao.yml ps
 docker compose -f docker-compose.producao.yml logs --tail 100 api frontend banco
 sudo nginx -t
 ```
+
+Em instalações adicionais, execute os comandos sempre dentro da pasta correspondente; o Compose lê `NOME_PROJETO_COMPOSE` do `.env` e seleciona somente os serviços daquela instância.
 
 ## Acesso administrativo inicial
 

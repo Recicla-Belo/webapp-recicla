@@ -1,4 +1,4 @@
-name: recicla-belo-producao
+name: ${NOME_PROJETO_COMPOSE:-recicla-belo-producao}
 
 services:
   banco:
@@ -83,5 +83,5 @@ volumes:
 
 networks:
   interna:
-    name: recicla_belo_interna
+    name: ${NOME_REDE_DOCKER:-recicla_belo_interna}
     driver: bridge

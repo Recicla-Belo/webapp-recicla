@@ -321,9 +321,16 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.equal(JSON.parse(pacote).dependencies["lucide-react"], "^1.33.0");
   assert.equal(JSON.parse(pacote).scripts.dev, "node scripts/desenvolver.mjs");
   assert.match(instaladorProducao, /--dominio/);
+  assert.match(instaladorProducao, /--instancia/);
+  assert.match(instaladorProducao, /NOME_PROJETO_COMPOSE="recicla-belo-\$INSTANCIA"/);
+  assert.match(instaladorProducao, /NOME_REDE_DOCKER="recicla_belo_\$\{SUFIXO_INSTANCIA\}_interna"/);
+  assert.match(instaladorProducao, /upstream \$\{PREFIXO_UPSTREAM\}_frontend/);
+  assert.match(instaladorProducao, /Este diretório possui um \.env legado da instância principal/);
   assert.match(instaladorProducao, /nginx -t/);
   assert.match(instaladorProducao, /Conta administrativa existente preservada/);
   assert.match(composeProducao, /127\.0\.0\.1:\$\{PORTA_API/);
+  assert.match(composeProducao, /NOME_PROJETO_COMPOSE/);
+  assert.match(composeProducao, /NOME_REDE_DOCKER/);
   assert.doesNotMatch(composeProducao, /BANCO_PORTA[^\n]*:5432/);
   assert.match(dockerfileProducao, /npm run lint/);
   assert.match(dockerfileProducao, /npm test/);

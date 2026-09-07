@@ -10,7 +10,9 @@ ARQUIVO_COMPOSE="$RAIZ_PROJETO/docker-compose.producao.yml"
 ARQUIVO_ENV="$RAIZ_PROJETO/.env"
 DOMINIO=""
 EMAIL_CERTIFICADO=""
+INSTANCIA="principal"
 SEM_HTTPS=false
+HTTPS_ATIVO=false
 NAO_INTERATIVO=false
 PRIMEIRA_INSTALACAO=false
 SENHA_ADMIN_GERADA=""
@@ -25,6 +27,7 @@ Uso:
   sudo bash scripts/instalar-producao.sh [opções]
 
 Opções:
+  --instancia NOME              Identificador isolado, por exemplo cliente2
   --dominio DOMINIO             Domínio público, por exemplo reciclabelo.vupi.us
   --email-certificado EMAIL     E-mail usado pelo Let's Encrypt
   --sem-https                    Configura somente HTTP
@@ -38,6 +41,7 @@ EOF
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --instancia) [ "$#" -ge 2 ] || falhar "Informe o nome após --instancia."; INSTANCIA="${2,,}"; shift 2 ;;
     --dominio) [ "$#" -ge 2 ] || falhar "Informe o domínio após --dominio."; DOMINIO="$2"; shift 2 ;;
     --email-certificado) [ "$#" -ge 2 ] || falhar "Informe o e-mail após --email-certificado."; EMAIL_CERTIFICADO="$2"; shift 2 ;;
     --sem-https) SEM_HTTPS=true; shift ;;
@@ -55,6 +59,31 @@ cd "$RAIZ_PROJETO"
 [ -f "$ARQUIVO_COMPOSE" ] || falhar "docker-compose.producao.yml não foi encontrado. Execute o script dentro do repositório."
 [ -f package-lock.json ] || falhar "package-lock.json não foi encontrado."
 
+if [ -f "$ARQUIVO_ENV" ]; then
+  INSTANCIA_PERSISTIDA="$(grep -m1 -E '^NOME_INSTANCIA=' "$ARQUIVO_ENV" 2>/dev/null | cut -d= -f2- | tr -d '\r"' || true)"
+  if [ -n "$INSTANCIA_PERSISTIDA" ]; then
+    if [ "$INSTANCIA" = "principal" ]; then INSTANCIA="$INSTANCIA_PERSISTIDA";
+    elif [ "$INSTANCIA" != "$INSTANCIA_PERSISTIDA" ]; then falhar "Este diretório pertence à instância '$INSTANCIA_PERSISTIDA', não à '$INSTANCIA'.";
+    fi
+  elif [ "$INSTANCIA" != "principal" ]; then
+    falhar "Este diretório possui um .env legado da instância principal. Crie um clone novo para '$INSTANCIA'."
+  fi
+fi
+[[ "$INSTANCIA" =~ ^[a-z0-9][a-z0-9-]{0,30}$ ]] || falhar "Instância inválida. Use somente letras minúsculas, números e hífen."
+
+SUFIXO_INSTANCIA="${INSTANCIA//-/_}"
+if [ "$INSTANCIA" = "principal" ]; then
+  NOME_PROJETO_COMPOSE="recicla-belo-producao"
+  NOME_REDE_DOCKER="recicla_belo_interna"
+  PREFIXO_UPSTREAM="reciclabelo"
+else
+  NOME_PROJETO_COMPOSE="recicla-belo-$INSTANCIA"
+  NOME_REDE_DOCKER="recicla_belo_${SUFIXO_INSTANCIA}_interna"
+  PREFIXO_UPSTREAM="reciclabelo_${SUFIXO_INSTANCIA}"
+fi
+export NOME_PROJETO_COMPOSE NOME_REDE_DOCKER
+
+# A trava é global para impedir disputa por portas e pelo gerenciador de pacotes.
 DIRETORIO_TRAVA="/var/lock/recicla-belo-producao.lock"
 mkdir "$DIRETORIO_TRAVA" 2>/dev/null || falhar "Outra instalação do Recicla Belô já está em andamento."
 trap 'rmdir "$DIRETORIO_TRAVA" 2>/dev/null || true' EXIT
@@ -159,6 +188,9 @@ solicitar_configuracao() {
   temporario_env="$(mktemp "$RAIZ_PROJETO/.env.producao.XXXXXX")"
   cat > "$temporario_env" <<EOF
 # Gerado e preservado por scripts/instalar-producao.sh
+NOME_INSTANCIA="$INSTANCIA"
+NOME_PROJETO_COMPOSE="$NOME_PROJETO_COMPOSE"
+NOME_REDE_DOCKER="$NOME_REDE_DOCKER"
 DOMINIO_APLICACAO="$DOMINIO"
 EMAIL_CERTIFICADO="$EMAIL_CERTIFICADO"
 NEXT_PUBLIC_NOME_APLICACAO="$(ler_env NEXT_PUBLIC_NOME_APLICACAO "${ARQUIVO_ENV:-.env}")"
@@ -196,7 +228,7 @@ EOF
   mv "$temporario_env" "$ARQUIVO_ENV"
   chmod 600 "$ARQUIVO_ENV"
   if [ -n "$SENHA_ADMIN_GERADA" ]; then
-    local arquivo_credenciais="/root/reciclabelo-credenciais-iniciais.txt"
+    local arquivo_credenciais="/root/reciclabelo-${INSTANCIA}-credenciais-iniciais.txt"
     umask 077
     printf 'Domínio: %s\nAdministrador: %s\nSenha inicial: %s\n' "$DOMINIO" "$email_admin" "$SENHA_ADMIN_GERADA" > "$arquivo_credenciais"
     chmod 600 "$arquivo_credenciais"
@@ -264,11 +296,11 @@ configurar_nginx() {
   [ -z "$conflito" ] || falhar "O domínio já está configurado em $conflito. Remova o conflito antes de continuar."
 
   cat > "$temporario" <<EOF
-upstream reciclabelo_frontend {
+upstream ${PREFIXO_UPSTREAM}_frontend {
     server 127.0.0.1:$porta_frontend;
     keepalive 16;
 }
-upstream reciclabelo_api {
+upstream ${PREFIXO_UPSTREAM}_api {
     server 127.0.0.1:$porta_api;
     keepalive 16;
 }
@@ -279,7 +311,7 @@ server {
     client_max_body_size 10m;
 
     location /api/ {
-        proxy_pass http://reciclabelo_api;
+        proxy_pass http://${PREFIXO_UPSTREAM}_api;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -290,7 +322,7 @@ server {
         proxy_read_timeout 60s;
     }
     location / {
-        proxy_pass http://reciclabelo_frontend;
+        proxy_pass http://${PREFIXO_UPSTREAM}_frontend;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -324,6 +356,7 @@ configurar_https() {
   local tentativa
   for tentativa in 1 2 3; do
     if certbot --nginx --non-interactive --agree-tos --redirect --keep-until-expiring -m "$EMAIL_CERTIFICADO" -d "$DOMINIO"; then
+      HTTPS_ATIVO=true
       nginx -t && systemctl reload nginx
       curl --fail --silent --show-error --max-time 15 "https://$DOMINIO/" >/dev/null || alertar "O certificado foi instalado, mas a verificação externa ainda não respondeu. Verifique DNS ou proxy."
       return 0
@@ -334,15 +367,17 @@ configurar_https() {
 }
 
 verificar_resultado() {
-  local porta_frontend porta_api
+  local porta_frontend porta_api protocolo
   porta_frontend="$(ler_env PORTA_FRONTEND)"; porta_api="$(ler_env PORTA_API)"
+  protocolo="http"
+  $HTTPS_ATIVO && protocolo="https"
   curl --fail --silent --show-error --max-time 10 "http://127.0.0.1:$porta_frontend/" >/dev/null
   curl --fail --silent --show-error --max-time 10 "http://127.0.0.1:$porta_api/saude" >/dev/null
   compose ps
-  informar "Instalação concluída: https://$DOMINIO"
-  informar "Para atualizar: git pull --ff-only && sudo bash scripts/instalar-producao.sh"
+  informar "Instalação concluída: $protocolo://$DOMINIO"
+  informar "Para atualizar esta instância: git pull --ff-only && sudo bash scripts/instalar-producao.sh --instancia $INSTANCIA --dominio $DOMINIO"
   if [ -n "$SENHA_ADMIN_GERADA" ]; then
-    alertar "Consulte /root/reciclabelo-credenciais-iniciais.txt e transfira a senha para um gerenciador seguro."
+    alertar "Consulte /root/reciclabelo-${INSTANCIA}-credenciais-iniciais.txt e transfira a senha para um gerenciador seguro."
   fi
 }
 
