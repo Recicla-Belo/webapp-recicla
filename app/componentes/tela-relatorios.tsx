@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Download, Eye, LockKeyhole, Search, ShieldCheck, Trash2, X } from "lucide-react";
-import { baixarArquivoApi, requisitarApi, type CooperativaApi, type MaterialApi } from "@/app/dados/api";
+import { Building2, Download, Eye, LockKeyhole, MapPin, Search, ShieldCheck, Trash2, X } from "lucide-react";
+import { baixarArquivoApi, requisitarApi, type CooperativaApi, type MaterialApi, type PontoApoioApi } from "@/app/dados/api";
 import { Paginacao } from "@/app/componentes/paginacao";
 import { ModalExclusaoAdministrativa } from "@/app/componentes/modal-exclusao-administrativa";
 import { useTermoBusca } from "@/app/utilitarios/use-termo-busca";
@@ -21,6 +21,7 @@ type PesagemRelatorio = {
   historico: EventoAuditoriaPesagem[];
 };
 type ResumoDiario = { data_operacao: string; total_coletado: number; valor_total_pagar: number; media_por_catador: number; coletas_realizadas: number; catadores_atendidos: number; catadores_meta_atingida: number };
+type ProducaoPonto = { ponto_apoio_uuid: string; ponto_apoio: string; peso_total: number; coletas: number; catadores: number; valor_liberado: number; centrais: string[] };
 type EventoAuditoria = { uuid: string; acao: string; entidade: string; entidade_uuid: string | null; dados: Record<string, unknown>; endereco_ip: string | null; criado_em: string; usuario: string | null; usuario_email: string | null };
 type OpcaoCampo = { chave: string; rotulo: string };
 type AlvoExclusao = { tipo: "dia"; item: ResumoDiario } | { tipo: "pesagem"; item: PesagemRelatorio } | { tipo: "auditoria"; item: EventoAuditoria };
@@ -50,6 +51,7 @@ export function TelaRelatorios({ administrador = false }: { administrador?: bool
   const [busca, setBusca] = useState("");
   const [materialUuid, setMaterialUuid] = useState("");
   const [cooperativaUuid, setCooperativaUuid] = useState("");
+  const [pontoApoioUuid, setPontoApoioUuid] = useState("");
   const [status, setStatus] = useState("");
   const [entidade, setEntidade] = useState("");
   const [acao, setAcao] = useState("");
@@ -60,8 +62,10 @@ export function TelaRelatorios({ administrador = false }: { administrador?: bool
   const [resumos, setResumos] = useState<ResumoDiario[]>([]);
   const [auditorias, setAuditorias] = useState<EventoAuditoria[]>([]);
   const [totais, setTotais] = useState({ peso: 0, valor: 0, catadores: 0, coletas: 0, media: 0 });
+  const [producaoPorPonto, setProducaoPorPonto] = useState<ProducaoPonto[]>([]);
   const [materiais, setMateriais] = useState<MaterialApi[]>([]);
   const [cooperativas, setCooperativas] = useState<CooperativaApi[]>([]);
+  const [pontosApoio, setPontosApoio] = useState<PontoApoioApi[]>([]);
   const [opcoesAuditoria, setOpcoesAuditoria] = useState({ entidades: [] as string[], acoes: [] as string[] });
   const [detalhePesagem, setDetalhePesagem] = useState<PesagemRelatorio | null>(null);
   const [detalheAuditoria, setDetalheAuditoria] = useState<EventoAuditoria | null>(null);
@@ -79,7 +83,8 @@ export function TelaRelatorios({ administrador = false }: { administrador?: bool
     void Promise.all([
       requisitarApi<{ dados: MaterialApi[] }>("/api/materiais"),
       requisitarApi<{ dados: CooperativaApi[] }>("/api/cooperativas"),
-    ]).then(([m, c]) => { setMateriais(m.dados); setCooperativas(c.dados); }).catch(() => undefined);
+      requisitarApi<{ dados: PontoApoioApi[] }>("/api/pontos-apoio?incluirInativos=true"),
+    ]).then(([m, c, p]) => { setMateriais(m.dados); setCooperativas(c.dados); setPontosApoio(p.dados); }).catch(() => undefined);
   }, []);
 
   const parametros = useMemo(() => {
@@ -90,6 +95,7 @@ export function TelaRelatorios({ administrador = false }: { administrador?: bool
     if (aba === "pesagens") {
       if (materialUuid) consulta.set("materialUuid", materialUuid);
       if (cooperativaUuid) consulta.set("cooperativaUuid", cooperativaUuid);
+      if (pontoApoioUuid) consulta.set("pontoApoioUuid", pontoApoioUuid);
       if (status) consulta.set("status", status);
     }
     if (aba === "auditoria") {
@@ -97,15 +103,16 @@ export function TelaRelatorios({ administrador = false }: { administrador?: bool
       if (acao) consulta.set("acao", acao);
     }
     return consulta;
-  }, [aba, acao, cooperativaUuid, entidade, fim, inicio, itensPorPagina, materialUuid, pagina, status, termoBusca]);
+  }, [aba, acao, cooperativaUuid, entidade, fim, inicio, itensPorPagina, materialUuid, pagina, pontoApoioUuid, status, termoBusca]);
 
   const carregar = useCallback(async () => {
     setCarregando(true);
     try {
       if (aba === "pesagens") {
-        const resposta = await requisitarApi<{ dados: PesagemRelatorio[]; total: number; totais: typeof totais }>(`/api/relatorios/pesagens?${parametros}`);
+        const resposta = await requisitarApi<{ dados: PesagemRelatorio[]; total: number; totais: typeof totais; producaoPorPonto: ProducaoPonto[] }>(`/api/relatorios/pesagens?${parametros}`);
         setPesagens(resposta.dados); setTotal(resposta.total);
         setTotais({ peso: Number(resposta.totais.peso), valor: Number(resposta.totais.valor), catadores: Number(resposta.totais.catadores), coletas: Number(resposta.totais.coletas), media: Number(resposta.totais.media) });
+        setProducaoPorPonto(resposta.producaoPorPonto);
       } else if (aba === "resumo") {
         const resposta = await requisitarApi<{ dados: ResumoDiario[]; total: number }>(`/api/relatorios/resumo-diario?${parametros}`);
         setResumos(resposta.dados); setTotal(resposta.total);
@@ -130,6 +137,7 @@ export function TelaRelatorios({ administrador = false }: { administrador?: bool
     if (termoBusca) consulta.set("busca", termoBusca);
     if (materialUuid) consulta.set("materialUuid", materialUuid);
     if (cooperativaUuid) consulta.set("cooperativaUuid", cooperativaUuid);
+    if (pontoApoioUuid) consulta.set("pontoApoioUuid", pontoApoioUuid);
     if (status) consulta.set("status", status);
     if (entidade) consulta.set("entidade", entidade);
     if (acao) consulta.set("acao", acao);
@@ -183,7 +191,8 @@ export function TelaRelatorios({ administrador = false }: { administrador?: bool
       <label className="filtro-com-rotulo"><span>Até</span><input className="entrada-filtro" type="date" value={fim} onChange={(e) => { setFim(e.target.value); setPagina(1); }} /></label>
       {aba === "pesagens" && <>
         <select className="entrada-filtro" value={materialUuid} onChange={(e) => { setMaterialUuid(e.target.value); setPagina(1); }} aria-label="Filtrar material"><option value="">Todos os materiais</option>{materiais.map((m) => <option value={m.uuid} key={m.uuid}>{m.nome}</option>)}</select>
-        <select className="entrada-filtro" value={cooperativaUuid} onChange={(e) => { setCooperativaUuid(e.target.value); setPagina(1); }} aria-label="Filtrar cooperativa"><option value="">Todas as cooperativas</option>{cooperativas.map((c) => <option value={c.uuid} key={c.uuid}>{c.nome}</option>)}</select>
+        <select className="entrada-filtro" value={pontoApoioUuid} onChange={(e) => { setPontoApoioUuid(e.target.value); setPagina(1); }} aria-label="Filtrar ponto de apoio ou tenda"><option value="">Todos os pontos / tendas</option>{pontosApoio.map((ponto) => <option value={ponto.uuid} key={ponto.uuid}>{ponto.nome}</option>)}</select>
+        <select className="entrada-filtro" value={cooperativaUuid} onChange={(e) => { setCooperativaUuid(e.target.value); setPagina(1); }} aria-label="Filtrar central ou cooperativa"><option value="">Todas as centrais / cooperativas</option>{cooperativas.map((c) => <option value={c.uuid} key={c.uuid}>{c.nome}</option>)}</select>
         <select className="entrada-filtro" value={status} onChange={(e) => { setStatus(e.target.value); setPagina(1); }} aria-label="Filtrar status"><option value="">Todos os status</option><option value="concluida">Concluída</option><option value="agendada">Agendada</option><option value="cancelada">Cancelada</option><option value="excluida">Excluída</option></select>
       </>}
       {aba === "auditoria" && <>
@@ -191,6 +200,7 @@ export function TelaRelatorios({ administrador = false }: { administrador?: bool
         <select className="entrada-filtro" value={acao} onChange={(e) => { setAcao(e.target.value); setPagina(1); }} aria-label="Filtrar ação"><option value="">Todas as ações</option>{opcoesAuditoria.acoes.map((item) => <option value={item} key={item}>{item.replaceAll("_", " ")}</option>)}</select>
       </>}
     </div>
+    {aba === "pesagens" && !carregando && <ResumoPontos dados={producaoPorPonto} />}
     {carregando ? <div className="painel estado-pagina" role="status">Carregando relatório...</div> : <>
       {aba === "resumo" && <TabelaResumo dados={resumos} administrador={administrador} aoExcluir={(item) => { setErroExclusao(""); setAlvoExclusao({ tipo: "dia", item }); }} />}
       {aba === "pesagens" && <TabelaPesagens dados={pesagens} administrador={administrador} aoDetalhar={setDetalhePesagem} aoExcluir={(item) => { setErroExclusao(""); setAlvoExclusao({ tipo: "pesagem", item }); }} />}
@@ -202,6 +212,11 @@ export function TelaRelatorios({ administrador = false }: { administrador?: bool
     <ModalExclusaoAdministrativa aberto={Boolean(alvoExclusao)} titulo={alvoExclusao?.tipo === "dia" ? "Apagar todo o movimento deste dia?" : alvoExclusao?.tipo === "pesagem" ? "Excluir esta pesagem e recalcular os valores?" : "Apagar este evento de auditoria?"} descricao={descricaoExclusao} itensApagados={itensExclusao} itensPreservados={alvoExclusao?.tipo === "pesagem" ? ["Pesagem marcada como excluída nos Relatórios", "Dados anteriores, motivo, usuário e horário na auditoria", "Catadores, cooperativas, usuários e configurações"] : ["Catadores e suas fichas", "Cooperativas e associações", "Usuários e permissões", "Materiais e configurações"]} fraseConfirmacao={alvoExclusao?.tipo === "pesagem" ? "EXCLUIR REGISTROS" : "EXCLUIR DEFINITIVAMENTE"} processando={excluindo} erro={erroExclusao} aoConfirmar={(dadosConfirmacao) => void excluirRegistro(dadosConfirmacao)} aoFechar={() => { if (!excluindo) { setAlvoExclusao(null); setErroExclusao(""); } }} />
     {exportacaoAberta && <div className="sobreposicao" role="dialog" aria-modal="true" aria-labelledby="titulo-exportacao"><div className="modal exportacao-relatorio"><header className="cabecalho-modal"><div><span>EXPORTAÇÃO SEGURA</span><h2 id="titulo-exportacao">Escolha as informações</h2><p>Serão exportados todos os registros filtrados do período, não apenas esta página.</p></div><button type="button" onClick={() => setExportacaoAberta(false)} aria-label="Fechar"><X /></button></header><div className="corpo-exportacao"><div className="acoes-selecao-campos"><button type="button" onClick={() => setCamposSelecionados(camposExportacao[aba].map((campo) => campo.chave))}>Selecionar todas</button><button type="button" onClick={() => setCamposSelecionados([])}>Limpar seleção</button></div><div className="grade-campos-exportacao">{camposExportacao[aba].map((campo) => <label key={campo.chave}><input type="checkbox" checked={camposSelecionados.includes(campo.chave)} onChange={(e) => setCamposSelecionados((atuais) => e.target.checked ? [...atuais, campo.chave] : atuais.filter((item) => item !== campo.chave))} /><span>{campo.rotulo}</span></label>)}</div></div><footer className="rodape-modal"><span>{camposSelecionados.length} campo(s) selecionado(s)</span><button type="button" className="botao-secundario" onClick={() => setExportacaoAberta(false)}>Cancelar</button><button type="button" className="botao-primario" disabled={exportando || !camposSelecionados.length} onClick={() => void exportar()}>{exportando ? "Gerando..." : "Baixar CSV completo"}</button></footer></div></div>}
   </section>;
+}
+
+function ResumoPontos({ dados }: { dados: ProducaoPonto[] }) {
+  const total = dados.reduce((soma, item) => soma + Number(item.peso_total), 0);
+  return <section className="resumo-pontos-relatorio"><div className="titulo-secao"><div><h3>Totais por ponto de apoio / tenda</h3><p>Somente pesagens concluídas e válidas para o período, ponto e central selecionados.</p></div><strong>{numero(total)} kg</strong></div>{dados.length === 0 ? <p className="estado-vazio">Nenhuma produção concluída para estes filtros.</p> : <div className="lista-resumo-pontos">{dados.map((item) => <article key={item.ponto_apoio_uuid}><span><MapPin /></span><div><strong>{item.ponto_apoio}</strong><small><Building2 /> {item.centrais.length ? item.centrais.join(" · ") : "Central não informada"}</small></div><dl><div><dt>Peso</dt><dd>{numero(item.peso_total)} kg</dd></div><div><dt>Pesagens</dt><dd>{item.coletas}</dd></div><div><dt>Catadores</dt><dd>{item.catadores}</dd></div><div><dt>Valor liberado</dt><dd>{dinheiro(item.valor_liberado)}</dd></div></dl></article>)}</div>}</section>;
 }
 
 function TabelaResumo({ dados, administrador, aoExcluir }: { dados: ResumoDiario[]; administrador: boolean; aoExcluir: (item: ResumoDiario) => void }) {

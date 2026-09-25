@@ -874,8 +874,20 @@ aplicacao.patch("/api/usuarios/:uuid", { config: { rateLimit: { max: 12, timeWin
   return resposta.code(204).send();
 });
 
-aplicacao.get("/api/painel", async (requisicao) => {
-  const paginacao = z.object({ paginaAtividades: z.coerce.number().int().min(1).default(1), limiteAtividades: z.coerce.number().int().min(5).max(20).default(5) }).parse(requisicao.query);
+aplicacao.get("/api/painel", async (requisicao, resposta) => {
+  const consulta = z.object({
+    paginaAtividades: z.coerce.number().int().min(1).default(1),
+    limiteAtividades: z.coerce.number().int().min(5).max(20).default(5),
+    inicioPontos: z.iso.date().optional(),
+    fimPontos: z.iso.date().optional(),
+    pontoApoioUuid: z.uuid().optional(),
+    cooperativaUuid: z.uuid().optional(),
+  }).safeParse(requisicao.query);
+  if (!consulta.success) return resposta.code(400).send({ mensagem: "Revise os filtros de período, ponto de apoio e central." });
+  const paginacao = consulta.data;
+  if (paginacao.inicioPontos && paginacao.fimPontos && paginacao.inicioPontos > paginacao.fimPontos) {
+    return resposta.code(400).send({ mensagem: "A data inicial não pode ser posterior à data final." });
+  }
   const deslocamentoAtividades = (paginacao.paginaAtividades - 1) * paginacao.limiteAtividades;
   const indicadores = await banco.query(`SELECT
     (SELECT count(*)::int FROM catadores WHERE status = 'ativo') AS catadores_ativos,
@@ -902,6 +914,24 @@ aplicacao.get("/api/painel", async (requisicao) => {
     FROM generate_series((now() AT TIME ZONE 'America/Bahia')::date - interval '6 days',(now() AT TIME ZONE 'America/Bahia')::date,interval '1 day') dia
     LEFT JOIN pesagens p ON p.status='concluida' AND p.excluida_em IS NULL AND (p.data_hora AT TIME ZONE 'America/Bahia')::date=dia::date
     GROUP BY dia ORDER BY dia`);
+  const parametrosPontos = [paginacao.inicioPontos ?? null, paginacao.fimPontos ?? null, paginacao.pontoApoioUuid ?? null, paginacao.cooperativaUuid ?? null];
+  const producaoPorPonto = await banco.query(`SELECT pa.uuid AS ponto_apoio_uuid,pa.nome AS ponto_apoio,
+      coalesce(sum(p.peso_total),0)::float8 AS peso_total,
+      count(p.uuid)::int AS coletas,
+      count(DISTINCT p.catador_uuid)::int AS catadores,
+      coalesce(sum(p.valor_total),0)::float8 AS valor_liberado,
+      coalesce(array_agg(DISTINCT co.nome ORDER BY co.nome) FILTER (WHERE co.nome IS NOT NULL),'{}') AS centrais
+    FROM pesagens p JOIN pontos_apoio pa ON pa.uuid=p.ponto_apoio_uuid
+    LEFT JOIN cooperativas co ON co.uuid=p.cooperativa_uuid
+    WHERE p.status='concluida' AND p.excluida_em IS NULL
+      AND ($1::date IS NULL OR p.data_hora >= ($1::date::timestamp AT TIME ZONE 'America/Bahia'))
+      AND ($2::date IS NULL OR p.data_hora < (($2::date + interval '1 day') AT TIME ZONE 'America/Bahia'))
+      AND ($3::uuid IS NULL OR p.ponto_apoio_uuid=$3)
+      AND ($4::uuid IS NULL OR p.cooperativa_uuid=$4)
+    GROUP BY pa.uuid,pa.nome ORDER BY peso_total DESC,pa.nome`, parametrosPontos);
+  const opcoesPontos = await banco.query(`SELECT
+      coalesce((SELECT json_agg(json_build_object('uuid',pa.uuid,'nome',pa.nome) ORDER BY pa.status DESC,pa.nome) FROM pontos_apoio pa),'[]'::json) AS pontos,
+      coalesce((SELECT json_agg(json_build_object('uuid',co.uuid,'nome',co.nome) ORDER BY co.status DESC,co.nome) FROM cooperativas co),'[]'::json) AS centrais`);
   const atividades = await banco.query(`SELECT a.uuid,a.acao,a.entidade,a.entidade_uuid,a.criado_em,a.dados,
       coalesce(p.codigo,pc.codigo) AS codigo,p.peso_total::float8,coalesce(p.valor_total,pc.valor)::float8 AS valor_total,
       coalesce(p.status::text,CASE WHEN pc.uuid IS NOT NULL THEN 'pago' END) AS status,p.excluida_em,
@@ -945,7 +975,14 @@ aplicacao.get("/api/painel", async (requisicao) => {
     WHERE a.criado_em >= (now() - interval '30 days')
       AND (a.entidade<>'caixas_catador' OR cx.uuid IS NOT NULL)
       AND NOT (a.entidade='pesagens' AND p.excluida_em IS NOT NULL AND a.acao<>'exclusao_logica')`);
-  return { indicadores: indicadores.rows[0], producaoSemanal: producao.rows, atividades: atividades.rows, paginacaoAtividades: { pagina: paginacao.paginaAtividades, limite: paginacao.limiteAtividades, total: totalAtividades.rows[0]?.total ?? 0 } };
+  return {
+    indicadores: indicadores.rows[0],
+    producaoSemanal: producao.rows,
+    producaoPorPonto: producaoPorPonto.rows,
+    filtrosPontos: opcoesPontos.rows[0] ?? { pontos: [], centrais: [] },
+    atividades: atividades.rows,
+    paginacaoAtividades: { pagina: paginacao.paginaAtividades, limite: paginacao.limiteAtividades, total: totalAtividades.rows[0]?.total ?? 0 },
+  };
 });
 
 aplicacao.get("/api/catadores", async (requisicao) => {
@@ -1993,8 +2030,8 @@ aplicacao.delete("/api/notificacoes", async (requisicao, resposta) => {
 });
 
 aplicacao.get("/api/relatorios/pesagens", async (requisicao) => {
-  const filtro = z.object({ inicio: z.iso.date().optional(), fim: z.iso.date().optional(), catadorUuid: z.uuid().optional(), materialUuid: z.uuid().optional(), cooperativaUuid: z.uuid().optional(), status: z.enum(["concluida", "agendada", "cancelada", "excluida"]).optional(), busca: z.string().trim().max(120).default(""), limite: z.coerce.number().int().min(5).max(50).default(10), deslocamento: z.coerce.number().int().min(0).default(0) }).parse(requisicao.query);
-  const parametros = [filtro.inicio ?? null, filtro.fim ?? null, filtro.catadorUuid ?? null, filtro.busca, filtro.materialUuid ?? null, filtro.cooperativaUuid ?? null, filtro.status ?? null, filtro.limite, filtro.deslocamento];
+  const filtro = z.object({ inicio: z.iso.date().optional(), fim: z.iso.date().optional(), catadorUuid: z.uuid().optional(), materialUuid: z.uuid().optional(), cooperativaUuid: z.uuid().optional(), pontoApoioUuid: z.uuid().optional(), status: z.enum(["concluida", "agendada", "cancelada", "excluida"]).optional(), busca: z.string().trim().max(120).default(""), limite: z.coerce.number().int().min(5).max(50).default(10), deslocamento: z.coerce.number().int().min(0).default(0) }).parse(requisicao.query);
+  const parametros = [filtro.inicio ?? null, filtro.fim ?? null, filtro.catadorUuid ?? null, filtro.busca, filtro.materialUuid ?? null, filtro.cooperativaUuid ?? null, filtro.status ?? null, filtro.pontoApoioUuid ?? null, filtro.limite, filtro.deslocamento];
   const { rows } = await banco.query(`SELECT p.uuid,p.codigo,p.criado_em,p.data_hora,p.confirmada_em,p.atualizado_em,p.peso_total,p.valor_total,p.status,p.observacao,
       p.excluida_em,p.motivo_exclusao,p.catador_uuid,p.cooperativa_uuid,p.ponto_apoio_uuid,p.responsavel_pesagem_uuid,p.responsavel_outro,
       c.codigo AS codigo_catador,c.nome_completo AS catador,c.cpf AS cpf_catador,
@@ -2022,28 +2059,45 @@ aplicacao.get("/api/relatorios/pesagens", async (requisicao) => {
     LEFT JOIN usuarios uc ON uc.uuid=p.criada_por_uuid
     LEFT JOIN usuarios ue ON ue.uuid=p.excluida_por_uuid
     JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN materiais m ON m.uuid=ip.material_uuid
-    WHERE ($1::date IS NULL OR p.data_hora >= $1::date) AND ($2::date IS NULL OR p.data_hora < $2::date + interval '1 day')
+    WHERE ($1::date IS NULL OR p.data_hora >= ($1::date::timestamp AT TIME ZONE 'America/Bahia')) AND ($2::date IS NULL OR p.data_hora < (($2::date + interval '1 day') AT TIME ZONE 'America/Bahia'))
       AND ($3::uuid IS NULL OR p.catador_uuid=$3)
-      AND ($4='' OR to_tsvector('portuguese',c.nome_completo || ' ' || c.codigo || ' ' || p.codigo || ' ' || m.nome || ' ' || p.status::text || ' ' || coalesce(co.nome,'')) @@ consulta_busca_prefixada($4))
+      AND ($4='' OR to_tsvector('portuguese',c.nome_completo || ' ' || c.codigo || ' ' || p.codigo || ' ' || m.nome || ' ' || p.status::text || ' ' || coalesce(co.nome,'') || ' ' || pa.nome) @@ consulta_busca_prefixada($4))
       AND ($5::uuid IS NULL OR ip.material_uuid=$5)
       AND ($6::uuid IS NULL OR p.cooperativa_uuid=$6)
       AND ($7::text IS NULL OR CASE WHEN $7='excluida' THEN p.excluida_em IS NOT NULL ELSE p.status::text=$7 AND p.excluida_em IS NULL END)
-    ORDER BY p.data_hora DESC,p.uuid DESC LIMIT $8 OFFSET $9`, parametros);
+      AND ($8::uuid IS NULL OR p.ponto_apoio_uuid=$8)
+    ORDER BY p.data_hora DESC,p.uuid DESC LIMIT $9 OFFSET $10`, parametros);
   const totais = await banco.query<{ total: number; peso: number; valor: number; catadores: number; coletas: number }>(`SELECT count(*)::int AS total,
       coalesce(sum(p.peso_total) FILTER (WHERE p.status='concluida' AND p.excluida_em IS NULL),0)::float8 AS peso,
       coalesce(sum(p.valor_total) FILTER (WHERE p.status='concluida' AND p.excluida_em IS NULL),0)::float8 AS valor,
       count(DISTINCT p.catador_uuid) FILTER (WHERE p.status='concluida' AND p.excluida_em IS NULL)::int AS catadores,
       count(p.uuid) FILTER (WHERE p.status='concluida' AND p.excluida_em IS NULL)::int AS coletas
     FROM pesagens p JOIN catadores c ON c.uuid=p.catador_uuid JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN materiais m ON m.uuid=ip.material_uuid
-    LEFT JOIN cooperativas co ON co.uuid=p.cooperativa_uuid
-    WHERE ($1::date IS NULL OR p.data_hora >= $1::date) AND ($2::date IS NULL OR p.data_hora < $2::date + interval '1 day')
+    JOIN pontos_apoio pa ON pa.uuid=p.ponto_apoio_uuid LEFT JOIN cooperativas co ON co.uuid=p.cooperativa_uuid
+    WHERE ($1::date IS NULL OR p.data_hora >= ($1::date::timestamp AT TIME ZONE 'America/Bahia')) AND ($2::date IS NULL OR p.data_hora < (($2::date + interval '1 day') AT TIME ZONE 'America/Bahia'))
       AND ($3::uuid IS NULL OR p.catador_uuid=$3)
-      AND ($4='' OR to_tsvector('portuguese',c.nome_completo || ' ' || c.codigo || ' ' || p.codigo || ' ' || m.nome || ' ' || p.status::text || ' ' || coalesce(co.nome,'')) @@ consulta_busca_prefixada($4))
+      AND ($4='' OR to_tsvector('portuguese',c.nome_completo || ' ' || c.codigo || ' ' || p.codigo || ' ' || m.nome || ' ' || p.status::text || ' ' || coalesce(co.nome,'') || ' ' || pa.nome) @@ consulta_busca_prefixada($4))
       AND ($5::uuid IS NULL OR ip.material_uuid=$5)
       AND ($6::uuid IS NULL OR p.cooperativa_uuid=$6)
-      AND ($7::text IS NULL OR CASE WHEN $7='excluida' THEN p.excluida_em IS NOT NULL ELSE p.status::text=$7 AND p.excluida_em IS NULL END)`, parametros.slice(0, 7));
+      AND ($7::text IS NULL OR CASE WHEN $7='excluida' THEN p.excluida_em IS NOT NULL ELSE p.status::text=$7 AND p.excluida_em IS NULL END)
+      AND ($8::uuid IS NULL OR p.ponto_apoio_uuid=$8)`, parametros.slice(0, 8));
+  const parametrosProducaoPontos = [filtro.inicio ?? null, filtro.fim ?? null, filtro.catadorUuid ?? null, filtro.busca, filtro.materialUuid ?? null, filtro.cooperativaUuid ?? null, filtro.pontoApoioUuid ?? null];
+  const producaoPorPonto = await banco.query(`SELECT pa.uuid AS ponto_apoio_uuid,pa.nome AS ponto_apoio,
+      coalesce(sum(p.peso_total),0)::float8 AS peso_total,count(DISTINCT p.uuid)::int AS coletas,
+      count(DISTINCT p.catador_uuid)::int AS catadores,coalesce(sum(p.valor_total),0)::float8 AS valor_liberado,
+      coalesce(array_agg(DISTINCT co.nome ORDER BY co.nome) FILTER (WHERE co.nome IS NOT NULL),'{}') AS centrais
+    FROM pesagens p JOIN catadores c ON c.uuid=p.catador_uuid JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN materiais m ON m.uuid=ip.material_uuid
+    JOIN pontos_apoio pa ON pa.uuid=p.ponto_apoio_uuid LEFT JOIN cooperativas co ON co.uuid=p.cooperativa_uuid
+    WHERE p.status='concluida' AND p.excluida_em IS NULL
+      AND ($1::date IS NULL OR p.data_hora >= ($1::date::timestamp AT TIME ZONE 'America/Bahia')) AND ($2::date IS NULL OR p.data_hora < (($2::date + interval '1 day') AT TIME ZONE 'America/Bahia'))
+      AND ($3::uuid IS NULL OR p.catador_uuid=$3)
+      AND ($4='' OR to_tsvector('portuguese',c.nome_completo || ' ' || c.codigo || ' ' || p.codigo || ' ' || m.nome || ' ' || coalesce(co.nome,'') || ' ' || pa.nome) @@ consulta_busca_prefixada($4))
+      AND ($5::uuid IS NULL OR ip.material_uuid=$5)
+      AND ($6::uuid IS NULL OR p.cooperativa_uuid=$6)
+      AND ($7::uuid IS NULL OR p.ponto_apoio_uuid=$7)
+    GROUP BY pa.uuid,pa.nome ORDER BY peso_total DESC,pa.nome`, parametrosProducaoPontos);
   const resumo = totais.rows[0];
-  return { dados: rows, total: resumo?.total ?? 0, totais: { peso: resumo?.peso ?? 0, valor: resumo?.valor ?? 0, catadores: resumo?.catadores ?? 0, coletas: resumo?.coletas ?? 0, media: resumo?.catadores ? Number(resumo.peso) / resumo.catadores : 0 }, limite: filtro.limite, deslocamento: filtro.deslocamento };
+  return { dados: rows, total: resumo?.total ?? 0, totais: { peso: resumo?.peso ?? 0, valor: resumo?.valor ?? 0, catadores: resumo?.catadores ?? 0, coletas: resumo?.coletas ?? 0, media: resumo?.catadores ? Number(resumo.peso) / resumo.catadores : 0 }, producaoPorPonto: producaoPorPonto.rows, limite: filtro.limite, deslocamento: filtro.deslocamento };
 });
 
 aplicacao.get("/api/relatorios/resumo-diario", async (requisicao) => {
@@ -2103,7 +2157,7 @@ function montarCsv(linhas: Record<string, unknown>[], campos: string[], catalogo
 }
 
 aplicacao.get("/api/relatorios/exportar", async (requisicao, resposta) => {
-  const filtro = z.object({ tipo: z.enum(["pesagens", "resumo", "auditoria"]), inicio: z.iso.date(), fim: z.iso.date(), campos: z.string().min(1).max(1000), busca: z.string().trim().max(120).default(""), catadorUuid: z.uuid().optional(), materialUuid: z.uuid().optional(), cooperativaUuid: z.uuid().optional(), status: z.enum(["concluida", "agendada", "cancelada", "excluida"]).optional(), entidade: z.string().trim().max(80).default(""), acao: z.string().trim().max(80).default("") }).parse(requisicao.query);
+  const filtro = z.object({ tipo: z.enum(["pesagens", "resumo", "auditoria"]), inicio: z.iso.date(), fim: z.iso.date(), campos: z.string().min(1).max(1000), busca: z.string().trim().max(120).default(""), catadorUuid: z.uuid().optional(), materialUuid: z.uuid().optional(), cooperativaUuid: z.uuid().optional(), pontoApoioUuid: z.uuid().optional(), status: z.enum(["concluida", "agendada", "cancelada", "excluida"]).optional(), entidade: z.string().trim().max(80).default(""), acao: z.string().trim().max(80).default("") }).parse(requisicao.query);
   const inicio = new Date(`${filtro.inicio}T00:00:00Z`); const fim = new Date(`${filtro.fim}T00:00:00Z`);
   if (fim < inicio || fim.getTime() - inicio.getTime() > 366 * 86_400_000) return resposta.code(400).send({ mensagem: "Selecione um período válido de até 366 dias para a exportação." });
   const catalogo = filtro.tipo === "pesagens" ? camposExportacaoPesagens : filtro.tipo === "resumo" ? camposExportacaoResumo : camposExportacaoAuditoria;
@@ -2131,10 +2185,11 @@ aplicacao.get("/api/relatorios/exportar", async (requisicao, resposta) => {
       FROM pesagens p JOIN catadores c ON c.uuid=p.catador_uuid JOIN itens_pesagem ip ON ip.pesagem_uuid=p.uuid JOIN materiais m ON m.uuid=ip.material_uuid
       JOIN pontos_apoio pa ON pa.uuid=p.ponto_apoio_uuid LEFT JOIN cooperativas co ON co.uuid=p.cooperativa_uuid LEFT JOIN responsaveis_pesagem rp ON rp.uuid=p.responsavel_pesagem_uuid
       LEFT JOIN movimentacoes_caixa_catador mc ON mc.pesagem_uuid=p.uuid AND mc.ativa LEFT JOIN caixas_catador cx ON cx.uuid=mc.caixa_uuid LEFT JOIN usuarios uc ON uc.uuid=p.criada_por_uuid LEFT JOIN usuarios ue ON ue.uuid=p.excluida_por_uuid
-      WHERE p.data_hora >= $1::date AND p.data_hora < $2::date+interval '1 day' AND ($3::uuid IS NULL OR p.catador_uuid=$3) AND ($4::uuid IS NULL OR ip.material_uuid=$4) AND ($5::uuid IS NULL OR p.cooperativa_uuid=$5)
+      WHERE p.data_hora >= ($1::date::timestamp AT TIME ZONE 'America/Bahia') AND p.data_hora < (($2::date + interval '1 day') AT TIME ZONE 'America/Bahia') AND ($3::uuid IS NULL OR p.catador_uuid=$3) AND ($4::uuid IS NULL OR ip.material_uuid=$4) AND ($5::uuid IS NULL OR p.cooperativa_uuid=$5)
       AND ($6::text IS NULL OR CASE WHEN $6='excluida' THEN p.excluida_em IS NOT NULL ELSE p.status::text=$6 AND p.excluida_em IS NULL END)
-      AND ($7='' OR to_tsvector('portuguese',c.nome_completo || ' ' || c.codigo || ' ' || p.codigo || ' ' || m.nome || ' ' || p.status::text || ' ' || coalesce(co.nome,'')) @@ consulta_busca_prefixada($7))
-      ORDER BY p.data_hora,p.uuid LIMIT 100001`, [filtro.inicio, filtro.fim, filtro.catadorUuid ?? null, filtro.materialUuid ?? null, filtro.cooperativaUuid ?? null, filtro.status ?? null, filtro.busca])).rows;
+      AND ($7='' OR to_tsvector('portuguese',c.nome_completo || ' ' || c.codigo || ' ' || p.codigo || ' ' || m.nome || ' ' || p.status::text || ' ' || coalesce(co.nome,'') || ' ' || pa.nome) @@ consulta_busca_prefixada($7))
+      AND ($8::uuid IS NULL OR p.ponto_apoio_uuid=$8)
+      ORDER BY p.data_hora,p.uuid LIMIT 100001`, [filtro.inicio, filtro.fim, filtro.catadorUuid ?? null, filtro.materialUuid ?? null, filtro.cooperativaUuid ?? null, filtro.status ?? null, filtro.busca, filtro.pontoApoioUuid ?? null])).rows;
   }
   if (linhas.length > 100000) return resposta.code(413).send({ mensagem: "O período possui mais de 100.000 registros. Divida a exportação em períodos menores para garantir um arquivo completo e seguro." });
   const csv = `\uFEFF${montarCsv(linhas, campos, catalogo)}`;

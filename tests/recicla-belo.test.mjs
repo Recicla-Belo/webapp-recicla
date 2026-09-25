@@ -164,6 +164,8 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(painel, /paginacaoAtividades/);
   assert.match(painel, /<Paginacao/);
   assert.match(painel, /function rotuloDia/);
+  assert.match(painel, /Pesagem por ponto de apoio \/ tenda/);
+  assert.match(painel, /pontoApoioUuid/);
   assert.match(telaLogin, /useState\(""\)/);
   assert.match(telaLogin, /placeholder="Digite seu e-mail"/);
   assert.match(telaLogin, /Lembrar meu acesso/);
@@ -302,6 +304,9 @@ test("mantém ambiente, banco e instalação documentados", async () => {
   assert.match(servidor, /aplicacao\.get\("\/api\/relatorios\/auditoria"/);
   assert.match(servidor, /aplicacao\.get\("\/api\/relatorios\/exportar"/);
   assert.match(telaRelatorios, /<Paginacao/);
+  assert.match(telaRelatorios, /Totais por ponto de apoio \/ tenda/);
+  assert.match(telaRelatorios, /Todas as centrais \/ cooperativas/);
+  assert.match(servidor, /producaoPorPonto/);
   assert.match(paginacao, /paginasVisiveis/);
   assert.match(estilos, /\.paginacao\{[^}]*max-width:100%/);
   assert.match(servidor, /registrarAuditoria/);

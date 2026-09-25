@@ -3,7 +3,7 @@
 /* eslint-disable @next/next/no-img-element -- fotos privadas são servidas pela API autenticada */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Gauge, Recycle, Scale, Target, Trash2, UsersRound, WalletCards, type LucideIcon } from "lucide-react";
+import { Building2, Gauge, MapPin, Recycle, Scale, Target, Trash2, UsersRound, WalletCards, type LucideIcon } from "lucide-react";
 import { requisitarApi, URL_API } from "@/app/dados/api";
 import { Paginacao } from "@/app/componentes/paginacao";
 import { ModalExclusaoAdministrativa } from "@/app/componentes/modal-exclusao-administrativa";
@@ -18,15 +18,28 @@ type AtividadeApi = {
   responsavel: string | null; data_caixa: string | null; peso_caixa: number; valor_caixa: number;
   movimentacoes_caixa: number; motivo: string | null;
 };
+type ProducaoPonto = {
+  ponto_apoio_uuid: string; ponto_apoio: string; peso_total: number; coletas: number;
+  catadores: number; valor_liberado: number; centrais: string[];
+};
+type OpcaoFiltro = { uuid: string; nome: string };
 type DadosPainel = {
   indicadores: { catadores_ativos: number; catadores_meta_atingida: number; total_coletado: number; valor_total_pagar: number; coletas_realizadas: number; media_por_catador: number };
   producaoSemanal: Array<{ data: string; peso: number }>;
+  producaoPorPonto: ProducaoPonto[];
+  filtrosPontos: { pontos: OpcaoFiltro[]; centrais: OpcaoFiltro[] };
   atividades: AtividadeApi[];
   paginacaoAtividades: { pagina: number; limite: number; total: number };
 };
 
-const estadoVazio: DadosPainel = { indicadores: { catadores_ativos: 0, catadores_meta_atingida: 0, total_coletado: 0, valor_total_pagar: 0, coletas_realizadas: 0, media_por_catador: 0 }, producaoSemanal: [], atividades: [], paginacaoAtividades: { pagina: 1, limite: 5, total: 0 } };
+const estadoVazio: DadosPainel = { indicadores: { catadores_ativos: 0, catadores_meta_atingida: 0, total_coletado: 0, valor_total_pagar: 0, coletas_realizadas: 0, media_por_catador: 0 }, producaoSemanal: [], producaoPorPonto: [], filtrosPontos: { pontos: [], centrais: [] }, atividades: [], paginacaoAtividades: { pagina: 1, limite: 5, total: 0 } };
 const dinheiro = (valor: number) => Number(valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+const dataBahia = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bahia" }).format(new Date());
+const diasAntes = (quantidade: number) => {
+  const data = new Date(`${dataBahia()}T12:00:00`);
+  data.setDate(data.getDate() - quantidade);
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bahia" }).format(data);
+};
 function rotuloDia(valor: string) {
   const dataIso = String(valor).slice(0, 10);
   const data = new Date(`${dataIso}T12:00:00`);
@@ -39,15 +52,22 @@ export function PainelPrincipal({ onNovaPesagem, podeNovaPesagem = true, adminis
   const [erro, setErro] = useState("");
   const [paginaAtividades, setPaginaAtividades] = useState(1);
   const [limiteAtividades, setLimiteAtividades] = useState(5);
+  const [inicioPontos, setInicioPontos] = useState(() => diasAntes(6));
+  const [fimPontos, setFimPontos] = useState(dataBahia);
+  const [pontoApoioUuid, setPontoApoioUuid] = useState("");
+  const [cooperativaUuid, setCooperativaUuid] = useState("");
   const [atividadeExcluir, setAtividadeExcluir] = useState<AtividadeApi | null>(null);
   const [excluindo, setExcluindo] = useState(false);
   const [erroExclusao, setErroExclusao] = useState("");
 
   const carregar = useCallback(async () => {
-    try { setDados(await requisitarApi<DadosPainel>(`/api/painel?paginaAtividades=${paginaAtividades}&limiteAtividades=${limiteAtividades}`)); setErro(""); }
+    const consulta = new URLSearchParams({ paginaAtividades: String(paginaAtividades), limiteAtividades: String(limiteAtividades), inicioPontos, fimPontos });
+    if (pontoApoioUuid) consulta.set("pontoApoioUuid", pontoApoioUuid);
+    if (cooperativaUuid) consulta.set("cooperativaUuid", cooperativaUuid);
+    try { setDados(await requisitarApi<DadosPainel>(`/api/painel?${consulta}`)); setErro(""); }
     catch (falha) { setErro(falha instanceof Error ? falha.message : "Não foi possível carregar o painel."); }
     finally { setCarregando(false); }
-  }, [limiteAtividades, paginaAtividades]);
+  }, [cooperativaUuid, fimPontos, inicioPontos, limiteAtividades, paginaAtividades, pontoApoioUuid]);
   // eslint-disable-next-line react-hooks/set-state-in-effect -- sincroniza a página de atividades com a API
   useEffect(() => { void carregar(); }, [carregar]);
 
@@ -78,6 +98,7 @@ export function PainelPrincipal({ onNovaPesagem, podeNovaPesagem = true, adminis
     { rotulo: "Catadores com meta atingida", valor: dados.indicadores.catadores_meta_atingida.toLocaleString("pt-BR"), icone: Target },
   ], [dados]);
   const maiorPeso = Math.max(...dados.producaoSemanal.map((item) => Number(item.peso)), 1);
+  const pesoTotalPontos = dados.producaoPorPonto.reduce((total, item) => total + Number(item.peso_total), 0);
 
   if (carregando) return <div className="painel estado-pagina" role="status">Carregando dados do PostgreSQL...</div>;
   if (erro) return <div className="painel estado-pagina erro-pagina" role="alert">{erro}</div>;
@@ -86,6 +107,19 @@ export function PainelPrincipal({ onNovaPesagem, podeNovaPesagem = true, adminis
     <section className="secao-indicadores sem-chamada">
       <div className="titulo-secao"><div><h2>Indicadores acumulados</h2><p>Resultados preservados até uma limpeza administrativa explícita</p></div></div>
       <div className="grade-indicadores">{indicadores.map((item, indice) => <article className="cartao-indicador" key={item.rotulo}><div className={`icone-indicador cor-${indice}`}><item.icone /></div><p>{item.rotulo}</p><strong>{item.valor}</strong></article>)}</div>
+    </section>
+    <section className="painel painel-producao-pontos">
+      <div className="titulo-secao"><div><h2>Pesagem por ponto de apoio / tenda</h2><p>Totais confirmados no período, separados por local da operação</p></div><strong className="total-pontos">{pesoTotalPontos.toLocaleString("pt-BR", { maximumFractionDigits: 3 })} kg</strong></div>
+      <div className="filtros-producao-pontos">
+        <label><span>De</span><input type="date" value={inicioPontos} max={fimPontos} onChange={(evento) => setInicioPontos(evento.target.value)} /></label>
+        <label><span>Até</span><input type="date" value={fimPontos} min={inicioPontos} onChange={(evento) => setFimPontos(evento.target.value)} /></label>
+        <label><span>Ponto / tenda</span><select value={pontoApoioUuid} onChange={(evento) => setPontoApoioUuid(evento.target.value)}><option value="">Todos os pontos</option>{dados.filtrosPontos.pontos.map((ponto) => <option key={ponto.uuid} value={ponto.uuid}>{ponto.nome}</option>)}</select></label>
+        <label><span>Central / cooperativa</span><select value={cooperativaUuid} onChange={(evento) => setCooperativaUuid(evento.target.value)}><option value="">Todas as centrais</option>{dados.filtrosPontos.centrais.map((central) => <option key={central.uuid} value={central.uuid}>{central.nome}</option>)}</select></label>
+      </div>
+      {dados.producaoPorPonto.length === 0 ? <p className="estado-vazio">Nenhuma pesagem concluída encontrada para estes filtros.</p> : <div className="grade-producao-pontos">{dados.producaoPorPonto.map((item) => {
+        const percentual = pesoTotalPontos > 0 ? (Number(item.peso_total) / pesoTotalPontos) * 100 : 0;
+        return <article key={item.ponto_apoio_uuid}><header><span><MapPin /></span><div><small>PONTO DE APOIO / TENDA</small><h3>{item.ponto_apoio}</h3></div></header><strong>{Number(item.peso_total).toLocaleString("pt-BR", { maximumFractionDigits: 3 })} kg</strong><div className="barra-participacao"><i style={{ width: `${percentual}%` }} /></div><p>{percentual.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}% do volume filtrado</p><dl><div><dt>Pesagens</dt><dd>{item.coletas}</dd></div><div><dt>Catadores</dt><dd>{item.catadores}</dd></div><div><dt>Valor liberado</dt><dd>{dinheiro(item.valor_liberado)}</dd></div></dl><footer><Building2 /> {item.centrais.length ? item.centrais.join(" · ") : "Central não informada"}</footer></article>;
+      })}</div>}
     </section>
     <div className="grade-inferior">
       <section className="painel"><div className="titulo-secao"><div><h2>Produção dos últimos 7 dias</h2><p>Volume confirmado no banco de dados</p></div></div><div className="grafico" aria-label="Gráfico de produção dos últimos sete dias">{dados.producaoSemanal.map((item) => <div className="barra-grupo" key={item.data}><div className="barra" title={`${Number(item.peso).toLocaleString("pt-BR")} kg`} style={{ height: `${Math.max((Number(item.peso) / maiorPeso) * 100, Number(item.peso) > 0 ? 6 : 1)}%` }} /><span>{rotuloDia(item.data)}</span></div>)}</div></section>

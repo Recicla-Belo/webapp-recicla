@@ -297,6 +297,10 @@ async function executar() {
     assert.equal(Number(painelDepois.indicadores.coletas_realizadas), Number(painelAntes.coletas_realizadas) + 2);
     assert.equal(Number(painelDepois.indicadores.total_coletado), Number(painelAntes.total_coletado) + 20);
     assert.equal(Number(painelDepois.indicadores.valor_total_pagar), Number(painelAntes.valor_total_pagar) + 10);
+    const painelPontoFiltrado = (await chamar(`/api/painel?inicioPontos=${dataCaixa}&fimPontos=${dataCaixa}&pontoApoioUuid=${pontos[0].uuid}&cooperativaUuid=${cooperativaUuid}`)).dados;
+    assert.ok(painelPontoFiltrado.filtrosPontos.pontos.some((item) => item.uuid === pontos[0].uuid));
+    assert.ok(painelPontoFiltrado.filtrosPontos.centrais.some((item) => item.uuid === cooperativaUuid));
+    assert.ok(painelPontoFiltrado.producaoPorPonto.some((item) => item.ponto_apoio_uuid === pontos[0].uuid && Number(item.peso_total) >= 20));
     assert.ok(painelDepois.atividades.some((item) => item.codigo === pesagem.codigo && item.entidade === "pesagens" && item.catador_uuid === catadorUuid));
     const atividadeCaixa = painelDepois.atividades.find((item) => item.entidade === "caixas_catador" && item.catador_uuid === catadorUuid && item.acao === "reabertura");
     assert.equal(atividadeCaixa.codigo_catador, catador.codigo);
@@ -308,10 +312,13 @@ async function executar() {
     assert.equal(alterada.status, "agendada");
     assert.equal(Number((await chamar("/api/painel")).dados.indicadores.coletas_realizadas), Number(painelAntes.coletas_realizadas) + 1);
 
-    const respostaRelatorio = (await chamar(`/api/relatorios/pesagens?catadorUuid=${catadorUuid}&limite=5&deslocamento=0`)).dados;
+    const respostaRelatorio = (await chamar(`/api/relatorios/pesagens?catadorUuid=${catadorUuid}&pontoApoioUuid=${pontos[0].uuid}&cooperativaUuid=${cooperativaUuid}&limite=5&deslocamento=0`)).dados;
     assert.equal(respostaRelatorio.total, 2);
     assert.equal(Number(respostaRelatorio.totais.peso), 5);
     assert.equal(Number(respostaRelatorio.totais.valor), 0);
+    assert.equal(respostaRelatorio.producaoPorPonto.length, 1);
+    assert.equal(respostaRelatorio.producaoPorPonto[0].ponto_apoio_uuid, pontos[0].uuid);
+    assert.equal(Number(respostaRelatorio.producaoPorPonto[0].peso_total), 5);
     let relatorio = respostaRelatorio.dados;
     assert.ok(relatorio.some((item) => item.uuid === pesagemUuid && item.status === "agendada" && Number(item.valor_total) === 0 && item.historico.some((evento) => evento.acao === "alteracao")));
     assert.ok(relatorio.every((item) => item.uuid && item.criado_por && Array.isArray(item.historico)));
@@ -319,7 +326,7 @@ async function executar() {
     assert.ok(resumoDiario.dados.some((item) => String(item.data_operacao).slice(0, 10) === dataCaixa));
     const livroAuditoria = (await chamar(`/api/relatorios/auditoria?busca=${encodeURIComponent(pesagem.codigo)}&limite=5&deslocamento=0`)).dados;
     assert.ok(livroAuditoria.dados.some((item) => item.entidade === "pesagens" && item.entidade_uuid === pesagemUuid));
-    const consultaExportacao = new URLSearchParams({ tipo: "pesagens", inicio: dataCaixa, fim: dataCaixa, campos: "protocolo,codigo,catador,material,peso_total,valor_total,historico", busca: catador.codigo });
+    const consultaExportacao = new URLSearchParams({ tipo: "pesagens", inicio: dataCaixa, fim: dataCaixa, campos: "protocolo,codigo,catador,cooperativa,ponto_apoio,material,peso_total,valor_total,historico", busca: catador.codigo, cooperativaUuid, pontoApoioUuid: pontos[0].uuid });
     const exportacao = await fetch(`${urlApi}/api/relatorios/exportar?${consultaExportacao}`, { headers: { cookie } });
     assert.equal(exportacao.status, 200);
     assert.match(exportacao.headers.get("content-type") ?? "", /^text\/csv/);
